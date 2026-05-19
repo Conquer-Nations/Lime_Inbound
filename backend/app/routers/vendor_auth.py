@@ -6,6 +6,7 @@ appends a row to the OneDrive workbook, every login reads & verifies.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import datetime, timezone
 
@@ -144,13 +145,20 @@ async def login(body: LoginRequest):
     full_name = user.get("full_name", "")
     company = user.get("company", "")
 
-    # Best-effort: update last_login_at. Don't fail login on Excel hiccup.
-    try:
-        await vendor_excel.update_last_login(
-            email_norm, datetime.now(timezone.utc).isoformat(timespec="seconds")
-        )
-    except vendor_excel.VendorExcelError as e:
-        logger.warning("update_last_login failed for %s: %s", email_norm, e)
+    # Fire-and-forget the last_login_at write so login returns immediately.
+    # The Logic App round-trip used to add 1-3 seconds to every login — we don't
+    # need to block the response on it. Failures are logged, not surfaced.
+    async def _bump_last_login() -> None:
+        try:
+            await vendor_excel.update_last_login(
+                email_norm, datetime.now(timezone.utc).isoformat(timespec="seconds")
+            )
+        except vendor_excel.VendorExcelError as e:
+            logger.warning("update_last_login failed for %s: %s", email_norm, e)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("update_last_login crashed for %s: %s", email_norm, e)
+
+    asyncio.create_task(_bump_last_login())
 
     token = vendor_auth_service.create_access_token(
         email=email_norm, full_name=full_name, company=company

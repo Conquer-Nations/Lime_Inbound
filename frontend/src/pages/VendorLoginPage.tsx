@@ -1,6 +1,6 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
-import { api, ApiError } from '../api/client'
+import { api, API_BASE, ApiError } from '../api/client'
 import { useVendorAuth } from '../auth/VendorAuthContext'
 import VendorPortalChrome from '../components/VendorPortalChrome'
 
@@ -16,6 +16,17 @@ export default function VendorLoginPage() {
   const [password, setPassword] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+
+  // Warm up the backend while the user types — Azure App Service free/B1 tiers
+  // cold-start on the first request after idle, which adds 10-30s to login.
+  // Firing this on mount means by the time Sign in is clicked, the dyno is warm.
+  useEffect(() => {
+    fetch(`${API_BASE}/health`, { method: 'GET', cache: 'no-store' }).catch(
+      () => {
+        /* warm-up only — failures are not user-visible */
+      },
+    )
+  }, [])
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()

@@ -18,8 +18,10 @@ Setup the Tiana side needs:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
+import time
 from typing import Any
 
 import httpx
@@ -35,6 +37,22 @@ class VendorExcelError(Exception):
 
 def is_configured() -> bool:
     return bool(settings.onedrive_vendors_ops_url)
+
+
+# ─── In-memory user cache ──────────────────────────────────────────────
+# Auth path used to hit the Logic App (~1-3s) on every login and registration.
+# Cache the user list for a few minutes and invalidate on writes — most logins
+# now resolve from memory.
+_users_cache: list[dict[str, Any]] | None = None
+_users_cache_at: float = 0.0
+_users_cache_lock = asyncio.Lock()
+_USERS_CACHE_TTL_SECONDS = 300  # 5 minutes
+
+
+def _invalidate_users_cache() -> None:
+    global _users_cache, _users_cache_at
+    _users_cache = None
+    _users_cache_at = 0.0
 
 
 async def _call_ops(action: str, payload: dict[str, Any] | None = None) -> Any:
@@ -87,15 +105,41 @@ async def _call_ops(action: str, payload: dict[str, Any] | None = None) -> Any:
     return data
 
 
-async def list_users() -> list[dict[str, Any]]:
+async def list_users(*, force_refresh: bool = False) -> list[dict[str, Any]]:
     """Returns every vendor user row from Excel. Empty list if table is empty
-    or sheet was just created."""
-    data = await _call_ops("list")
-    users = data.get("users") if isinstance(data, dict) else None
-    if not isinstance(users, list):
-        return []
-    # Strings only — Excel can hand us numbers or dates; coerce defensively.
-    return [{k: ("" if v is None else str(v)) for k, v in u.items()} for u in users]
+    or sheet was just created. Cached for 5 minutes — writes invalidate."""
+    global _users_cache, _users_cache_at
+
+    now = time.monotonic()
+    if (
+        not force_refresh
+        and _users_cache is not None
+        and (now - _users_cache_at) < _USERS_CACHE_TTL_SECONDS
+    ):
+        return _users_cache
+
+    async with _users_cache_lock:
+        # Re-check under the lock — another caller may have just refreshed it.
+        now = time.monotonic()
+        if (
+            not force_refresh
+            and _users_cache is not None
+            and (now - _users_cache_at) < _USERS_CACHE_TTL_SECONDS
+        ):
+            return _users_cache
+
+        data = await _call_ops("list")
+        users = data.get("users") if isinstance(data, dict) else None
+        if not isinstance(users, list):
+            users_out: list[dict[str, Any]] = []
+        else:
+            users_out = [
+                {k: ("" if v is None else str(v)) for k, v in u.items()}
+                for u in users
+            ]
+        _users_cache = users_out
+        _users_cache_at = time.monotonic()
+        return users_out
 
 
 async def find_by_email(email: str) -> dict[str, Any] | None:
@@ -127,6 +171,7 @@ async def append_user(
             "last_login_at": "",
         },
     )
+    _invalidate_users_cache()
 
 
 async def update_last_login(email: str, when_iso: str) -> None:
@@ -134,6 +179,7 @@ async def update_last_login(email: str, when_iso: str) -> None:
         "update_last_login",
         {"email": email.strip().lower(), "last_login_at": when_iso},
     )
+    _invalidate_users_cache()
 
 
 async def update_password(email: str, password_hash: str) -> int:
@@ -143,6 +189,7 @@ async def update_password(email: str, password_hash: str) -> int:
         "update_password",
         {"email": email.strip().lower(), "password_hash": password_hash},
     )
+    _invalidate_users_cache()
     if isinstance(data, dict):
         u = data.get("updated")
         if isinstance(u, int):

@@ -1,6 +1,6 @@
-import { useState, type ReactNode } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { api, ApiError } from '../api/client'
+import { api, API_BASE, ApiError } from '../api/client'
 import { useVendorAuth } from '../auth/VendorAuthContext'
 import VendorPortalChrome from '../components/VendorPortalChrome'
 
@@ -19,6 +19,16 @@ export default function VendorRegisterPage() {
   const [duplicateAccountMsg, setDuplicateAccountMsg] = useState<string | null>(
     null
   )
+
+  // Warm up the backend while the user fills out the form — avoids the
+  // 10-30s App Service cold-start hit when they click Create account.
+  useEffect(() => {
+    fetch(`${API_BASE}/health`, { method: 'GET', cache: 'no-store' }).catch(
+      () => {
+        /* warm-up only */
+      },
+    )
+  }, [])
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
