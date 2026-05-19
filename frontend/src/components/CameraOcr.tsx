@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { API_BASE } from '../api/client'
+import Spinner from './Spinner'
 
 type Status = 'idle' | 'reading' | 'done' | 'error'
 
@@ -134,7 +135,7 @@ export default function CameraOcr({ onAccept }: Props) {
 
           {status === 'reading' && (
             <div className="text-sm bg-[#0093D0]/5 border border-[#0093D0]/25 text-[#1B4676] rounded-md px-3 py-2.5 flex items-center gap-2">
-              <Spinner />
+              <Spinner size={16} className="text-[#0093D0]" />
               <span>
                 Reading container number on server… first request may take 10–30s
                 while the OCR model loads.
@@ -201,25 +202,6 @@ export default function CameraOcr({ onAccept }: Props) {
         </div>
       )}
     </div>
-  )
-}
-
-function Spinner() {
-  return (
-    <svg
-      className="animate-spin h-4 w-4 text-[#0093D0]"
-      viewBox="0 0 24 24"
-      fill="none"
-      aria-hidden="true"
-    >
-      <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" opacity="0.25" />
-      <path
-        d="M4 12a8 8 0 018-8"
-        stroke="currentColor"
-        strokeWidth="3"
-        strokeLinecap="round"
-      />
-    </svg>
   )
 }
 

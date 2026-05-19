@@ -2,6 +2,7 @@ import { useEffect, useState, type ReactNode } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { api, API_BASE, ApiError } from '../api/client'
 import { useVendorAuth } from '../auth/VendorAuthContext'
+import Spinner from '../components/Spinner'
 import VendorPortalChrome from '../components/VendorPortalChrome'
 
 export default function VendorRegisterPage() {
@@ -205,9 +206,16 @@ export default function VendorRegisterPage() {
           <button
             type="submit"
             disabled={busy}
-            className="w-full bg-[#0093D0] hover:bg-[#00A8E8] disabled:bg-slate-200 disabled:text-slate-400 disabled:cursor-not-allowed text-white font-bold rounded-full py-3.5 text-base transition flex items-center justify-center gap-2 shadow-[0_8px_24px_-4px_rgba(0,147,208,0.45)] hover:shadow-[0_8px_28px_-2px_rgba(0,147,208,0.6)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#0093D0] focus-visible:ring-offset-2"
+            className={`w-full bg-[#0093D0] hover:bg-[#00A8E8] text-white font-bold rounded-full py-3.5 text-base transition flex items-center justify-center gap-2 shadow-[0_8px_24px_-4px_rgba(0,147,208,0.45)] hover:shadow-[0_8px_28px_-2px_rgba(0,147,208,0.6)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#0093D0] focus-visible:ring-offset-2 ${
+              busy ? 'cursor-wait opacity-90' : ''
+            }`}
           >
-            {busy ? <span>Creating account…</span> : (
+            {busy ? (
+              <>
+                <Spinner size={18} className="text-white" />
+                <span>Creating account…</span>
+              </>
+            ) : (
               <>
                 <span>Create account</span>
                 <ArrowRightIcon className="w-4 h-4" />

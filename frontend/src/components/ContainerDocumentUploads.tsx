@@ -5,6 +5,7 @@ import {
   type ContainerDocumentItem,
   type DocumentKindOption,
 } from '../api/client'
+import Spinner from './Spinner'
 
 function formatBytes(b: number): string {
   if (b < 1024) return `${b} B`
@@ -252,9 +253,15 @@ function DocumentSlot({ containerNo, kind, label, existing, onChange }: SlotProp
             type="button"
             disabled={busy}
             onClick={() => inputRef.current?.click()}
-            className="w-full flex-1 inline-flex flex-col items-center justify-center gap-1.5 px-3 py-4 rounded-md text-xs font-semibold text-[#1B4676] bg-slate-50 hover:bg-[#0093D0]/5 border border-slate-200 hover:border-[#0093D0] transition disabled:opacity-50"
+            className={`w-full flex-1 inline-flex flex-col items-center justify-center gap-1.5 px-3 py-4 rounded-md text-xs font-semibold text-[#1B4676] bg-slate-50 hover:bg-[#0093D0]/5 border border-slate-200 hover:border-[#0093D0] transition ${
+              busy ? 'cursor-wait' : ''
+            }`}
           >
-            <UploadIcon className="w-5 h-5" />
+            {busy ? (
+              <Spinner size={22} className="text-[#0093D0]" />
+            ) : (
+              <UploadIcon className="w-5 h-5" />
+            )}
             <span>{busy ? 'Uploading…' : 'Upload photo / PDF'}</span>
             <span className="text-[10px] text-slate-500 font-normal">
               JPEG · PNG · HEIC · PDF · max 15 MB
@@ -342,7 +349,10 @@ export function ContainerDocumentUploads({
 
   if (loading) {
     return (
-      <div className="text-xs text-slate-500 py-4">Loading documents…</div>
+      <div className="flex items-center gap-2 text-xs text-slate-500 py-4">
+        <Spinner size={14} className="text-[#0093D0]" />
+        <span>Loading documents…</span>
+      </div>
     )
   }
 

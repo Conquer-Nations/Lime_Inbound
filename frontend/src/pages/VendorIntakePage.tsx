@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react'
 import { Link, Navigate, useNavigate } from 'react-router-dom'
 import { api, ApiError } from '../api/client'
 import { useVendorAuth } from '../auth/VendorAuthContext'
+import Spinner from '../components/Spinner'
 import VendorPortalChrome from '../components/VendorPortalChrome'
 import { ContainerDocumentUploads } from '../components/ContainerDocumentUploads'
 import type { VendorContainerSubmission, VendorLineItem, WHPOIntakeResponse } from '../types/api'
@@ -454,10 +455,17 @@ HPCU9999999   36648913   5/16   10am  100   Solar Panels   LPN-002222`}
           <button
             type="submit"
             disabled={submitting || parsed.errors.length > 0 || groups.length === 0}
-            className="w-full bg-[#0093D0] hover:bg-[#00A8E8] disabled:bg-slate-200 disabled:text-slate-400 disabled:cursor-not-allowed text-white font-bold rounded-full py-3.5 text-base transition flex items-center justify-center gap-2 shadow-[0_8px_24px_-4px_rgba(0,147,208,0.45)] hover:shadow-[0_8px_28px_-2px_rgba(0,147,208,0.6)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#0093D0] focus-visible:ring-offset-2"
+            className={`w-full bg-[#0093D0] hover:bg-[#00A8E8] text-white font-bold rounded-full py-3.5 text-base transition flex items-center justify-center gap-2 shadow-[0_8px_24px_-4px_rgba(0,147,208,0.45)] hover:shadow-[0_8px_28px_-2px_rgba(0,147,208,0.6)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#0093D0] focus-visible:ring-offset-2 ${
+              submitting
+                ? 'opacity-90 cursor-wait'
+                : 'disabled:bg-slate-200 disabled:text-slate-400 disabled:cursor-not-allowed'
+            }`}
           >
             {submitting ? (
-              <span>Submitting…</span>
+              <>
+                <Spinner size={18} className="text-white" />
+                <span>Submitting…</span>
+              </>
             ) : (
               <>
                 <span>
@@ -1611,10 +1619,17 @@ function DriverInfoForm({ onBack }: { onBack: () => void }) {
             <button
               type="submit"
               disabled={lookupBusy || whpoNumber.length !== 8}
-              className="w-full bg-[#0093D0] hover:bg-[#00A8E8] disabled:bg-slate-200 disabled:text-slate-400 disabled:cursor-not-allowed text-white font-bold rounded-full py-3.5 text-base transition flex items-center justify-center gap-2 shadow-[0_8px_24px_-4px_rgba(0,147,208,0.45)] hover:shadow-[0_8px_28px_-2px_rgba(0,147,208,0.6)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#0093D0] focus-visible:ring-offset-2"
+              className={`w-full bg-[#0093D0] hover:bg-[#00A8E8] text-white font-bold rounded-full py-3.5 text-base transition flex items-center justify-center gap-2 shadow-[0_8px_24px_-4px_rgba(0,147,208,0.45)] hover:shadow-[0_8px_28px_-2px_rgba(0,147,208,0.6)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#0093D0] focus-visible:ring-offset-2 ${
+                lookupBusy
+                  ? 'opacity-90 cursor-wait'
+                  : 'disabled:bg-slate-200 disabled:text-slate-400 disabled:cursor-not-allowed'
+              }`}
             >
               {lookupBusy ? (
-                <span>Looking up…</span>
+                <>
+                  <Spinner size={18} className="text-white" />
+                  <span>Looking up…</span>
+                </>
               ) : (
                 <>
                   <span>Look up WHPO/Load No</span>
@@ -1775,10 +1790,15 @@ function DriverInfoForm({ onBack }: { onBack: () => void }) {
                 <button
                   type="submit"
                   disabled={submitting}
-                  className="w-full bg-[#0093D0] hover:bg-[#00A8E8] disabled:bg-slate-200 disabled:text-slate-400 disabled:cursor-not-allowed text-white font-bold rounded-full py-3.5 text-base transition flex items-center justify-center gap-2 shadow-[0_8px_24px_-4px_rgba(0,147,208,0.45)] hover:shadow-[0_8px_28px_-2px_rgba(0,147,208,0.6)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#0093D0] focus-visible:ring-offset-2"
+                  className={`w-full bg-[#0093D0] hover:bg-[#00A8E8] text-white font-bold rounded-full py-3.5 text-base transition flex items-center justify-center gap-2 shadow-[0_8px_24px_-4px_rgba(0,147,208,0.45)] hover:shadow-[0_8px_28px_-2px_rgba(0,147,208,0.6)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#0093D0] focus-visible:ring-offset-2 ${
+                    submitting ? 'opacity-90 cursor-wait' : ''
+                  }`}
                 >
                   {submitting ? (
-                    <span>Submitting…</span>
+                    <>
+                      <Spinner size={18} className="text-white" />
+                      <span>Submitting…</span>
+                    </>
                   ) : (
                     <>
                       <span>Submit driver info for {selectedContainer}</span>
@@ -2179,9 +2199,18 @@ function UpdateShipmentForm({ onBack }: { onBack: () => void }) {
             <button
               type="submit"
               disabled={lookupBusy || whpoNumber.length !== 8}
-              className="w-full bg-[#0093D0] hover:bg-[#00A8E8] disabled:bg-slate-200 disabled:text-slate-400 text-white font-bold rounded-full py-3.5 text-base transition flex items-center justify-center gap-2 shadow-[0_8px_24px_-4px_rgba(0,147,208,0.45)] hover:shadow-[0_8px_28px_-2px_rgba(0,147,208,0.6)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#0093D0] focus-visible:ring-offset-2"
+              className={`w-full bg-[#0093D0] hover:bg-[#00A8E8] text-white font-bold rounded-full py-3.5 text-base transition flex items-center justify-center gap-2 shadow-[0_8px_24px_-4px_rgba(0,147,208,0.45)] hover:shadow-[0_8px_28px_-2px_rgba(0,147,208,0.6)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#0093D0] focus-visible:ring-offset-2 ${
+                lookupBusy
+                  ? 'opacity-90 cursor-wait'
+                  : 'disabled:bg-slate-200 disabled:text-slate-400'
+              }`}
             >
-              {lookupBusy ? <span>Looking up…</span> : (
+              {lookupBusy ? (
+                <>
+                  <Spinner size={18} className="text-white" />
+                  <span>Looking up…</span>
+                </>
+              ) : (
                 <>
                   <span>Look up shipment</span>
                   <ArrowRightIcon className="w-4 h-4" />
@@ -2426,10 +2455,17 @@ function UpdateShipmentForm({ onBack }: { onBack: () => void }) {
           <button
             type="submit"
             disabled={submitting || state.any_locked}
-            className="w-full bg-[#0093D0] hover:bg-[#00A8E8] disabled:bg-slate-200 disabled:text-slate-400 disabled:cursor-not-allowed text-white font-bold rounded-full py-3.5 text-base transition flex items-center justify-center gap-2 shadow-[0_8px_24px_-4px_rgba(0,147,208,0.45)] hover:shadow-[0_8px_28px_-2px_rgba(0,147,208,0.6)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#0093D0] focus-visible:ring-offset-2"
+            className={`w-full bg-[#0093D0] hover:bg-[#00A8E8] text-white font-bold rounded-full py-3.5 text-base transition flex items-center justify-center gap-2 shadow-[0_8px_24px_-4px_rgba(0,147,208,0.45)] hover:shadow-[0_8px_28px_-2px_rgba(0,147,208,0.6)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#0093D0] focus-visible:ring-offset-2 ${
+              submitting
+                ? 'opacity-90 cursor-wait'
+                : 'disabled:bg-slate-200 disabled:text-slate-400 disabled:cursor-not-allowed'
+            }`}
           >
             {submitting ? (
-              <span>Applying update…</span>
+              <>
+                <Spinner size={18} className="text-white" />
+                <span>Applying update…</span>
+              </>
             ) : (
               <>
                 <span>Submit update</span>
@@ -2554,10 +2590,17 @@ function ViewShipmentForm({ onBack }: { onBack: () => void }) {
             <button
               type="submit"
               disabled={loading || whpoNumber.length !== 8}
-              className="w-full bg-[#0093D0] hover:bg-[#00A8E8] disabled:bg-slate-200 disabled:text-slate-400 disabled:cursor-not-allowed text-white font-bold rounded-full py-3.5 text-base transition flex items-center justify-center gap-2 shadow-[0_8px_24px_-4px_rgba(0,147,208,0.45)] hover:shadow-[0_8px_28px_-2px_rgba(0,147,208,0.6)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#0093D0] focus-visible:ring-offset-2"
+              className={`w-full bg-[#0093D0] hover:bg-[#00A8E8] text-white font-bold rounded-full py-3.5 text-base transition flex items-center justify-center gap-2 shadow-[0_8px_24px_-4px_rgba(0,147,208,0.45)] hover:shadow-[0_8px_28px_-2px_rgba(0,147,208,0.6)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#0093D0] focus-visible:ring-offset-2 ${
+                loading
+                  ? 'opacity-90 cursor-wait'
+                  : 'disabled:bg-slate-200 disabled:text-slate-400 disabled:cursor-not-allowed'
+              }`}
             >
               {loading ? (
-                <span>Loading…</span>
+                <>
+                  <Spinner size={18} className="text-white" />
+                  <span>Loading…</span>
+                </>
               ) : (
                 <>
                   <span>View shipment</span>
