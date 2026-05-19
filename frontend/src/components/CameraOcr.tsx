@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { API_BASE } from '../api/client'
 
 type Status = 'idle' | 'reading' | 'done' | 'error'
 
@@ -45,7 +46,7 @@ export default function CameraOcr({ onAccept }: Props) {
     form.append('photo', file)
 
     try {
-      const res = await fetch('/api/ocr/container-photo', {
+      const res = await fetch(`${API_BASE}/ocr/container-photo`, {
         method: 'POST',
         body: form,
       })

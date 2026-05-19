@@ -17,7 +17,10 @@ import type {
 
 // Frontend always talks to its own origin. Vite dev server proxies /api/* to the backend.
 // Avoids browser cross-origin/CORS/HSTS issues that affect Safari + localhost.
-const BASE = (import.meta.env.VITE_API_BASE as string | undefined) ?? '/api'
+// In production, VITE_API_BASE points at the deployed App Service hostname.
+export const API_BASE =
+  (import.meta.env.VITE_API_BASE as string | undefined) ?? '/api'
+const BASE = API_BASE
 
 class ApiError extends Error {
   status: number

@@ -1,4 +1,5 @@
 import { useEffect, useState, type ReactNode } from 'react'
+import { API_BASE } from '../api/client'
 
 interface InboundRow {
   container_no: string
@@ -59,7 +60,7 @@ export default function InboundView() {
 
   function reload() {
     setError(null)
-    fetch('/api/manager/database/inbound')
+    fetch(`${API_BASE}/manager/database/inbound`)
       .then(async (r) => {
         if (!r.ok) throw new Error(await r.text())
         return r.json()
@@ -71,7 +72,7 @@ export default function InboundView() {
   useEffect(reload, [])
 
   useEffect(() => {
-    fetch('/api/manager/database/inbound/status')
+    fetch(`${API_BASE}/manager/database/inbound/status`)
       .then((r) => r.json())
       .then((d) => setUpdateConfigured(Boolean(d.update_configured)))
       .catch(() => setUpdateConfigured(false))
@@ -82,7 +83,7 @@ export default function InboundView() {
     setSyncStatus(null)
     setSyncFailed(false)
     try {
-      const r = await fetch('/api/manager/database/inbound/sync', {
+      const r = await fetch(`${API_BASE}/manager/database/inbound/sync`, {
         method: 'POST',
       })
       if (!r.ok) {
@@ -117,7 +118,7 @@ export default function InboundView() {
     setSyncStatus(null)
     setSyncFailed(false)
     try {
-      const r = await fetch('/api/manager/database/inbound/pull-from-excel', {
+      const r = await fetch(`${API_BASE}/manager/database/inbound/pull-from-excel`, {
         method: 'POST',
       })
       if (!r.ok) {
@@ -232,7 +233,7 @@ export default function InboundView() {
               </>
             )}
             <a
-              href="/api/manager/database/inbound.csv"
+              href={`${API_BASE}/manager/database/inbound.csv`}
               download
               className="inline-flex items-center gap-2 bg-[#1B4676] hover:bg-[#224E72] text-white text-sm font-medium rounded-md px-3 py-1.5 transition focus:outline-none focus-visible:ring-2 focus-visible:ring-[#0093D0] focus-visible:ring-offset-2"
             >
