@@ -57,7 +57,7 @@ export default function VendorPortalChrome({
       >
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
           <Link to="/vendor-intake" className="flex items-center gap-3 group">
-            <BrandMark className="w-9 h-9 text-white" />
+            <BrandMark className="h-12 text-white" />
             <div className="leading-tight">
               <div className="text-base font-extrabold tracking-[0.16em]">
                 CONQUER NATION
@@ -177,7 +177,7 @@ export default function VendorPortalChrome({
       >
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 flex flex-col gap-6 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-center gap-3">
-            <BrandMark className="w-8 h-8 text-white" />
+            <BrandMark className="h-10 text-white" />
             <div className="leading-tight">
               <div className="text-sm font-bold tracking-[0.16em] text-white">
                 CONQUER NATION

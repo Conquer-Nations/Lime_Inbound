@@ -836,7 +836,7 @@ function ModeChooser({
       >
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <BrandMark className="w-9 h-9 text-white" />
+            <BrandMark className="h-12 text-white" />
             <div className="leading-tight">
               <div className="text-base font-extrabold tracking-[0.16em]">
                 CONQUER NATION

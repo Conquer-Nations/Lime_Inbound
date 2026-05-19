@@ -399,7 +399,7 @@ function DetailChrome({
       >
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
           <Link to="/manager" className="flex items-center gap-3 group">
-            <BrandMark className="w-9 h-9 text-white" />
+            <BrandMark className="h-12 text-white" />
             <div className="leading-tight">
               <div className="text-base font-extrabold tracking-[0.16em] group-hover:text-white/90 transition">
                 CONQUER NATION

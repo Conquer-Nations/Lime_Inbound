@@ -67,7 +67,7 @@ export default function LoginPage() {
       <div className="relative z-10 min-h-screen flex flex-col items-center justify-center p-4">
         {/* Brand mark */}
         <div className="flex items-center gap-3 mb-8">
-          <BrandMark className="w-12 h-12 text-white" />
+          <BrandMark className="h-16 text-white" />
           <div className="leading-tight">
             <div className="text-lg font-extrabold tracking-[0.16em] text-white">
               CONQUER NATION
