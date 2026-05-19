@@ -6,6 +6,7 @@ import Spinner from '../components/Spinner'
 import VendorPortalChrome from '../components/VendorPortalChrome'
 import { ContainerDocumentUploads } from '../components/ContainerDocumentUploads'
 import type { VendorContainerSubmission, VendorLineItem, WHPOIntakeResponse } from '../types/api'
+import BrandMark from '../components/BrandMark'
 
 const CUSTOMERS = ['Lime Mobility', 'Boviet Solar', 'Pan American Wire MFG', 'National Plastic']
 
@@ -1129,25 +1130,6 @@ function IntakeCard({
 
 // ─── Brand mark — approximation of the CN double-loop logo ─────────────
 
-function BrandMark({ className }: { className?: string }) {
-  return (
-    <svg
-      viewBox="0 0 64 64"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="3.5"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      className={className}
-      aria-hidden
-    >
-      <path d="M30 16c-9 0-16 7-16 16s7 16 16 16" />
-      <path d="M30 22c-6 0-10 5-10 10s4 10 10 10" />
-      <path d="M34 16c9 0 16 7 16 16s-7 16-16 16" />
-      <path d="M34 22c6 0 10 5 10 10s-4 10-10 10" />
-    </svg>
-  )
-}
 
 // ─── Inline icons (lucide-style, 24x24, currentColor stroke) ───────────
 
