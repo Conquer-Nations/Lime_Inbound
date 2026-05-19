@@ -75,7 +75,7 @@ export default function VendorWelcomePage() {
                 <span>Systems operational</span>
               </div>
               <a
-                href="mailto:ops@conquernation.com"
+                href="mailto:developer@conquernation.com"
                 className="inline-flex items-center gap-2 rounded-full bg-white/8 hover:bg-white/15 border border-white/15 hover:border-white/30 px-4 py-1.5 text-sm font-medium transition focus:outline-none focus-visible:ring-2 focus-visible:ring-[#0093D0] focus-visible:ring-offset-2 focus-visible:ring-offset-[#0B1828]"
               >
                 <MailIcon className="w-4 h-4" />
@@ -233,18 +233,18 @@ export default function VendorWelcomePage() {
               Need help?
             </span>
             <a
-              href="mailto:ops@conquernation.com"
+              href="mailto:developer@conquernation.com"
               className="inline-flex items-center gap-2 text-[#0B1828] font-medium hover:text-[#0093D0] transition"
             >
               <MailIcon className="w-4 h-4 text-[#0093D0]" />
-              <span>ops@conquernation.com</span>
+              <span>developer@conquernation.com</span>
             </a>
             <a
-              href="tel:+13235551234"
+              href="tel:+13106786768"
               className="inline-flex items-center gap-2 text-[#0B1828] font-medium hover:text-[#0093D0] transition"
             >
               <PhoneIcon className="w-4 h-4 text-[#0093D0]" />
-              <span>(323) 555-1234</span>
+              <span>(310) 678-6768</span>
             </a>
             <span className="text-slate-400">
               Mon–Fri, 6:00 AM – 4:00 PM PT

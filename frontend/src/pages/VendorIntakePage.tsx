@@ -83,14 +83,14 @@ function parseTime(token: string): string | null {
 function parseShipmentLine(raw: string): ParsedLine | ParseError {
   const tokens = raw.trim().split(/\s+/)
   if (tokens.length < 7) {
-    return { raw, message: `Expected 7+ tokens: container WHPO date time qty type SKU` }
+    return { raw, message: `Expected 7+ tokens: container WHPO/Load No date time qty type SKU` }
   }
   const [container_no, whpo, dateTok, timeTok, qtyTok, ...rest] = tokens
   if (!/^[A-Z]{4}\d{7}$/.test(container_no)) {
     return { raw, message: `Container "${container_no}" — expected ISO 6346 (4 letters + 7 digits)` }
   }
   if (!/^\d{8}$/.test(whpo)) {
-    return { raw, message: `WHPO "${whpo}" — must be 8 digits` }
+    return { raw, message: `WHPO/Load No "${whpo}" — must be 8 digits` }
   }
   const date = parseDate(dateTok)
   if (!date) return { raw, message: `Date "${dateTok}" — expected M/D or M/D/YYYY` }
@@ -301,7 +301,7 @@ export default function VendorIntakePage() {
         <div className="mb-8">
           <div className="inline-flex items-center gap-2 px-2.5 py-1 rounded-full bg-[#0093D0]/10 border border-[#0093D0]/25 text-[#1B4676] text-[11px] font-semibold tracking-[0.14em] uppercase mb-4">
             <span className="w-1.5 h-1.5 rounded-full bg-[#0093D0]" aria-hidden />
-            WHPO Intake
+            WHPO/Load No Intake
           </div>
           <h1 className="text-3xl sm:text-4xl font-bold tracking-tight text-[#1B4676]">
             NEW SHIPMENT
@@ -407,7 +407,7 @@ export default function VendorIntakePage() {
               <p className="text-xs text-slate-500 mb-2">
                 Format:&nbsp;
                 <code className="bg-slate-100 text-[#1B4676] px-1.5 py-0.5 rounded font-mono">
-                  CONTAINER WHPO DATE TIME QTY TYPE SKU
+                  CONTAINER WHPO/LOAD NO DATE TIME QTY TYPE SKU
                 </code>
                 &nbsp;— whitespace-separated, any spacing.
               </p>
@@ -505,12 +505,12 @@ function ParsePreview({
       {groups.length > 0 && (
         <div className="text-sm bg-green-50 border border-green-200 rounded-md px-3 py-2">
           <div className="font-medium text-green-900 mb-1">
-            ✓ Will submit {groups.length} WHPO{groups.length === 1 ? '' : 's'}
+            ✓ Will submit {groups.length} WHPO/Load No{groups.length === 1 ? '' : 's'}
           </div>
           {groups.map((g) => (
             <details key={g.whpo} className="text-xs text-green-900 mt-1" open>
               <summary className="cursor-pointer">
-                WHPO <span className="font-mono">{g.whpo}</span> — {g.containers.length} container
+                WHPO/Load No <span className="font-mono">{g.whpo}</span> — {g.containers.length} container
                 {g.containers.length === 1 ? '' : 's'}, {' '}
                 {g.containers.reduce((a, c) => a + c.lines.length, 0)} SKU lines
               </summary>
@@ -613,7 +613,7 @@ function SuccessPanel({
                   </span>
                   <ArrowRightIcon className="w-4 h-4 text-slate-300" />
                   <span className="font-mono text-slate-600 text-sm">
-                    WHPO {r.whpo_number}
+                    WHPO/Load No {r.whpo_number}
                   </span>
                   <span className="ml-auto text-[10.5px] uppercase font-bold tracking-[0.15em] text-slate-600 bg-slate-100 px-2 py-0.5 rounded">
                     {r.do_status.replace(/_/g, ' ')}
@@ -929,11 +929,11 @@ function ModeChooser({
               icon={<PackagePlusIcon className="w-6 h-6" />}
               eyebrow="Intake"
               title="New shipment"
-              description="Submit a WHPO with container numbers, SKUs, and arrival date. A Delivery Order is issued automatically."
+              description="Submit a WHPO/Load No with container numbers, SKUs, and arrival date. A Delivery Order is issued automatically."
               metaLeft={{ icon: <ClockIcon className="w-3.5 h-3.5" />, label: '~2 min' }}
               metaRight={{
                 icon: <HashIcon className="w-3.5 h-3.5" />,
-                label: 'WHPO #',
+                label: 'WHPO/Load No',
               }}
               ctaLabel="Start new shipment"
               onClick={() => onChoose('new')}
@@ -955,11 +955,11 @@ function ModeChooser({
               icon={<EditIcon className="w-6 h-6" />}
               eyebrow="Amend"
               title="Update shipment"
-              description="Amend an open WHPO — swap container numbers, fix arrival, or update SKU lines before receiving."
+              description="Amend an open WHPO/Load No — swap container numbers, fix arrival, or update SKU lines before receiving."
               metaLeft={{ icon: <ClockIcon className="w-3.5 h-3.5" />, label: '~1 min' }}
               metaRight={{
                 icon: <HashIcon className="w-3.5 h-3.5" />,
-                label: 'WHPO #',
+                label: 'WHPO/Load No',
               }}
               ctaLabel="Update shipment"
               onClick={() => onChoose('update')}
@@ -968,11 +968,11 @@ function ModeChooser({
               icon={<EyeIcon className="w-6 h-6" />}
               eyebrow="Review"
               title="View shipment"
-              description="Pull up a WHPO to see containers, lines, driver details, and uploaded documents on file."
+              description="Pull up a WHPO/Load No to see containers, lines, driver details, and uploaded documents on file."
               metaLeft={{ icon: <ClockIcon className="w-3.5 h-3.5" />, label: '~30 sec' }}
               metaRight={{
                 icon: <HashIcon className="w-3.5 h-3.5" />,
-                label: 'WHPO #',
+                label: 'WHPO/Load No',
               }}
               ctaLabel="View shipment"
               onClick={() => onChoose('view')}
@@ -1002,18 +1002,18 @@ function ModeChooser({
             </div>
             <div className="sm:ml-auto flex flex-wrap items-center gap-x-6 gap-y-3 text-sm">
               <a
-                href="tel:+13235551234"
+                href="tel:+13106786768"
                 className="inline-flex items-center gap-2 text-[#1B4676] font-medium hover:text-[#0093D0] transition"
               >
                 <PhoneIcon className="w-4 h-4 text-[#0093D0]" />
-                <span>(323) 555-1234</span>
+                <span>(310) 678-6768</span>
               </a>
               <a
-                href="mailto:ops@conquernation.com"
+                href="mailto:developer@conquernation.com"
                 className="inline-flex items-center gap-2 text-[#1B4676] font-medium hover:text-[#0093D0] transition"
               >
                 <MailIcon className="w-4 h-4 text-[#0093D0]" />
-                <span>ops@conquernation.com</span>
+                <span>developer@conquernation.com</span>
               </a>
             </div>
           </section>
@@ -1405,7 +1405,7 @@ function DriverInfoForm({ onBack }: { onBack: () => void }) {
     e.preventDefault()
     setError(null)
     if (!/^\d{8}$/.test(whpoNumber)) {
-      setError('WHPO number must be exactly 8 digits.')
+      setError('WHPO/Load No must be exactly 8 digits.')
       return
     }
     setLookupBusy(true)
@@ -1417,7 +1417,7 @@ function DriverInfoForm({ onBack }: { onBack: () => void }) {
       if (r.containers.length === 1) {
         setSelectedContainer(r.containers[0].container_no)
       } else if (r.containers.length === 0) {
-        setError('No containers found for this WHPO.')
+        setError('No containers found for this WHPO/Load No.')
       }
     } catch (e) {
       setError(e instanceof ApiError ? e.detail : String(e))
@@ -1500,7 +1500,7 @@ function DriverInfoForm({ onBack }: { onBack: () => void }) {
               </div>
               <div className="flex items-center px-5 py-3">
                 <dt className="w-36 text-xs uppercase tracking-wider font-semibold text-slate-500">
-                  WHPO
+                  WHPO/Load No
                 </dt>
                 <dd className="font-mono text-slate-700">{result.whpo_number}</dd>
               </div>
@@ -1573,7 +1573,7 @@ function DriverInfoForm({ onBack }: { onBack: () => void }) {
             DRIVER &amp; TRUCK INFO
           </h1>
           <p className="mt-3 text-base text-slate-600 max-w-xl leading-relaxed">
-            One driver per container. Look up your WHPO, pick the container, and add
+            One driver per container. Look up your WHPO/Load No, pick the container, and add
             driver, license, plate, and insurance details.
           </p>
         </div>
@@ -1600,7 +1600,7 @@ function DriverInfoForm({ onBack }: { onBack: () => void }) {
           >
             <Section title="Step 1 — Find your shipment">
               <TextField
-                label="WHPO number (8 digits)"
+                label="WHPO/Load No (8 digits)"
                 required
                 value={whpoNumber}
                 onChange={(v) => setWhpoNumber(v.replace(/\D/g, '').slice(0, 8))}
@@ -1617,7 +1617,7 @@ function DriverInfoForm({ onBack }: { onBack: () => void }) {
                 <span>Looking up…</span>
               ) : (
                 <>
-                  <span>Look up WHPO</span>
+                  <span>Look up WHPO/Load No</span>
                   <ArrowRightIcon className="w-4 h-4" />
                 </>
               )}
@@ -1656,7 +1656,7 @@ function DriverInfoForm({ onBack }: { onBack: () => void }) {
                   }}
                   className="text-xs font-medium text-[#1B4676] hover:text-[#0093D0] transition focus:outline-none focus-visible:underline"
                 >
-                  Change WHPO
+                  Change WHPO/Load No
                 </button>
               </div>
               <div className="text-xs text-slate-500 mt-1">
@@ -1704,7 +1704,7 @@ function DriverInfoForm({ onBack }: { onBack: () => void }) {
                     ))}
                   </select>
                   <p className="text-xs text-slate-500 mt-1.5">
-                    This WHPO has {containers.length} containers. Pick the one this
+                    This WHPO/Load No has {containers.length} containers. Pick the one this
                     driver is hauling.
                   </p>
                 </div>
@@ -1854,7 +1854,7 @@ function UpdateShipmentForm({ onBack }: { onBack: () => void }) {
     e.preventDefault()
     setError(null)
     if (!/^\d{8}$/.test(whpoNumber)) {
-      setError('WHPO number must be exactly 8 digits.')
+      setError('WHPO/Load No must be exactly 8 digits.')
       return
     }
     setLookupBusy(true)
@@ -2143,7 +2143,7 @@ function UpdateShipmentForm({ onBack }: { onBack: () => void }) {
               UPDATE SHIPMENT
             </h1>
             <p className="mt-3 text-base text-slate-600 leading-relaxed">
-              Find your shipment by WHPO #. You'll be able to edit container numbers,
+              Find your shipment by WHPO/Load No. You'll be able to edit container numbers,
               arrival dates, and SKU lines — as long as the dock hasn't started
               receiving yet.
             </p>
@@ -2169,7 +2169,7 @@ function UpdateShipmentForm({ onBack }: { onBack: () => void }) {
           >
             <Section title="Step 1 — Find your shipment">
               <TextField
-                label="WHPO number (8 digits)"
+                label="WHPO/Load No (8 digits)"
                 required
                 value={whpoNumber}
                 onChange={(v) => setWhpoNumber(v.replace(/\D/g, '').slice(0, 8))}
@@ -2219,7 +2219,7 @@ function UpdateShipmentForm({ onBack }: { onBack: () => void }) {
               onClick={resetLookup}
               className="text-xs font-medium text-[#1B4676] hover:text-[#0093D0] transition underline-offset-2 hover:underline"
             >
-              Change WHPO
+              Change WHPO/Load No
             </button>
           </div>
         </div>
@@ -2234,8 +2234,8 @@ function UpdateShipmentForm({ onBack }: { onBack: () => void }) {
                 Receiving in progress
               </div>
               <p className="text-sm text-red-900">
-                One or more containers in this WHPO are already being received at the dock.
-                Updates are blocked. Email <a href="mailto:ops@conquernation.com" className="underline font-semibold">ops@conquernation.com</a> if you really need a change.
+                One or more containers in this WHPO/Load No are already being received at the dock.
+                Updates are blocked. Email <a href="mailto:developer@conquernation.com" className="underline font-semibold">developer@conquernation.com</a> if you really need a change.
               </p>
             </div>
           </div>
@@ -2259,7 +2259,7 @@ function UpdateShipmentForm({ onBack }: { onBack: () => void }) {
               '0 1px 2px 0 rgba(15,23,42,0.04), 0 8px 24px -8px rgba(15,23,42,0.08)',
           }}
         >
-          <Section title="Expected arrival (WHPO-level)">
+          <Section title="Expected arrival (WHPO/Load No level)">
             <TextField
               label="Expected arrival date"
               type="date"
@@ -2485,7 +2485,7 @@ function ViewShipmentForm({ onBack }: { onBack: () => void }) {
     e.preventDefault()
     setError(null)
     if (!/^\d{8}$/.test(whpoNumber)) {
-      setError('WHPO number must be exactly 8 digits.')
+      setError('WHPO/Load No must be exactly 8 digits.')
       return
     }
     setLoading(true)
@@ -2518,7 +2518,7 @@ function ViewShipmentForm({ onBack }: { onBack: () => void }) {
               View shipment status
             </h1>
             <p className="mt-3 text-base text-slate-600 max-w-xl leading-relaxed">
-              Pull up everything we have on file for a WHPO — container lines,
+              Pull up everything we have on file for a WHPO/Load No — container lines,
               driver/truck details, and your uploaded documents.
             </p>
           </div>
@@ -2543,7 +2543,7 @@ function ViewShipmentForm({ onBack }: { onBack: () => void }) {
           >
             <Section title="Look up your shipment">
               <TextField
-                label="WHPO number (8 digits)"
+                label="WHPO/Load No (8 digits)"
                 required
                 value={whpoNumber}
                 onChange={(v) => setWhpoNumber(v.replace(/\D/g, '').slice(0, 8))}

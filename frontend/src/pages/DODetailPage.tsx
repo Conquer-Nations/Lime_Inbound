@@ -85,7 +85,7 @@ function Detail({ detail }: { detail: DODetail }) {
           )}
         </div>
         <dl className="mt-4 grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
-          <Field k="WHPO #" v={detail.whpo_number} mono />
+          <Field k="WHPO/Load No" v={detail.whpo_number} mono />
           <Field k="Customer" v={detail.customer_name} />
           <Field k="Expected" v={detail.expected_arrival_date ?? '—'} />
           <Field k="Issued" v={new Date(detail.issued_at).toLocaleString()} />

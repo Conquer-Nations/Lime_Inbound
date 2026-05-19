@@ -176,8 +176,8 @@ async def submit(
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=(
-                f"WHPO {e.whpo_number} is already on file (registered to "
-                f"{e.existing_customer} as {e.existing_do_number}). WHPO numbers "
+                f"WHPO/Load No {e.whpo_number} is already on file (registered to "
+                f"{e.existing_customer} as {e.existing_do_number}). WHPO/Load No "
                 "must be unique — use the Update flow to amend an existing one."
             ),
         )
@@ -383,7 +383,7 @@ async def update_whpo(
             detail=(
                 f"Cannot update — these containers are already being received "
                 f"or have been received: {', '.join(locked)}. "
-                "Contact ops@conquernation.com if you really need a change."
+                "Contact developer@conquernation.com if you really need a change."
             ),
         )
 
@@ -412,7 +412,7 @@ async def update_whpo(
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=(
-                    f"Container {inc.original_container_no} not found on WHPO "
+                    f"Container {inc.original_container_no} not found on WHPO/Load No "
                     f"{whpo_number}. Use a value from /vendor/whpo/{whpo_number}/current."
                 ),
             )
@@ -578,10 +578,10 @@ async def update_whpo(
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=(
-                    f"Container {ex_cn} is on this WHPO but missing from your update. "
+                    f"Container {ex_cn} is on this WHPO/Load No but missing from your update. "
                     "Submit it explicitly (with its current data if unchanged) — "
                     "removing containers via update isn't supported. Email "
-                    "ops@conquernation.com to drop a container."
+                    "developer@conquernation.com to drop a container."
                 ),
             )
 
@@ -1007,10 +1007,10 @@ def _summarize_changes(whpo_number: str, changes: list[WHPOChange]) -> str:
     n_lines = sum(1 for c in changes if c.scope == "line")
     bits: list[str] = []
     if n_whpo:
-        bits.append(f"{n_whpo} WHPO field")
+        bits.append(f"{n_whpo} WHPO/Load No field")
     if n_ctnr:
         bits.append(f"{n_ctnr} container field{'s' if n_ctnr != 1 else ''}")
     if n_lines:
         bits.append(f"{n_lines} SKU line change{'s' if n_lines != 1 else ''}")
     detail = ", ".join(bits) if bits else "no changes"
-    return f"WHPO {whpo_number} updated by vendor — {detail}."
+    return f"WHPO/Load No {whpo_number} updated by vendor — {detail}."

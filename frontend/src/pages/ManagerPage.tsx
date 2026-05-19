@@ -216,7 +216,7 @@ function DOsTab({ data }: { data: DOListItem[] | null }) {
         <thead className="bg-white text-[10.5px] uppercase text-slate-500 border-b border-slate-200">
           <tr>
             <th className="text-left px-4 py-2 font-semibold tracking-wider">DO #</th>
-            <th className="text-left px-4 py-2 font-semibold tracking-wider">WHPO #</th>
+            <th className="text-left px-4 py-2 font-semibold tracking-wider">WHPO/Load No</th>
             <th className="text-left px-4 py-2 font-semibold tracking-wider">Customer</th>
             <th className="text-left px-4 py-2 font-semibold tracking-wider">Status</th>
             <th className="text-right px-4 py-2 font-semibold tracking-wider">Containers</th>

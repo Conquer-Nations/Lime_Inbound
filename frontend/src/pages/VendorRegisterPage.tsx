@@ -145,7 +145,7 @@ export default function VendorRegisterPage() {
             required
             value={company}
             onChange={setCompany}
-            placeholder="TQL Trading Inc."
+            placeholder="Your company name"
             autoComplete="organization"
             hint="Exact legal name. If your company isn't on file with us yet, it'll be created automatically."
           />
@@ -157,7 +157,7 @@ export default function VendorRegisterPage() {
               required
               value={fullName}
               onChange={setFullName}
-              placeholder="Bilal Khan"
+              placeholder="Your full name"
               autoComplete="name"
             />
             <TextField
@@ -166,7 +166,7 @@ export default function VendorRegisterPage() {
               required
               value={email}
               onChange={setEmail}
-              placeholder="bilal@tqltrading.com"
+              placeholder="Your work email"
               autoComplete="email"
             />
           </div>
