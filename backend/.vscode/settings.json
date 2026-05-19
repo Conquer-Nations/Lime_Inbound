@@ -1,0 +1,4 @@
+{
+    "appService.defaultWebAppToDeploy": "/subscriptions/bd9a0d9a-c89d-4680-ae40-19610b25f89c/resourceGroups/cn-warehouse-prod/providers/Microsoft.Web/sites/cn-warehouse-backend",
+    "appService.deploySubpath": "."
+}

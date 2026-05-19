@@ -1,0 +1,22 @@
+__pycache__/
+*.pyc
+.env
+.venv/
+# OneDrive Graph refresh-token cache (contains a credential)
+.onedrive_token_cache.json
+backend/.onedrive_token_cache.json
+.DS_Store
+node_modules/
+dist/
+*.log
+.pytest_cache/
+.ruff_cache/
+
+# Azure Functions secrets + local emulator state
+local.settings.json
+__azurite_db*__.json
+__blobstorage__/
+__queuestorage__/
+.python_packages/
+bin/
+obj/

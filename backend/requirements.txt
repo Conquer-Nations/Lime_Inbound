@@ -1,0 +1,48 @@
+# Production requirements for Azure App Service Linux Python 3.12.
+#
+# Hand-curated (not auto-exported from uv) because the full uv-resolved set
+# pulls in torch + cuda-bindings + cuda-toolkit on Linux for easyocr (~1.5GB
+# of GPU-targeted binaries). App Service B1 doesn't have the disk/RAM for
+# that, and the OCR feature is optional — operators can type container
+# numbers manually. If we ever need OCR in production, run the model in a
+# separate Container App instead.
+#
+# Keep this in sync with pyproject.toml when adding / bumping dependencies.
+
+# ─── Core framework ────────────────────────────────────────────────────
+fastapi>=0.115.0
+uvicorn[standard]>=0.32.0
+python-multipart>=0.0.28
+httpx>=0.28.1
+python-dotenv>=1.0.1
+
+# ─── Settings + validation ─────────────────────────────────────────────
+pydantic>=2.10.0
+pydantic-settings>=2.7.0
+email-validator>=2.2.0
+
+# ─── Database (Postgres async) ─────────────────────────────────────────
+sqlalchemy[asyncio]>=2.0.36
+asyncpg>=0.30.0
+alembic>=1.14.0
+
+# ─── Image handling (no torch / OCR — that lives in dev only) ──────────
+pillow>=12.2.0
+# numpy is needed at module-load time by app/services/ocr.py even though the
+# OCR feature is disabled in prod (the router returns 503). ~30MB, safe to
+# include. Without it the backend fails to start because `from app.routers
+# import ocr as ocr_router` triggers `import numpy as np` which crashes.
+numpy>=1.26.0
+
+# ─── Auth / crypto ─────────────────────────────────────────────────────
+bcrypt>=4.2.0
+pyjwt>=2.10.0
+
+# ─── Microsoft Graph (OneDrive photo uploads) ──────────────────────────
+msal>=1.31.0
+
+# ─── Legacy Google Sheets dependency (sheet_sync's GRAPH mode) ─────────
+# Currently unused at runtime — sheet_sync defaults to webhook mode — but
+# keeping the dep in case ops ever flips to direct Graph API mode.
+gspread>=6.2.1
+google-auth>=2.53.0

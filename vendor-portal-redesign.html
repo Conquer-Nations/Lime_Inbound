@@ -1,0 +1,313 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Vendor Portal — Conquer Nation</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link
+    href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap"
+    rel="stylesheet"
+  />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            ink: {
+              950: '#070D1A',
+              900: '#0B1220',
+              850: '#0F172A',
+              800: '#1E293B',
+              700: '#334155',
+            },
+            steel: {
+              100: '#F1F5F9',
+              200: '#E2E8F0',
+              300: '#CBD5E1',
+              400: '#94A3B8',
+              500: '#64748B',
+              600: '#475569',
+              700: '#334155',
+            },
+            accent: {
+              300: '#FDBA74',
+              400: '#FB923C',
+              500: '#F97316',
+              600: '#EA580C',
+              700: '#C2410C',
+            },
+          },
+          fontFamily: { sans: ['Inter', 'system-ui', 'sans-serif'] },
+          boxShadow: {
+            card: '0 1px 0 0 rgba(255,255,255,0.04) inset, 0 12px 40px -16px rgba(0,0,0,0.6)',
+          },
+        },
+      },
+    };
+  </script>
+  <style>
+    html, body { font-family: 'Inter', system-ui, sans-serif; }
+    body { -webkit-font-smoothing: antialiased; }
+
+    /* Grid background — faint hairlines */
+    .bg-grid {
+      background-image:
+        linear-gradient(rgba(148, 163, 184, 0.07) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(148, 163, 184, 0.07) 1px, transparent 1px);
+      background-size: 56px 56px;
+      mask-image: radial-gradient(ellipse at top, black 30%, transparent 75%);
+      -webkit-mask-image: radial-gradient(ellipse at top, black 30%, transparent 75%);
+    }
+
+    /* Subtle route lines (logistics motif) */
+    .route-lines {
+      background-image:
+        linear-gradient(to right, transparent 0%, rgba(249, 115, 22, 0.18) 30%, rgba(249, 115, 22, 0.18) 70%, transparent 100%);
+      height: 1px;
+    }
+
+    /* Make focus rings visible on dark bg */
+    :focus-visible { outline: none; }
+
+    /* Reduced motion guard */
+    @media (prefers-reduced-motion: reduce) {
+      * { transition: none !important; animation: none !important; }
+    }
+  </style>
+</head>
+
+<body class="min-h-screen bg-ink-950 text-steel-100 antialiased">
+  <!-- Ambient layers -->
+  <div aria-hidden="true" class="fixed inset-0 bg-grid pointer-events-none"></div>
+  <div
+    aria-hidden="true"
+    class="fixed inset-0 pointer-events-none"
+    style="background: radial-gradient(900px circle at 50% -10%, rgba(249,115,22,0.10), transparent 55%);"
+  ></div>
+
+  <!-- Route-line motif (decorative) -->
+  <svg
+    aria-hidden="true"
+    class="fixed top-40 left-0 right-0 w-full opacity-40 pointer-events-none"
+    height="120" preserveAspectRatio="none" viewBox="0 0 1440 120"
+  >
+    <defs>
+      <linearGradient id="rl" x1="0" x2="1">
+        <stop offset="0" stop-color="#F97316" stop-opacity="0"/>
+        <stop offset="0.5" stop-color="#F97316" stop-opacity="0.35"/>
+        <stop offset="1" stop-color="#F97316" stop-opacity="0"/>
+      </linearGradient>
+    </defs>
+    <path d="M0 30 L500 30 L560 70 L1440 70" stroke="url(#rl)" stroke-width="1" fill="none"/>
+    <path d="M0 80 L320 80 L380 40 L1440 40" stroke="url(#rl)" stroke-width="1" fill="none"/>
+  </svg>
+
+  <!-- Top bar -->
+  <header class="relative z-20 border-b border-white/10 bg-ink-900/80 backdrop-blur">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+      <a href="#" class="flex items-center gap-3 group" aria-label="Conquer Nation home">
+        <div
+          class="w-9 h-9 rounded-md bg-gradient-to-br from-accent-500 to-accent-700 flex items-center justify-center text-white font-bold tracking-tight shadow-card"
+          aria-hidden="true"
+        >CN</div>
+        <div class="leading-tight">
+          <div class="text-sm font-semibold tracking-wide text-white">CONQUER NATION</div>
+          <div class="text-[10.5px] text-steel-400 uppercase tracking-[0.22em]">Vendor Portal</div>
+        </div>
+      </a>
+
+      <div class="flex items-center gap-3 sm:gap-4">
+        <div class="hidden sm:flex items-center gap-2 text-xs text-steel-400 mr-2">
+          <span class="inline-flex w-2 h-2 rounded-full bg-emerald-400 shadow-[0_0_10px_rgba(52,211,153,0.7)]" aria-hidden="true"></span>
+          <span>Systems operational</span>
+        </div>
+
+        <div class="hidden md:flex flex-col items-end leading-tight">
+          <div class="text-sm font-medium text-white">Lime Mobility</div>
+          <div class="text-xs text-steel-400">vendor.ops@limemobility.com</div>
+        </div>
+
+        <div
+          class="hidden md:flex w-9 h-9 items-center justify-center rounded-full bg-ink-800 border border-white/10 text-steel-200 text-xs font-semibold"
+          aria-hidden="true"
+        >LM</div>
+
+        <button
+          type="button"
+          class="inline-flex items-center gap-2 rounded-md border border-white/10 hover:border-white/25 px-3 py-1.5 text-sm text-steel-200 hover:text-white hover:bg-white/5 transition focus-visible:ring-2 focus-visible:ring-accent-500/70 focus-visible:ring-offset-2 focus-visible:ring-offset-ink-900"
+          aria-label="Sign out"
+        >
+          <i data-lucide="log-out" class="w-4 h-4" aria-hidden="true"></i>
+          <span class="hidden sm:inline">Sign out</span>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <!-- Breadcrumb -->
+  <nav aria-label="Breadcrumb" class="relative z-10 border-b border-white/5 bg-ink-900/40">
+    <ol class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3 flex items-center gap-2 text-sm text-steel-400">
+      <li class="flex items-center gap-2">
+        <i data-lucide="layout-dashboard" class="w-4 h-4" aria-hidden="true"></i>
+        <a href="#" class="hover:text-white transition">Vendor Portal</a>
+      </li>
+      <li aria-hidden="true"><i data-lucide="chevron-right" class="w-4 h-4 text-steel-600"></i></li>
+      <li aria-current="page" class="text-white font-medium">Select intake type</li>
+    </ol>
+  </nav>
+
+  <!-- Main -->
+  <main class="relative z-10">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12 sm:py-16">
+      <!-- Hero -->
+      <div class="max-w-3xl">
+        <div class="inline-flex items-center gap-2 px-2.5 py-1 rounded-full bg-accent-500/10 border border-accent-500/25 text-accent-300 text-[11px] font-semibold tracking-[0.14em] uppercase mb-5">
+          <span class="w-1.5 h-1.5 rounded-full bg-accent-400" aria-hidden="true"></span>
+          Vendor intake
+        </div>
+        <h1 class="text-3xl sm:text-4xl lg:text-[2.75rem] font-bold tracking-tight text-white leading-[1.1]">
+          What are you submitting today?
+        </h1>
+        <p class="mt-4 text-base sm:text-lg text-steel-400 max-w-2xl leading-relaxed">
+          Pick the workflow that matches your delivery. Conquer Nation operations is notified the moment your information lands in our system.
+        </p>
+      </div>
+
+      <!-- Cards -->
+      <div class="mt-10 grid grid-cols-1 lg:grid-cols-2 gap-5">
+        <!-- New shipment -->
+        <a
+          href="#"
+          class="group relative rounded-xl bg-ink-800/60 border border-white/10 hover:border-accent-500/50 p-6 sm:p-8 transition-all hover:bg-ink-800/80 shadow-card focus-visible:ring-2 focus-visible:ring-accent-500/70 focus-visible:ring-offset-2 focus-visible:ring-offset-ink-950"
+        >
+          <div class="flex items-start justify-between">
+            <div
+              class="w-12 h-12 rounded-lg bg-accent-500/10 border border-accent-500/25 flex items-center justify-center text-accent-300 group-hover:bg-accent-500/20 group-hover:text-accent-200 transition"
+              aria-hidden="true"
+            >
+              <i data-lucide="package-plus" class="w-6 h-6"></i>
+            </div>
+            <span class="text-[10.5px] uppercase tracking-[0.18em] text-steel-500 font-semibold">WHPO Intake</span>
+          </div>
+
+          <h2 class="mt-6 text-xl font-semibold text-white">New shipment</h2>
+          <p class="mt-2 text-sm text-steel-400 leading-relaxed">
+            Submit a Warehouse Purchase Order with container numbers, SKUs, and expected arrival. A Delivery Order is issued automatically.
+          </p>
+
+          <div class="mt-6 flex items-center gap-4 text-xs text-steel-500">
+            <span class="flex items-center gap-1.5">
+              <i data-lucide="clock" class="w-3.5 h-3.5" aria-hidden="true"></i>
+              <span>~2 min</span>
+            </span>
+            <span class="w-px h-3 bg-white/10" aria-hidden="true"></span>
+            <span class="flex items-center gap-1.5">
+              <i data-lucide="hash" class="w-3.5 h-3.5" aria-hidden="true"></i>
+              <span>Requires WHPO&nbsp;#</span>
+            </span>
+          </div>
+
+          <div class="mt-7 flex items-center justify-between border-t border-white/5 pt-5">
+            <span class="text-accent-300 font-medium text-sm group-hover:text-accent-200 transition">Start new shipment</span>
+            <i data-lucide="arrow-right" class="w-4 h-4 text-accent-300 group-hover:translate-x-1 group-hover:text-accent-200 transition" aria-hidden="true"></i>
+          </div>
+        </a>
+
+        <!-- Driver / truck -->
+        <a
+          href="#"
+          class="group relative rounded-xl bg-ink-800/60 border border-white/10 hover:border-accent-500/50 p-6 sm:p-8 transition-all hover:bg-ink-800/80 shadow-card focus-visible:ring-2 focus-visible:ring-accent-500/70 focus-visible:ring-offset-2 focus-visible:ring-offset-ink-950"
+        >
+          <div class="flex items-start justify-between">
+            <div
+              class="w-12 h-12 rounded-lg bg-accent-500/10 border border-accent-500/25 flex items-center justify-center text-accent-300 group-hover:bg-accent-500/20 group-hover:text-accent-200 transition"
+              aria-hidden="true"
+            >
+              <i data-lucide="truck" class="w-6 h-6"></i>
+            </div>
+            <span class="text-[10.5px] uppercase tracking-[0.18em] text-steel-500 font-semibold">Driver Update</span>
+          </div>
+
+          <h2 class="mt-6 text-xl font-semibold text-white">Driver &amp; truck info</h2>
+          <p class="mt-2 text-sm text-steel-400 leading-relaxed">
+            Attach driver name, license, truck plate, and insurance to an existing container. Updates flow to the dock in real time.
+          </p>
+
+          <div class="mt-6 flex items-center gap-4 text-xs text-steel-500">
+            <span class="flex items-center gap-1.5">
+              <i data-lucide="clock" class="w-3.5 h-3.5" aria-hidden="true"></i>
+              <span>~1 min</span>
+            </span>
+            <span class="w-px h-3 bg-white/10" aria-hidden="true"></span>
+            <span class="flex items-center gap-1.5">
+              <i data-lucide="container" class="w-3.5 h-3.5" aria-hidden="true"></i>
+              <span>Requires container&nbsp;#</span>
+            </span>
+          </div>
+
+          <div class="mt-7 flex items-center justify-between border-t border-white/5 pt-5">
+            <span class="text-accent-300 font-medium text-sm group-hover:text-accent-200 transition">Add driver details</span>
+            <i data-lucide="arrow-right" class="w-4 h-4 text-accent-300 group-hover:translate-x-1 group-hover:text-accent-200 transition" aria-hidden="true"></i>
+          </div>
+        </a>
+      </div>
+
+      <!-- Support strip -->
+      <section
+        aria-label="Operations support"
+        class="mt-12 rounded-xl border border-white/5 bg-ink-900/40 p-5 sm:p-6 flex flex-col sm:flex-row sm:items-center gap-5 sm:gap-8"
+      >
+        <div class="flex items-center gap-3">
+          <div class="w-10 h-10 rounded-md bg-white/5 border border-white/5 flex items-center justify-center text-steel-300" aria-hidden="true">
+            <i data-lucide="life-buoy" class="w-5 h-5"></i>
+          </div>
+          <div>
+            <div class="text-sm font-semibold text-white">Need help with intake?</div>
+            <div class="text-xs text-steel-400 mt-0.5">Operations is on the dock Mon–Fri, 6:00 AM – 4:00 PM PT.</div>
+          </div>
+        </div>
+
+        <div class="sm:ml-auto flex flex-wrap items-center gap-x-6 gap-y-3 text-sm">
+          <a href="tel:+13235551234" class="inline-flex items-center gap-2 text-steel-200 hover:text-white transition focus-visible:ring-2 focus-visible:ring-accent-500/70 focus-visible:ring-offset-2 focus-visible:ring-offset-ink-900 rounded">
+            <i data-lucide="phone" class="w-4 h-4 text-accent-400" aria-hidden="true"></i>
+            <span>(323) 555-1234</span>
+          </a>
+          <a href="mailto:ops@conquernation.com" class="inline-flex items-center gap-2 text-steel-200 hover:text-white transition focus-visible:ring-2 focus-visible:ring-accent-500/70 focus-visible:ring-offset-2 focus-visible:ring-offset-ink-900 rounded">
+            <i data-lucide="mail" class="w-4 h-4 text-accent-400" aria-hidden="true"></i>
+            <span>ops@conquernation.com</span>
+          </a>
+          <a href="#" class="inline-flex items-center gap-2 text-steel-200 hover:text-white transition focus-visible:ring-2 focus-visible:ring-accent-500/70 focus-visible:ring-offset-2 focus-visible:ring-offset-ink-900 rounded">
+            <i data-lucide="book-open" class="w-4 h-4 text-accent-400" aria-hidden="true"></i>
+            <span>Vendor handbook</span>
+          </a>
+        </div>
+      </section>
+    </div>
+  </main>
+
+  <!-- Footer -->
+  <footer class="relative z-10 border-t border-white/5 bg-ink-900/60 mt-4">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 flex flex-col sm:flex-row gap-3 sm:items-center justify-between text-xs text-steel-500">
+      <div class="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-4">
+        <span>© 2026 Conquer Nation Inc.</span>
+        <span class="hidden sm:inline text-steel-700">·</span>
+        <span>2651 E. 12th St., Los Angeles, CA 90023</span>
+      </div>
+      <div class="flex items-center gap-5">
+        <a href="#" class="hover:text-steel-200 transition">Help center</a>
+        <a href="#" class="hover:text-steel-200 transition">Privacy</a>
+        <a href="#" class="hover:text-steel-200 transition">Terms</a>
+      </div>
+    </div>
+  </footer>
+
+  <script>
+    // Render lucide icons once DOM is ready.
+    if (window.lucide) lucide.createIcons();
+  </script>
+</body>
+</html>

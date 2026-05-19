@@ -1,0 +1,5 @@
+[config]
+# Tell Azure App Service's Oryx builder to run `pip install -r requirements.txt`
+# during deployment. Without this flag, App Service treats the zip as an
+# already-built app and skips dependency install.
+SCM_DO_BUILD_DURING_DEPLOYMENT=true
