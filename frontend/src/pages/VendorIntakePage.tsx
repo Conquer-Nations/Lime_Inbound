@@ -1711,23 +1711,24 @@ function DriverInfoForm({ onBack }: { onBack: () => void }) {
             {selectedContainer && (
               <>
                 <Section title="Step 3 — Carrier, driver & truck">
+                  <p className="text-xs text-slate-500 mb-3">
+                    All fields are optional — fill in whatever info you have on
+                    hand. Update later as more details come in.
+                  </p>
                   <TextField
                     label="Carrier (transport company)"
-                    required
                     value={d.carrier}
                     onChange={(v) => update('carrier', v)}
                     placeholder="2Fast Transportation"
                   />
                   <TextField
                     label="Driver name"
-                    required
                     value={d.driver_name}
                     onChange={(v) => update('driver_name', v)}
                     placeholder="Alex Carter"
                   />
                   <TextField
                     label="Driver's license number"
-                    required
                     value={d.driver_license}
                     onChange={(v) => update('driver_license', v)}
                     placeholder="CA-D1234567"
@@ -1735,21 +1736,18 @@ function DriverInfoForm({ onBack }: { onBack: () => void }) {
                   <TextField
                     label="Driver's contact number"
                     type="tel"
-                    required
                     value={d.driver_phone}
                     onChange={(v) => update('driver_phone', v)}
                     placeholder="+1 (555) 123-4567"
                   />
                   <TextField
                     label="Truck license plate"
-                    required
                     value={d.truck_license_plate}
                     onChange={(v) => update('truck_license_plate', v.toUpperCase())}
                     placeholder="1ABC234"
                   />
                   <TextField
                     label="Insurance (carrier / policy #)"
-                    required
                     value={d.insurance}
                     onChange={(v) => update('insurance', v)}
                     placeholder="Travelers / POL-12345"

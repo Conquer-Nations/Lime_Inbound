@@ -250,6 +250,15 @@ async def update_container_driver_info(
     whpo_number = container.do.whpo.whpo_number
     do_number = container.do.do_number
 
+    # Build a friendly summary that gracefully skips fields the vendor left blank.
+    parts: list[str] = []
+    if payload.driver_name:
+        parts.append(payload.driver_name)
+    if payload.driver_license:
+        parts.append(f"license {payload.driver_license}")
+    if payload.truck_license_plate:
+        parts.append(f"truck {payload.truck_license_plate}")
+    summary = ", ".join(parts) if parts else "no details provided"
     session.add(
         ActivityLog(
             actor="vendor",
@@ -258,8 +267,7 @@ async def update_container_driver_info(
             ref_id=container.id,
             message=(
                 f"Driver info submitted for container {container.container_no}: "
-                f"{payload.driver_name} (license {payload.driver_license}, "
-                f"truck {payload.truck_license_plate})"
+                f"{summary}"
             ),
             payload={
                 "container_no": container.container_no,

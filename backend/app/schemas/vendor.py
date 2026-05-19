@@ -34,14 +34,15 @@ class VendorPackaging(BaseModel):
 
 
 class VendorDriverInfo(BaseModel):
-    """Driver/truck info for an EXISTING container. Vendor submits closer to delivery."""
+    """Driver/truck info for an EXISTING container. Vendor submits closer to delivery.
+    Every field is optional — vendor sends whatever they have, blanks for the rest."""
 
-    carrier: str = Field(min_length=1, max_length=120)
-    driver_name: str = Field(min_length=1, max_length=120)
-    driver_license: str = Field(min_length=1, max_length=60)
-    driver_phone: str = Field(min_length=1, max_length=40)
-    truck_license_plate: str = Field(min_length=1, max_length=20)
-    insurance: str = Field(min_length=1, max_length=400)
+    carrier: str = Field(default="", max_length=120)
+    driver_name: str = Field(default="", max_length=120)
+    driver_license: str = Field(default="", max_length=60)
+    driver_phone: str = Field(default="", max_length=40)
+    truck_license_plate: str = Field(default="", max_length=20)
+    insurance: str = Field(default="", max_length=400)
 
 
 class DriverInfoResponse(BaseModel):
