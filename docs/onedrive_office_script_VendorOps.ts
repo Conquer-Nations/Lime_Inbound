@@ -166,6 +166,10 @@ function main(
   // ─── NEW: add bol_number column to InboundTable if missing ─────────
   // Run once after deploying the scan-sheets feature. Idempotent — if
   // bol_number already exists, returns ok without touching the sheet.
+  //
+  // Quirk: passing `undefined` for the `values` arg to addColumn() makes
+  // Office Scripts throw "Malformed input to a URL function" — we use
+  // the no-arg overload and rename via setName() instead.
   if (action === "ensure_bol_column") {
     const table = workbook.getTable("InboundTable");
     if (!table) return JSON.stringify({ error: "Table 'InboundTable' not found" });
@@ -178,14 +182,31 @@ function main(
         columns: headers,
       });
     }
-    // Append at the end. -1 = "end of table" in addColumn semantics.
-    table.addColumn(-1, undefined, "bol_number");
+    // No-arg addColumn() appends a blank column at the end of the table.
+    // Then setName() writes the header text. This is the only signature
+    // Office Scripts accepts cleanly for this case.
+    const newCol = table.addColumn();
+    newCol.setName("bol_number");
     const after = table.getHeaderRowRange().getValues()[0].map(h => String(h));
     return JSON.stringify({
       ok: true,
       message: "bol_number column added",
       new_column_count: after.length,
       columns: after,
+    });
+  }
+
+  // ─── Diagnostic: list InboundTable's current header columns ────────
+  // Returns the current column names — useful for confirming the
+  // table's state before/after running ensure_bol_column.
+  if (action === "describe_inbound_table") {
+    const table = workbook.getTable("InboundTable");
+    if (!table) return JSON.stringify({ error: "Table 'InboundTable' not found" });
+    const headers = table.getHeaderRowRange().getValues()[0].map(h => String(h));
+    return JSON.stringify({
+      ok: true,
+      column_count: headers.length,
+      columns: headers,
     });
   }
 
