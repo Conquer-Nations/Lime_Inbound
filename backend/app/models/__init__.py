@@ -293,7 +293,12 @@ class Pallet(Base):
 
 
 class Scan(Base):
-    """Append-only audit log of every barcode event."""
+    """Append-only audit log of every barcode event.
+
+    The scan-sheet flow uses `serial_number` (with a partial unique index
+    on receipt_id+serial_number for per-container dedup) and `row_notes`.
+    Legacy scans (pre-scan-sheet) have both NULL — still valid.
+    """
 
     __tablename__ = "scans"
 
@@ -303,6 +308,8 @@ class Scan(Base):
     container_id: Mapped[int | None] = mapped_column(ForeignKey("containers.id"), index=True)
     sku_id: Mapped[int | None] = mapped_column(ForeignKey("skus.id"))
     item_barcode: Mapped[str] = mapped_column(String(120), index=True)
+    serial_number: Mapped[str | None] = mapped_column(String(120))
+    row_notes: Mapped[str | None] = mapped_column(Text)
     scanned_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     scanned_by: Mapped[str] = mapped_column(String(80))
     result: Mapped[str] = mapped_column(String(32))

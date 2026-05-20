@@ -89,6 +89,21 @@ class Settings(BaseSettings):
     # = "Vendor Files" (created automatically by Graph PUT on first upload).
     onedrive_graph_root: str = "Vendor Files"
 
+    # ─── Scan-sheet feature (Lime 3PL Inbound Receipt) ──────────────────
+    # When True, exposes the operator scan-sheet flow + auditor endpoints.
+    # Default off — flip to true ONLY after the OCR Container App URL is
+    # set and a smoke test has run. Falls back gracefully when off.
+    scan_sheets_enabled: bool = False
+    # Comma-separated list of vendor emails (or whatever future SSO subject)
+    # allowed to access /audit/* endpoints. Single-source-of-truth; trivial
+    # to extend without code change.
+    auditor_emails: list[str] = ["developer@conquernation.com"]
+    # Separate Azure Container App hosting EasyOCR (torch ~1.5GB doesn't fit
+    # on the main App Service plan). Operator's container-plate photo POSTs
+    # to {URL}/container-photo and gets back candidate strings. Leave blank
+    # to fall back to operator-typed container numbers (always works).
+    ocr_service_url: str = ""
+
     # ─── rclone-based OneDrive upload (fallback when Graph apps are blocked)
     # rclone is a third-party file sync tool with its own pre-registered
     # multi-tenant Microsoft app. When USC blocks ALL Microsoft first-party

@@ -90,3 +90,22 @@ def current_vendor_required(
             headers={"WWW-Authenticate": "Bearer"},
         )
     return claims
+
+
+def current_auditor_required(
+    claims: dict[str, Any] = Depends(current_vendor_required),
+) -> dict[str, Any]:
+    """Gate /audit/* endpoints to a hardcoded email whitelist
+    (`settings.auditor_emails`). Reuses the existing vendor JWT — no new
+    auth flow, no new password. To add an auditor, append their email to
+    the config list and ask them to register normally."""
+    from app.config import settings as _settings
+
+    email = (claims.get("sub") or "").strip().lower()
+    allowed = {e.strip().lower() for e in _settings.auditor_emails}
+    if email not in allowed:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Audit access is restricted.",
+        )
+    return claims
