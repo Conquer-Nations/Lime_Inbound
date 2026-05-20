@@ -335,6 +335,7 @@ async def fetch_inbound_rows_for_do(session: AsyncSession, do_id: int) -> list[d
         select(
             Container.container_no,
             WHPO.whpo_number,
+            WHPO.bol_number,
             Container.expected_arrival_date,
             Container.expected_arrival_time,
             ContainerLine.qty,
@@ -379,6 +380,7 @@ async def fetch_inbound_rows_for_do(session: AsyncSession, do_id: int) -> list[d
             {
                 "container_no": r.container_no,
                 "whpo_number": r.whpo_number,
+                "bol_number": r.bol_number,
                 "expected_arrival_date": r.expected_arrival_date.isoformat() if r.expected_arrival_date else None,
                 "expected_arrival_time": r.expected_arrival_time.isoformat() if r.expected_arrival_time else None,
                 "qty": r.qty,

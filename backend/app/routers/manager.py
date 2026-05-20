@@ -542,6 +542,7 @@ def _iso(v):
 INBOUND_COLUMNS = [
     "container_no",
     "whpo_number",
+    "bol_number",
     "expected_arrival_date",
     "expected_arrival_time",
     "qty",
@@ -574,6 +575,7 @@ async def _fetch_inbound(session: AsyncSession, limit: int = 1000):
         select(
             Container.container_no,
             WHPO.whpo_number,
+            WHPO.bol_number,
             Container.expected_arrival_date,
             Container.expected_arrival_time,
             ContainerLine.qty,
@@ -626,6 +628,7 @@ async def _fetch_inbound(session: AsyncSession, limit: int = 1000):
             {
                 "container_no": r.container_no,
                 "whpo_number": r.whpo_number,
+                "bol_number": r.bol_number,
                 "expected_arrival_date": _iso(r.expected_arrival_date),
                 "expected_arrival_time": _iso(r.expected_arrival_time),
                 "qty": r.qty,
