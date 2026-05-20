@@ -559,6 +559,7 @@ INBOUND_COLUMNS = [
     "insurance",
     "carrier",
     "last_updated_at",
+    "bol_number",     # New (column 20). Kept in sync with sheet_sync.HEADERS.
 ]
 
 
@@ -574,6 +575,7 @@ async def _fetch_inbound(session: AsyncSession, limit: int = 1000):
         select(
             Container.container_no,
             WHPO.whpo_number,
+            WHPO.bol_number,
             Container.expected_arrival_date,
             Container.expected_arrival_time,
             ContainerLine.qty,
@@ -622,6 +624,9 @@ async def _fetch_inbound(session: AsyncSession, limit: int = 1000):
     out: list[dict] = []
     for r in rows:
         payload = r.raw_payload or {}
+        # Key order kept in sync with sheet_sync.HEADERS — bol_number is
+        # appended at the end (column 20) so existing Logic App positional
+        # mappings stay intact.
         out.append(
             {
                 "container_no": r.container_no,
@@ -643,6 +648,7 @@ async def _fetch_inbound(session: AsyncSession, limit: int = 1000):
                 "insurance": r.insurance,
                 "carrier": r.carrier,
                 "last_updated_at": last_updated_by_do.get(r.do_number),
+                "bol_number": r.bol_number,
             }
         )
     return out

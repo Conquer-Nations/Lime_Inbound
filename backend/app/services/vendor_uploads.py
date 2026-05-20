@@ -26,6 +26,10 @@ DOCUMENT_KINDS: Final[dict[str, str]] = {
     "insurance": "Insurance",
     "registration": "Registration",
     "dispatch_order": "Driver info sheet / Dispatch order / Tender",
+    # Bill of Lading — uploaded via the Update Shipment screen before
+    # the truck arrives. Paired with WHPO.bol_number (text input on the
+    # same screen) which is what populates F5 on the scan sheet.
+    "bol": "Bill of Lading (BOL)",
 }
 
 

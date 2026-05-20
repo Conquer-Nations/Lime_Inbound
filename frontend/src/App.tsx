@@ -1,6 +1,7 @@
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
 import { AuthProvider, useAuth } from './auth/AuthContext'
 import { VendorAuthProvider } from './auth/VendorAuthContext'
+import AuditPage from './pages/AuditPage'
 import LoginPage from './pages/LoginPage'
 import OperatorPage from './pages/OperatorPage'
 import ManagerPage from './pages/ManagerPage'
@@ -49,6 +50,9 @@ export default function App() {
               path="/vendor/forgot-password"
               element={<VendorForgotPasswordPage />}
             />
+            {/* Scan-sheet audit — visible only to whitelisted emails.
+                AuditPage handles its own redirect for non-auditors. */}
+            <Route path="/vendor/audit" element={<AuditPage />} />
             <Route
               path="/operator"
               element={

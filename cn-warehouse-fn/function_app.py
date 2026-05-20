@@ -8,7 +8,8 @@ HEADERS = ["container_no","whpo_number","expected_arrival_date",
            "expected_arrival_time","qty","product_type","sku","customer",
            "do_number","submitter_name","submitter_email","submitted_at",
            "driver_name","driver_license","driver_phone",
-           "truck_license_plate","insurance","carrier","last_updated_at"]
+           "truck_license_plate","insurance","carrier","last_updated_at",
+           "bol_number"]  # column 20 — keep in sync with backend HEADERS
 
 @app.route(route="AppendInbound", methods=["POST"])
 def append_inbound(req: func.HttpRequest) -> func.HttpResponse:

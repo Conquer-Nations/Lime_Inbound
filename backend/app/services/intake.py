@@ -115,6 +115,7 @@ async def submit_whpo(
         whpo_number=payload.whpo_number,
         customer_id=customer.id,
         notes=payload.notes,
+        bol_number=(payload.bol_number or None),
         raw_payload=payload.model_dump(mode="json"),
     )
     session.add(whpo)
@@ -334,6 +335,7 @@ async def fetch_inbound_rows_for_do(session: AsyncSession, do_id: int) -> list[d
         select(
             Container.container_no,
             WHPO.whpo_number,
+            WHPO.bol_number,
             Container.expected_arrival_date,
             Container.expected_arrival_time,
             ContainerLine.qty,
@@ -374,6 +376,9 @@ async def fetch_inbound_rows_for_do(session: AsyncSession, do_id: int) -> list[d
     out: list[dict] = []
     for r in rows:
         payload = r.raw_payload or {}
+        # Key order matters — Logic App's "Add a row into a table" uses
+        # items('For_each')[N] positional indexing. Keep the original 19
+        # columns first; bol_number is the new 20th column.
         out.append(
             {
                 "container_no": r.container_no,
@@ -395,6 +400,7 @@ async def fetch_inbound_rows_for_do(session: AsyncSession, do_id: int) -> list[d
                 "insurance": r.insurance,
                 "carrier": r.carrier,
                 "last_updated_at": last_updated_iso,
+                "bol_number": r.bol_number,
             }
         )
     return out

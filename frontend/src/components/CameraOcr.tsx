@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { API_BASE } from '../api/client'
+import { OCR_ENDPOINT } from '../api/client'
 import Spinner from './Spinner'
 
 type Status = 'idle' | 'reading' | 'done' | 'error'
@@ -47,7 +47,7 @@ export default function CameraOcr({ onAccept }: Props) {
     form.append('photo', file)
 
     try {
-      const res = await fetch(`${API_BASE}/ocr/container-photo`, {
+      const res = await fetch(OCR_ENDPOINT, {
         method: 'POST',
         body: form,
       })

@@ -1,0 +1,18 @@
+# cn-ocr-service Python deps.
+#
+# Pinned to CPU-only torch wheels so the resulting image stays around
+# 1.5GB instead of the ~5GB GPU variant. The Dockerfile passes
+#   --extra-index-url https://download.pytorch.org/whl/cpu
+# to pip so these versions resolve to the CPU build.
+
+fastapi>=0.115.0
+uvicorn[standard]>=0.32.0
+python-multipart>=0.0.28
+pillow>=12.2.0
+numpy>=1.26.0
+
+# EasyOCR + torch (CPU). Versions chosen for compatibility with
+# easyocr 1.7's torchvision range.
+torch>=2.4.0
+torchvision>=0.19.0
+easyocr>=1.7.2

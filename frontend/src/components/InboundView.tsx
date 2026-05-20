@@ -4,6 +4,7 @@ import { API_BASE } from '../api/client'
 interface InboundRow {
   container_no: string
   whpo_number: string
+  bol_number: string | null
   expected_arrival_date: string | null
   expected_arrival_time: string | null
   qty: number
@@ -26,6 +27,7 @@ interface InboundRow {
 const COLUMNS: { key: keyof InboundRow; label: string }[] = [
   { key: 'container_no', label: 'Container' },
   { key: 'whpo_number', label: 'WHPO/Load No' },
+  { key: 'bol_number', label: 'BOL #' },
   { key: 'expected_arrival_date', label: 'Date' },
   { key: 'expected_arrival_time', label: 'Time' },
   { key: 'qty', label: 'Qty' },
@@ -155,6 +157,7 @@ export default function InboundView() {
     return (
       r.container_no.toLowerCase().includes(q) ||
       r.whpo_number.includes(filter) ||
+      (r.bol_number ?? '').toLowerCase().includes(q) ||
       r.sku.toLowerCase().includes(q) ||
       r.customer.toLowerCase().includes(q) ||
       (r.product_type ?? '').toLowerCase().includes(q) ||
@@ -192,7 +195,7 @@ export default function InboundView() {
             <div className="relative">
               <input
                 type="text"
-                placeholder="Filter by container / WHPO/Load No / SKU / customer…"
+                placeholder="Filter by container / WHPO/Load No / BOL / SKU / customer…"
                 value={filter}
                 onChange={(e) => setFilter(e.target.value)}
                 className="border border-slate-300 rounded-md pl-8 pr-3 py-1.5 text-sm w-72 text-slate-800 placeholder:text-slate-400 focus:border-[#0093D0] focus:ring-2 focus:ring-[#0093D0]/20 focus:outline-none transition"
