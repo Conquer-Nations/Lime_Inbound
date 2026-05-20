@@ -47,6 +47,10 @@ HEADERS = [
     "insurance",
     "carrier",
     "last_updated_at",
+    # New (column 20) — appended at the end so the existing 19 positions
+    # stay locked. The Logic App row mapping just needs the new column
+    # mapped to items('For_each')[19].
+    "bol_number",
 ]
 
 
