@@ -3,6 +3,7 @@ import { useAuth } from '../auth/AuthContext'
 import {
   api,
   ApiError,
+  OCR_AVAILABLE,
   SCAN_SHEETS_ENABLED,
   type ScanSheetOpenResponse,
 } from '../api/client'
@@ -311,7 +312,9 @@ function EnterContainer({
           CONTAINER INTAKE
         </h1>
         <p className="mt-2 text-slate-600">
-          Photograph the container number plate, or type it directly.
+          {OCR_AVAILABLE
+            ? 'Photograph the container number plate, or type it directly.'
+            : 'Type the container number to open the scan sheet.'}
         </p>
       </div>
 
@@ -322,15 +325,22 @@ function EnterContainer({
             '0 1px 2px 0 rgba(15,23,42,0.04), 0 8px 24px -8px rgba(15,23,42,0.08)',
         }}
       >
-        <CameraOcr onAccept={(c) => onChange(c)} />
-
-        <div className="flex items-center gap-3">
-          <div className="flex-1 h-px bg-slate-200" />
-          <span className="text-[10.5px] text-slate-500 uppercase tracking-[0.18em] font-semibold">
-            or type manually
-          </span>
-          <div className="flex-1 h-px bg-slate-200" />
-        </div>
+        {/* The photo-capture flow only shows up when VITE_OCR_BASE is
+            wired — otherwise the OCR service isn't reachable and the
+            operator would hit a confusing 503. Manual entry below
+            always works regardless. */}
+        {OCR_AVAILABLE && (
+          <>
+            <CameraOcr onAccept={(c) => onChange(c)} />
+            <div className="flex items-center gap-3">
+              <div className="flex-1 h-px bg-slate-200" />
+              <span className="text-[10.5px] text-slate-500 uppercase tracking-[0.18em] font-semibold">
+                or type manually
+              </span>
+              <div className="flex-1 h-px bg-slate-200" />
+            </div>
+          </>
+        )}
 
         <form onSubmit={onSubmit}>
           <label className="block text-xs font-semibold text-[#1B4676] mb-1.5">

@@ -31,6 +31,22 @@ const BASE = API_BASE
 export const SCAN_SHEETS_ENABLED =
   String(import.meta.env.VITE_SCAN_SHEETS_ENABLED ?? '').toLowerCase() === 'true'
 
+/**
+ * Standalone EasyOCR Container App URL — set after the cn-ocr-service is
+ * deployed to Azure Container Apps. When set, the operator's photo-of-
+ * container-plate button is shown and posts directly to this service.
+ * When unset, the OCR feature stays hidden and operators type the
+ * container number manually (their existing flow). Either path works.
+ *
+ * Trailing slashes are tolerated; the call always hits `{base}/container-photo`.
+ */
+const _ocr_base_raw = (import.meta.env.VITE_OCR_BASE as string | undefined) ?? ''
+export const OCR_BASE = _ocr_base_raw.replace(/\/+$/, '')
+export const OCR_AVAILABLE = OCR_BASE.length > 0
+export const OCR_ENDPOINT = OCR_AVAILABLE
+  ? `${OCR_BASE}/container-photo`
+  : `${BASE}/ocr/container-photo`   // falls back to the main backend (503 in prod today)
+
 class ApiError extends Error {
   status: number
   detail: string
