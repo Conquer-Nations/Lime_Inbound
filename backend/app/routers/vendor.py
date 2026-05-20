@@ -348,6 +348,7 @@ async def get_whpo_current_state(
         do_number=whpo.do.do_number,
         customer_name=whpo.customer.name,
         expected_arrival_date=whpo.do.expected_arrival_date,
+        bol_number=whpo.bol_number,
         containers=containers_out,
         any_locked=any_locked,
     )
@@ -411,6 +412,21 @@ async def update_whpo(
             )
         )
         do.expected_arrival_date = payload.expected_arrival_date
+
+    # WHPO-level: bol_number. None ⇒ leave unchanged. Empty string ⇒
+    # explicit clear (vendor wiped the field). Anything else ⇒ set/replace.
+    if payload.bol_number is not None:
+        new_bol = payload.bol_number.strip() or None
+        if new_bol != whpo.bol_number:
+            changes.append(
+                WHPOChange(
+                    scope="whpo",
+                    field="bol_number",
+                    before=whpo.bol_number,
+                    after=new_bol,
+                )
+            )
+            whpo.bol_number = new_bol
 
     # Per-container: container_no, expected arrival, lines
     incoming_keys = {c.original_container_no for c in payload.containers}

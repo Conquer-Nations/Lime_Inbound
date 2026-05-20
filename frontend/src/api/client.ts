@@ -22,6 +22,15 @@ export const API_BASE =
   (import.meta.env.VITE_API_BASE as string | undefined) ?? '/api'
 const BASE = API_BASE
 
+/**
+ * Scan-sheet feature flag — frontend-side. Mirrors the backend's
+ * `SCAN_SHEETS_ENABLED` setting; both must be ON for the operator
+ * scan-sheet UI and the auditor page to render. Defaults to false so
+ * production stays unaffected until we flip both.
+ */
+export const SCAN_SHEETS_ENABLED =
+  String(import.meta.env.VITE_SCAN_SHEETS_ENABLED ?? '').toLowerCase() === 'true'
+
 class ApiError extends Error {
   status: number
   detail: string
@@ -167,6 +176,7 @@ export const api = {
       do_number: string
       customer_name: string
       expected_arrival_date: string | null
+      bol_number: string | null
       any_locked: boolean
       containers: {
         container_no: string
@@ -189,6 +199,7 @@ export const api = {
     whpo_number: string,
     payload: {
       expected_arrival_date: string | null
+      bol_number?: string | null
       containers: {
         original_container_no: string
         container_no: string
@@ -363,6 +374,158 @@ export const api = {
     }
     return res.blob()
   },
+
+  // ─── Scan-sheet (Day-1 feature, gated by backend SCAN_SHEETS_ENABLED) ──
+  openScanSheet: (container_no: string, operator: string) =>
+    request<ScanSheetOpenResponse>(
+      `/operator/sheet/open?operator=${encodeURIComponent(operator)}`,
+      { method: 'POST', body: JSON.stringify({ container_no }) },
+    ),
+
+  recordScanRow: (
+    receipt_id: number,
+    operator: string,
+    payload: { serial_number: string; sku?: string | null; notes?: string | null },
+  ) =>
+    request<ScanRecordResponse>(
+      `/operator/sheet/${receipt_id}/scan?operator=${encodeURIComponent(operator)}`,
+      { method: 'POST', body: JSON.stringify(payload) },
+    ),
+
+  finishScanSheet: (receipt_id: number, operator: string) =>
+    request<ScanFinishResponse>(
+      `/operator/sheet/${receipt_id}/finish?operator=${encodeURIComponent(operator)}`,
+      { method: 'POST' },
+    ),
+
+  viewScanSheet: (receipt_id: number) =>
+    request<ScanSheetOpenResponse>(`/operator/sheet/${receipt_id}`),
+
+  // ─── Auditor (email-whitelisted) ────────────────────────────────────
+  listAuditSheets: (params: {
+    year?: number | null
+    month?: number | null
+    container_no?: string | null
+    whpo_number?: string | null
+  }) => {
+    const q = new URLSearchParams()
+    if (params.year != null) q.set('year', String(params.year))
+    if (params.month != null) q.set('month', String(params.month))
+    if (params.container_no) q.set('container_no', params.container_no)
+    if (params.whpo_number) q.set('whpo_number', params.whpo_number)
+    return request<AuditSheetListResponse>(
+      `/audit/sheets${q.toString() ? '?' + q.toString() : ''}`,
+    )
+  },
+
+  getAuditSheet: (receipt_id: number) =>
+    request<AuditSheetDetailResponse>(`/audit/sheets/${receipt_id}`),
+
+  /** Download a single container as TEMPLATE.xlsx clone. Returns Blob.
+   *  Uses the standard JWT — auditor whitelist enforced server-side. */
+  downloadAuditSheetXlsx: async (receipt_id: number): Promise<Blob> => {
+    const headers: Record<string, string> = {}
+    const token = readVendorToken()
+    if (token) headers.Authorization = `Bearer ${token}`
+    const res = await fetch(
+      `${BASE}/audit/sheets/${receipt_id}/export.xlsx`,
+      { headers },
+    )
+    if (!res.ok) throw new ApiError(res.status, res.statusText)
+    return res.blob()
+  },
+
+  downloadAuditBulkXlsx: async (params: {
+    year?: number | null
+    month?: number | null
+    container_no?: string | null
+    whpo_number?: string | null
+  }): Promise<Blob> => {
+    const q = new URLSearchParams()
+    if (params.year != null) q.set('year', String(params.year))
+    if (params.month != null) q.set('month', String(params.month))
+    if (params.container_no) q.set('container_no', params.container_no)
+    if (params.whpo_number) q.set('whpo_number', params.whpo_number)
+    const headers: Record<string, string> = {}
+    const token = readVendorToken()
+    if (token) headers.Authorization = `Bearer ${token}`
+    const res = await fetch(
+      `${BASE}/audit/sheets/export.xlsx${q.toString() ? '?' + q.toString() : ''}`,
+      { headers },
+    )
+    if (!res.ok) throw new ApiError(res.status, res.statusText)
+    return res.blob()
+  },
+}
+
+// ─── Scan-sheet types (mirror backend Pydantic schemas) ───────────────
+
+export interface ScanSheetHeader {
+  receipt_id: number
+  container_no: string
+  whpo_number: string
+  do_number: string
+  customer_name: string
+  bol_number: string | null
+  received_date: string         // ISO date
+  start_timestamp: string       // ISO datetime
+  completed_timestamp: string | null
+  location: string
+  is_completed: boolean
+}
+
+export interface ScanSheetRow {
+  id: number
+  container_no: string
+  sku: string | null
+  qty: number
+  serial_number: string | null
+  imei: string | null
+  scanned_by: string
+  notes: string | null
+  scanned_at: string
+}
+
+export interface ScanSheetOpenResponse {
+  header: ScanSheetHeader
+  rows: ScanSheetRow[]
+}
+
+export interface ScanRecordResponse {
+  accepted: boolean
+  row: ScanSheetRow | null
+  duplicate_of_row_id: number | null
+  error: string | null
+  total_scanned: number
+}
+
+export interface ScanFinishResponse {
+  receipt_id: number
+  container_no: string
+  total_scanned: number
+  finished_at: string
+  download_url: string
+}
+
+export interface AuditSheetListItem {
+  receipt_id: number
+  container_no: string
+  whpo_number: string
+  customer_name: string
+  received_date: string
+  scan_count: number
+  status: string
+  finished_at: string | null
+}
+
+export interface AuditSheetListResponse {
+  sheets: AuditSheetListItem[]
+  total: number
+}
+
+export interface AuditSheetDetailResponse {
+  header: ScanSheetHeader
+  rows: ScanSheetRow[]
 }
 
 export { ApiError }

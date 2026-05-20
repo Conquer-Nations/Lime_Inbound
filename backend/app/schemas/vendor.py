@@ -142,6 +142,7 @@ class WHPOCurrentState(BaseModel):
     do_number: str
     customer_name: str
     expected_arrival_date: date | None = None
+    bol_number: str | None = None
     containers: list[WHPOCurrentContainer]
     any_locked: bool  # at least one container is receiving/received → can't update
 
@@ -172,6 +173,8 @@ class WHPOUpdateContainer(BaseModel):
 
 class WHPOUpdateRequest(BaseModel):
     expected_arrival_date: date | None = None
+    # Bill of Lading reference number. None = leave as-is, "" = explicit clear.
+    bol_number: str | None = None
     containers: list[WHPOUpdateContainer] = Field(min_length=1)
 
 

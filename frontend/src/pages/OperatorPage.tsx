@@ -1,8 +1,14 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { useAuth } from '../auth/AuthContext'
-import { api, ApiError } from '../api/client'
+import {
+  api,
+  ApiError,
+  SCAN_SHEETS_ENABLED,
+  type ScanSheetOpenResponse,
+} from '../api/client'
 import BrandMark from '../components/BrandMark'
 import CameraOcr from '../components/CameraOcr'
+import ScanSheetMode from '../components/ScanSheetMode'
 import type {
   ContainerLookupResponse,
   ScanResponse,
@@ -26,6 +32,15 @@ export default function OperatorPage() {
     total_scanned: number
   } | null>(null)
 
+  // Scan-sheet mode state — used only when SCAN_SHEETS_ENABLED is true.
+  // Holds the auto-opened receipt + pre-loaded rows from /operator/sheet/open.
+  const [scanSheet, setScanSheet] = useState<ScanSheetOpenResponse | null>(null)
+  const [sheetFinishSummary, setSheetFinishSummary] = useState<{
+    container_no: string
+    total_scanned: number
+    download_url: string
+  } | null>(null)
+
   const scanInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
@@ -37,10 +52,28 @@ export default function OperatorPage() {
     setError(null)
     setBusy(true)
     try {
-      const data = await api.lookupContainer(containerNo.toUpperCase(), operator)
-      setLookup(data)
-      setLastScan(null)
-      setPhase('scanning')
+      if (SCAN_SHEETS_ENABLED) {
+        // Scan-sheet flow: opens a Receipt + returns the pre-filled header
+        // and any existing rows (re-open case). The legacy lookup path is
+        // skipped entirely so we never create two receipts for the same
+        // container.
+        const sheet = await api.openScanSheet(
+          containerNo.toUpperCase(),
+          operator,
+        )
+        setScanSheet(sheet)
+        setLookup(null)
+        setLastScan(null)
+        setPhase('scanning')
+      } else {
+        const data = await api.lookupContainer(
+          containerNo.toUpperCase(),
+          operator,
+        )
+        setLookup(data)
+        setLastScan(null)
+        setPhase('scanning')
+      }
     } catch (e) {
       setError(e instanceof ApiError ? e.detail : String(e))
     } finally {
@@ -83,15 +116,33 @@ export default function OperatorPage() {
     setLookup(null)
     setLastScan(null)
     setFinishSummary(null)
+    setScanSheet(null)
+    setSheetFinishSummary(null)
     setError(null)
     setPhase('enter_container')
   }
 
+  function handleSheetFinished(summary: {
+    receipt_id: number
+    container_no: string
+    total_scanned: number
+    download_url: string
+  }) {
+    setSheetFinishSummary({
+      container_no: summary.container_no,
+      total_scanned: summary.total_scanned,
+      download_url: summary.download_url,
+    })
+    setPhase('done')
+  }
+
+  const activeContainerNo =
+    scanSheet?.header.container_no ?? lookup?.container_no ?? ''
   const phaseLabel =
     phase === 'enter_container'
       ? 'Container intake'
       : phase === 'scanning'
-      ? `Scanning ${lookup?.container_no ?? ''}`
+      ? `Scanning ${activeContainerNo}`
       : 'Container closed'
 
   return (
@@ -116,7 +167,15 @@ export default function OperatorPage() {
           />
         )}
 
-        {phase === 'scanning' && lookup && (
+        {phase === 'scanning' && scanSheet && SCAN_SHEETS_ENABLED && (
+          <ScanSheetMode
+            sheet={scanSheet}
+            operator={operator}
+            onFinished={handleSheetFinished}
+          />
+        )}
+
+        {phase === 'scanning' && lookup && !SCAN_SHEETS_ENABLED && (
           <Scanning
             lookup={lookup}
             lastScan={lastScan}
@@ -129,7 +188,14 @@ export default function OperatorPage() {
           />
         )}
 
-        {phase === 'done' && finishSummary && (
+        {phase === 'done' && sheetFinishSummary && (
+          <SheetDonePanel
+            summary={sheetFinishSummary}
+            onNext={resetForNextContainer}
+          />
+        )}
+
+        {phase === 'done' && !sheetFinishSummary && finishSummary && (
           <DonePanel summary={finishSummary} onNext={resetForNextContainer} />
         )}
       </div>
@@ -584,6 +650,64 @@ function DonePanel({
         <span>Next container</span>
         <ArrowRightIcon className="w-4 h-4" />
       </button>
+    </div>
+  )
+}
+
+// ─── Phase 3 (scan-sheet variant): done ────────────────────────────────
+
+function SheetDonePanel({
+  summary,
+  onNext,
+}: {
+  summary: { container_no: string; total_scanned: number; download_url: string }
+  onNext: () => void
+}) {
+  return (
+    <div className="max-w-xl mx-auto text-center">
+      <div className="mb-6 flex flex-col items-center">
+        <div
+          className="w-16 h-16 rounded-full bg-emerald-500/10 border-2 border-emerald-500/40 flex items-center justify-center text-emerald-600 mb-4"
+          aria-hidden
+        >
+          <CheckIcon className="w-8 h-8" />
+        </div>
+        <div className="inline-flex items-center gap-2 px-2.5 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/25 text-emerald-700 text-[11px] font-semibold tracking-[0.14em] uppercase mb-2">
+          <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" aria-hidden />
+          Locked
+        </div>
+        <h2 className="text-3xl sm:text-4xl font-bold tracking-tight text-[#1B4676]">
+          Sheet finalized
+        </h2>
+        <p className="mt-2 text-slate-600">
+          <span className="font-mono font-bold text-[#1B4676]">
+            {summary.container_no}
+          </span>{' '}
+          —{' '}
+          <span className="font-bold text-[#1B4676]">
+            {summary.total_scanned}
+          </span>{' '}
+          scan{summary.total_scanned === 1 ? '' : 's'} recorded.
+        </p>
+      </div>
+
+      <div className="flex items-center justify-center gap-3 flex-wrap">
+        <a
+          href={summary.download_url}
+          download
+          className="inline-flex items-center gap-2 bg-[#1B4676] hover:bg-[#224E72] text-white font-bold rounded-full px-6 py-3 text-base transition shadow-[0_8px_24px_-4px_rgba(27,70,118,0.45)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#0093D0] focus-visible:ring-offset-2"
+        >
+          <span>Download Excel</span>
+        </a>
+        <button
+          type="button"
+          onClick={onNext}
+          className="inline-flex items-center gap-2 bg-[#0093D0] hover:bg-[#00A8E8] text-white font-bold rounded-full px-7 py-3 text-base transition shadow-[0_8px_24px_-4px_rgba(0,147,208,0.5)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#0093D0] focus-visible:ring-offset-2"
+        >
+          <span>Next container</span>
+          <ArrowRightIcon className="w-4 h-4" />
+        </button>
+      </div>
     </div>
   )
 }

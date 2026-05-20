@@ -112,6 +112,12 @@ class WHPO(Base):
     insurance: Mapped[str | None] = mapped_column(Text)
     driver_info_received_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
+    # Bill of Lading reference number — vendor enters via the Update
+    # Shipment screen before truck arrival. The matching BOL PDF lives
+    # in ContainerDocument with kind='bol'. Scan-sheet export reads this
+    # value into TEMPLATE.xlsx cell F5.
+    bol_number: Mapped[str | None] = mapped_column(String(80))
+
     customer: Mapped[Customer] = relationship(back_populates="whpos")
     do: Mapped[DO | None] = relationship(back_populates="whpo", uselist=False)
 

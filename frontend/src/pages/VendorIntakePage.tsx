@@ -1,12 +1,13 @@
 import { useMemo, useState } from 'react'
 import { Link, Navigate, useNavigate } from 'react-router-dom'
-import { api, ApiError } from '../api/client'
+import { api, ApiError, SCAN_SHEETS_ENABLED } from '../api/client'
 import { useVendorAuth } from '../auth/VendorAuthContext'
 import Spinner from '../components/Spinner'
 import VendorPortalChrome from '../components/VendorPortalChrome'
 import { ContainerDocumentUploads } from '../components/ContainerDocumentUploads'
 import type { VendorContainerSubmission, VendorLineItem, WHPOIntakeResponse } from '../types/api'
 import BrandMark from '../components/BrandMark'
+import { isAuditor } from './AuditPage'
 
 const CUSTOMERS = ['Lime Mobility', 'Boviet Solar', 'Pan American Wire MFG', 'National Plastic']
 
@@ -1026,6 +1027,32 @@ function ModeChooser({
               </a>
             </div>
           </section>
+
+          {/* Audit console link — rendered only for hardcoded auditor
+              emails. Keeps the 4-tile hub above untouched for normal
+              vendors; auditors get a thin admin entry below. Hidden
+              entirely when SCAN_SHEETS_ENABLED is off. */}
+          {SCAN_SHEETS_ENABLED && isAuditor(user?.email) && (
+            <div className="mt-6">
+              <Link
+                to="/vendor/audit"
+                className="group inline-flex items-center gap-3 rounded-xl border border-[#1B4676]/20 bg-[#1B4676]/[0.04] hover:bg-[#1B4676]/[0.08] px-5 py-3 transition focus:outline-none focus-visible:ring-2 focus-visible:ring-[#0093D0] focus-visible:ring-offset-2"
+              >
+                <span className="inline-flex items-center justify-center w-9 h-9 rounded-md bg-[#1B4676] text-white">
+                  <EyeIcon className="w-4 h-4" />
+                </span>
+                <span>
+                  <span className="block text-[10px] uppercase tracking-[0.18em] font-bold text-[#0093D0]">
+                    Admin
+                  </span>
+                  <span className="block text-sm font-semibold text-[#1B4676]">
+                    Audit console — search and export scan sheets
+                  </span>
+                </span>
+                <span className="ml-2 text-[#0093D0] group-hover:translate-x-0.5 transition-transform">→</span>
+              </Link>
+            </div>
+          )}
         </div>
       </main>
 
@@ -1825,6 +1852,7 @@ interface UpdateState {
   do_number: string
   customer_name: string
   expected_arrival_date: string
+  bol_number: string
   any_locked: boolean
   containers: UpdateContainer[]
 }
@@ -1865,6 +1893,7 @@ function UpdateShipmentForm({ onBack }: { onBack: () => void }) {
         do_number: r.do_number,
         customer_name: r.customer_name,
         expected_arrival_date: r.expected_arrival_date ?? '',
+        bol_number: r.bol_number ?? '',
         any_locked: r.any_locked,
         containers: r.containers.map((c) => ({
           original_container_no: c.container_no,
@@ -1993,6 +2022,7 @@ function UpdateShipmentForm({ onBack }: { onBack: () => void }) {
     try {
       const r = await api.updateWHPO(state.whpo_number, {
         expected_arrival_date: state.expected_arrival_date || null,
+        bol_number: state.bol_number,        // empty string = explicit clear
         containers: state.containers.map((c) => ({
           original_container_no: c.original_container_no,
           container_no: c.container_no,
@@ -2269,12 +2299,25 @@ function UpdateShipmentForm({ onBack }: { onBack: () => void }) {
           }}
         >
           <Section title="Expected arrival (WHPO/Load No level)">
-            <TextField
-              label="Expected arrival date"
-              type="date"
-              value={state.expected_arrival_date}
-              onChange={(v) => setState((s) => (s ? { ...s, expected_arrival_date: v } : s))}
-            />
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <TextField
+                label="Expected arrival date"
+                type="date"
+                value={state.expected_arrival_date}
+                onChange={(v) =>
+                  setState((s) => (s ? { ...s, expected_arrival_date: v } : s))
+                }
+              />
+              <TextField
+                label="BOL # / Tracking #"
+                value={state.bol_number}
+                onChange={(v) =>
+                  setState((s) => (s ? { ...s, bol_number: v } : s))
+                }
+                placeholder="e.g. 36185694"
+                hint="From the carrier's Bill of Lading. The PDF itself uploads alongside the driver documents below."
+              />
+            </div>
           </Section>
 
           {state.containers.map((c, cIdx) => (

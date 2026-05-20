@@ -115,6 +115,7 @@ async def submit_whpo(
         whpo_number=payload.whpo_number,
         customer_id=customer.id,
         notes=payload.notes,
+        bol_number=(payload.bol_number or None),
         raw_payload=payload.model_dump(mode="json"),
     )
     session.add(whpo)
