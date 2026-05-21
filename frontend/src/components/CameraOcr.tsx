@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { OCR_ENDPOINT } from '../api/client'
+import Tesseract from 'tesseract.js'
 import Spinner from './Spinner'
 
 type Status = 'idle' | 'reading' | 'done' | 'error'
@@ -14,12 +14,73 @@ interface Props {
   onAccept: (containerNo: string) => void
 }
 
-/**
- * Operator's camera/photo flow.
- * Operator picks (or takes) a photo of the container plate. The image is sent
- * to the backend OCR endpoint (EasyOCR / PyTorch) which extracts the BIC code
- * candidates. Operator confirms or picks one.
- */
+/** ISO 6346 BIC code regex: 4 uppercase letters + 7 digits. */
+const BIC_REGEX = /[A-Z]{4}\d{7}/g
+
+/** Compute the ISO 6346 check digit for the first 10 chars (4 letters + 6 digits).
+ *  Returns the expected last digit, or null if the input is malformed. */
+function computeCheckDigit(first10: string): number | null {
+  if (!/^[A-Z]{4}\d{6}$/.test(first10)) return null
+  // Standard ISO 6346 alphabet weights: A=10 B=12 C=13 D=14 E=15 F=16 G=17 H=18
+  // I=19 J=20 K=21 L=23 M=24 N=25 O=26 P=27 Q=28 R=29 S=30 T=31 U=32 V=34 W=35
+  // X=36 Y=37 Z=38 (no 11, 22, 33 — those are excluded)
+  const letterVal: Record<string, number> = {}
+  const skip = new Set([11, 22, 33])
+  let v = 10
+  for (let c = 65; c <= 90; c++) {
+    while (skip.has(v)) v++
+    letterVal[String.fromCharCode(c)] = v
+    v++
+  }
+  let sum = 0
+  for (let i = 0; i < 10; i++) {
+    const ch = first10[i]
+    const numeric = i < 4 ? letterVal[ch] : parseInt(ch, 10)
+    sum += numeric * Math.pow(2, i)
+  }
+  return (sum % 11) % 10
+}
+
+function buildCandidates(rawText: string): Candidate[] {
+  const upper = rawText.toUpperCase().replace(/\s+/g, '')
+  const seen = new Set<string>()
+  const out: Candidate[] = []
+  // Direct matches (4 letters + 7 digits anywhere in the text)
+  const matches = upper.match(BIC_REGEX) || []
+  for (const m of matches) {
+    if (seen.has(m)) continue
+    seen.add(m)
+    const expected = computeCheckDigit(m.slice(0, 10))
+    const actual = parseInt(m.slice(10, 11), 10)
+    out.push({
+      value: m,
+      check_digit_valid: expected !== null && expected === actual,
+      source: 'ocr',
+    })
+  }
+  // Try to fix check-digit by recomputing for any 4-letter-6-digit prefix
+  if (out.length === 0) {
+    const prefixes = upper.match(/[A-Z]{4}\d{6}/g) || []
+    for (const p of prefixes) {
+      const expected = computeCheckDigit(p)
+      if (expected !== null) {
+        const corrected = p + expected
+        if (!seen.has(corrected)) {
+          seen.add(corrected)
+          out.push({
+            value: corrected,
+            check_digit_valid: true,
+            source: 'ocr_check_digit_corrected',
+          })
+        }
+      }
+    }
+  }
+  // Prefer check-digit-valid matches first
+  out.sort((a, b) => Number(b.check_digit_valid) - Number(a.check_digit_valid))
+  return out
+}
+
 export default function CameraOcr({ onAccept }: Props) {
   const [previewUrl, setPreviewUrl] = useState<string | null>(null)
   const [status, setStatus] = useState<Status>('idle')
@@ -43,37 +104,19 @@ export default function CameraOcr({ onAccept }: Props) {
     setError(null)
     setStatus('reading')
 
-    const form = new FormData()
-    form.append('photo', file)
-
     try {
-      const res = await fetch(OCR_ENDPOINT, {
-        method: 'POST',
-        body: form,
+      // Client-side OCR via Tesseract.js — restricted to uppercase letters +
+      // digits to bias the recognizer toward BIC codes and skip distractor text.
+      const result = await Tesseract.recognize(file, 'eng', {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        // tessedit_char_whitelist is the canonical Tesseract knob for this.
       })
-      if (!res.ok) {
-        let detail = res.statusText
-        try {
-          const body = await res.json()
-          detail =
-            typeof body.detail === 'string'
-              ? body.detail
-              : JSON.stringify(body.detail)
-        } catch {
-          /* ignore */
-        }
-        throw new Error(detail)
-      }
-      const data = (await res.json()) as {
-        candidates: Candidate[]
-        raw_text: string
-      }
-      setRawText(data.raw_text)
-      setCandidates(data.candidates)
+      const text = result.data.text || ''
+      setRawText(text)
+      const cands = buildCandidates(text)
+      setCandidates(cands)
       setStatus('done')
-      if (data.candidates.length > 0) {
-        onAccept(data.candidates[0].value)
-      }
+      if (cands.length > 0) onAccept(cands[0].value)
     } catch (e) {
       setError(String(e))
       setStatus('error')
