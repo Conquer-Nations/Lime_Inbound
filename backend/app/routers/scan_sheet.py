@@ -50,6 +50,17 @@ def _ensure_enabled() -> None:
 # ─── Helpers ────────────────────────────────────────────────────────────
 
 
+def _container_requires_imei(container: Container) -> bool:
+    """A container requires IMEI capture if any of its lines is a scooter.
+    Match is case-insensitive substring on `product_type`, so 'Scooter',
+    'Scooters', 'E-Scooter', etc. all qualify."""
+    for line in (container.lines or []):
+        pt = (line.product_type or "").lower()
+        if "scoot" in pt:
+            return True
+    return False
+
+
 def _build_header(receipt: Receipt, container: Container, whpo: WHPO, do: DO) -> ScanSheetHeader:
     return ScanSheetHeader(
         receipt_id=receipt.id,
@@ -62,6 +73,7 @@ def _build_header(receipt: Receipt, container: Container, whpo: WHPO, do: DO) ->
         start_timestamp=receipt.started_at,
         completed_timestamp=receipt.finished_at,
         is_completed=receipt.status == "completed",
+        requires_imei=_container_requires_imei(container),
     )
 
 
@@ -72,6 +84,7 @@ def _scan_to_row(s: Scan, container_no: str, line_sku: str | None) -> ScanRow:
         sku=line_sku,
         qty=1,
         serial_number=s.serial_number,
+        imei=s.imei,
         scanned_by=s.scanned_by,
         notes=s.row_notes,
         scanned_at=s.scanned_at,
@@ -90,7 +103,8 @@ async def _load_receipt_context(
             selectinload(Receipt.container)
             .selectinload(Container.do)
             .selectinload(DO.whpo)
-            .selectinload(WHPO.customer)
+            .selectinload(WHPO.customer),
+            selectinload(Receipt.container).selectinload(Container.lines),
         )
     )
     receipt = await session.scalar(stmt)
@@ -203,6 +217,15 @@ async def record_scan_row(
         )
 
     serial = body.serial_number.strip()
+    imei = (body.imei or "").strip() or None
+
+    # IMEI required for scooter containers — enforced server-side too so a
+    # rogue client can't bypass the rule.
+    if _container_requires_imei(container) and not imei:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="IMEI is required for scooter SKUs.",
+        )
 
     # Pre-check for in-receipt duplicate so we can return a helpful row id
     # instead of relying on the IntegrityError path (which gives less info).
@@ -224,6 +247,7 @@ async def record_scan_row(
         container_id=container.id,
         item_barcode=serial,            # keep filled for cross-table consistency
         serial_number=serial,
+        imei=imei,
         row_notes=body.notes,
         scanned_by=operator,
         result="ok",

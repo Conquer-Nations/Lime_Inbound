@@ -18,7 +18,7 @@ import type {
 type Phase = 'enter_container' | 'scanning' | 'done'
 
 export default function OperatorPage() {
-  const { user } = useAuth()
+  const { user, signOut } = useAuth()
   const operator = user?.id ?? 'unknown'
 
   const [phase, setPhase] = useState<Phase>('enter_container')
@@ -135,6 +135,12 @@ export default function OperatorPage() {
       download_url: summary.download_url,
     })
     setPhase('done')
+    // Auto-logout 4 seconds after the operator finishes a container — the
+    // success card is the last thing they see, then they're back at the
+    // sign-in screen for the next shift handoff.
+    setTimeout(() => {
+      signOut()
+    }, 4000)
   }
 
   const activeContainerNo =
@@ -190,10 +196,7 @@ export default function OperatorPage() {
         )}
 
         {phase === 'done' && sheetFinishSummary && (
-          <SheetDonePanel
-            summary={sheetFinishSummary}
-            onNext={resetForNextContainer}
-          />
+          <SheetDonePanel summary={sheetFinishSummary} />
         )}
 
         {phase === 'done' && !sheetFinishSummary && finishSummary && (
@@ -668,10 +671,8 @@ function DonePanel({
 
 function SheetDonePanel({
   summary,
-  onNext,
 }: {
   summary: { container_no: string; total_scanned: number; download_url: string }
-  onNext: () => void
 }) {
   return (
     <div className="max-w-xl mx-auto text-center">
@@ -699,24 +700,9 @@ function SheetDonePanel({
           </span>{' '}
           scan{summary.total_scanned === 1 ? '' : 's'} recorded.
         </p>
-      </div>
-
-      <div className="flex items-center justify-center gap-3 flex-wrap">
-        <a
-          href={summary.download_url}
-          download
-          className="inline-flex items-center gap-2 bg-[#1B4676] hover:bg-[#224E72] text-white font-bold rounded-full px-6 py-3 text-base transition shadow-[0_8px_24px_-4px_rgba(27,70,118,0.45)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#0093D0] focus-visible:ring-offset-2"
-        >
-          <span>Download Excel</span>
-        </a>
-        <button
-          type="button"
-          onClick={onNext}
-          className="inline-flex items-center gap-2 bg-[#0093D0] hover:bg-[#00A8E8] text-white font-bold rounded-full px-7 py-3 text-base transition shadow-[0_8px_24px_-4px_rgba(0,147,208,0.5)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#0093D0] focus-visible:ring-offset-2"
-        >
-          <span>Next container</span>
-          <ArrowRightIcon className="w-4 h-4" />
-        </button>
+        <p className="mt-4 text-sm text-slate-500">
+          Signing you out…
+        </p>
       </div>
     </div>
   )

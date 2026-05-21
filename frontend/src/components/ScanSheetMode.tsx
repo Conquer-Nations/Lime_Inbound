@@ -33,6 +33,7 @@ interface Props {
 export default function ScanSheetMode({ sheet, operator, onFinished }: Props) {
   const [rows, setRows] = useState<ScanSheetRow[]>(sheet.rows)
   const [serial, setSerial] = useState('')
+  const [imei, setImei] = useState('')
   const [notes, setNotes] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -65,18 +66,25 @@ export default function ScanSheetMode({ sheet, operator, onFinished }: Props) {
   async function submitSerial(e: React.FormEvent) {
     e.preventDefault()
     if (!serial.trim()) return
+    if (sheet.header.requires_imei && !imei.trim()) {
+      setError('IMEI is required for scooter SKUs.')
+      return
+    }
     setError(null)
     setBusy(true)
     const value = serial.trim()
+    const imeiValue = imei.trim()
     try {
       const res = await api.recordScanRow(sheet.header.receipt_id, operator, {
         serial_number: value,
+        imei: imeiValue || null,
         notes: notes.trim() || null,
       })
       if (res.accepted && res.row) {
         setRows((prev) => [...prev, res.row!])
         setLastAccepted(res.row.id)
         setSerial('')
+        setImei('')
         setNotes('')
       } else {
         setLastDupRowId(res.duplicate_of_row_id ?? null)
@@ -125,7 +133,7 @@ export default function ScanSheetMode({ sheet, operator, onFinished }: Props) {
         }}
       >
         <div className="text-[10.5px] uppercase tracking-[0.18em] font-bold text-[#0093D0] mb-2">
-          LIME 3PL Inbound Receipt
+          LIME 3PL Inbound
         </div>
         <h2 className="text-2xl font-bold tracking-tight text-[#1B4676] font-mono">
           {h.container_no}
@@ -160,7 +168,13 @@ export default function ScanSheetMode({ sheet, operator, onFinished }: Props) {
         <div className="text-[10.5px] uppercase tracking-[0.18em] font-bold text-[#0093D0]">
           Next scan
         </div>
-        <div className="grid grid-cols-1 sm:grid-cols-[2fr_1fr_auto] gap-3">
+        <div
+          className={`grid grid-cols-1 gap-3 ${
+            h.requires_imei
+              ? 'sm:grid-cols-[2fr_2fr_1fr_auto]'
+              : 'sm:grid-cols-[2fr_1fr_auto]'
+          }`}
+        >
           <input
             ref={serialInputRef}
             type="text"
@@ -173,6 +187,19 @@ export default function ScanSheetMode({ sheet, operator, onFinished }: Props) {
             className="font-mono w-full border border-slate-300 rounded-md px-4 py-3 text-lg tracking-wider text-[#1B4676] placeholder:text-slate-400 focus:border-[#0093D0] focus:ring-2 focus:ring-[#0093D0]/20 focus:outline-none transition"
             disabled={busy || h.is_completed}
           />
+          {h.requires_imei && (
+            <input
+              type="text"
+              value={imei}
+              onChange={(e) => setImei(e.target.value)}
+              placeholder="IMEI (required for scooters)"
+              spellCheck={false}
+              autoComplete="off"
+              inputMode="text"
+              className="font-mono w-full border border-slate-300 rounded-md px-4 py-3 text-lg tracking-wider text-[#1B4676] placeholder:text-slate-400 focus:border-[#0093D0] focus:ring-2 focus:ring-[#0093D0]/20 focus:outline-none transition"
+              disabled={busy || h.is_completed}
+            />
+          )}
           <input
             type="text"
             value={notes}
@@ -183,7 +210,7 @@ export default function ScanSheetMode({ sheet, operator, onFinished }: Props) {
           />
           <button
             type="submit"
-            disabled={busy || h.is_completed || !serial.trim()}
+            disabled={busy || h.is_completed || !serial.trim() || (h.requires_imei && !imei.trim())}
             className={`inline-flex items-center justify-center gap-2 bg-[#0093D0] hover:bg-[#00A8E8] text-white font-bold rounded-md px-5 py-3 text-sm transition shadow-[0_4px_14px_-2px_rgba(0,147,208,0.5)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#0093D0] focus-visible:ring-offset-2 ${
               busy
                 ? 'opacity-90 cursor-wait'
@@ -229,12 +256,12 @@ export default function ScanSheetMode({ sheet, operator, onFinished }: Props) {
         <table className="w-full text-sm">
           <thead className="bg-[#0B1828] text-white text-[10.5px] uppercase tracking-wider sticky top-0 z-10">
             <tr>
-              <th className="text-left px-4 py-2 font-semibold">#</th>
-              <th className="text-left px-4 py-2 font-semibold">Serial</th>
+              <th className="text-left px-4 py-2 font-semibold">Container Number</th>
               <th className="text-left px-4 py-2 font-semibold">SKU</th>
-              <th className="text-right px-4 py-2 font-semibold">Qty</th>
+              <th className="text-right px-4 py-2 font-semibold">Received Qty</th>
+              <th className="text-left px-4 py-2 font-semibold">Serial Number</th>
+              <th className="text-left px-4 py-2 font-semibold">IMEI</th>
               <th className="text-left px-4 py-2 font-semibold">Scanned by</th>
-              <th className="text-left px-4 py-2 font-semibold">Time</th>
               <th className="text-left px-4 py-2 font-semibold">Notes</th>
             </tr>
           </thead>
@@ -262,18 +289,20 @@ export default function ScanSheetMode({ sheet, operator, onFinished }: Props) {
                         : 'bg-slate-50/40'
                     }`}
                   >
-                    <td className="px-4 py-2 text-slate-400 font-mono">{i + 1}</td>
                     <td className="px-4 py-2 font-mono font-bold text-[#1B4676]">
-                      {r.serial_number}
+                      {h.container_no}
                     </td>
                     <td className="px-4 py-2 font-mono text-slate-600">
                       {r.sku ?? '—'}
                     </td>
                     <td className="px-4 py-2 text-right font-mono">{r.qty}</td>
-                    <td className="px-4 py-2 text-slate-700">{r.scanned_by}</td>
-                    <td className="px-4 py-2 text-slate-500 text-xs">
-                      {new Date(r.scanned_at).toLocaleTimeString()}
+                    <td className="px-4 py-2 font-mono text-[#1B4676]">
+                      {r.serial_number}
                     </td>
+                    <td className="px-4 py-2 font-mono text-slate-600">
+                      {r.imei ?? ''}
+                    </td>
+                    <td className="px-4 py-2 text-slate-700">{r.scanned_by}</td>
                     <td className="px-4 py-2 text-slate-600">{r.notes ?? ''}</td>
                   </tr>
                 )

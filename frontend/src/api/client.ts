@@ -401,7 +401,12 @@ export const api = {
   recordScanRow: (
     receipt_id: number,
     operator: string,
-    payload: { serial_number: string; sku?: string | null; notes?: string | null },
+    payload: {
+      serial_number: string
+      sku?: string | null
+      imei?: string | null
+      notes?: string | null
+    },
   ) =>
     request<ScanRecordResponse>(
       `/operator/sheet/${receipt_id}/scan?operator=${encodeURIComponent(operator)}`,
@@ -488,6 +493,7 @@ export interface ScanSheetHeader {
   completed_timestamp: string | null
   location: string
   is_completed: boolean
+  requires_imei: boolean
 }
 
 export interface ScanSheetRow {

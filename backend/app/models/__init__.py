@@ -315,6 +315,7 @@ class Scan(Base):
     sku_id: Mapped[int | None] = mapped_column(ForeignKey("skus.id"))
     item_barcode: Mapped[str] = mapped_column(String(120), index=True)
     serial_number: Mapped[str | None] = mapped_column(String(120))
+    imei: Mapped[str | None] = mapped_column(String(40))
     row_notes: Mapped[str | None] = mapped_column(Text)
     scanned_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     scanned_by: Mapped[str] = mapped_column(String(80))

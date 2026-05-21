@@ -29,6 +29,7 @@ class ScanSheetHeader(BaseModel):
     completed_timestamp: datetime | None = None
     location: str = "Conquer Nation, Vernon, CA."
     is_completed: bool = False
+    requires_imei: bool = False        # true when any container line is a scooter
 
 
 # ─── Scan row (per-item, append-only) ───────────────────────────────────
@@ -70,6 +71,7 @@ class RecordScanRequest(BaseModel):
 
     serial_number: str = Field(min_length=1, max_length=120)
     sku: str | None = None
+    imei: str | None = Field(default=None, max_length=40)
     notes: str | None = Field(default=None, max_length=400)
 
 
