@@ -93,26 +93,41 @@ export default function ScanSheetMode({ sheet, operator, onFinished }: Props) {
     return () => clearTimeout(t)
   }, [lastDupRowId])
 
+  /** Robustly move focus to the next input. Uses requestAnimationFrame so
+   * React has rendered before we move focus — otherwise focus calls during
+   * a state update can be lost. */
+  function focusNext(target: 'serial' | 'imei') {
+    requestAnimationFrame(() => {
+      const el = target === 'serial' ? serialInputRef.current : imeiInputRef.current
+      el?.focus()
+      el?.select()
+    })
+  }
+
   async function submitSerial(e: React.FormEvent) {
     e.preventDefault()
-    if (!serial.trim()) return
+    // Read straight from DOM, not state — Enter from scanner can fire before
+    // React has finished applying the last keystroke's setState.
+    const serialVal = (serialInputRef.current?.value ?? serial).trim()
+    const imeiVal = (imeiInputRef.current?.value ?? imei).trim()
+    if (!serialVal) {
+      focusNext('serial')
+      return
+    }
     // For scooters: serial → IMEI auto-advance. Scanner emits text+Enter.
-    // When IMEI is still empty, intercept the Enter, move focus to the IMEI
-    // input, and wait for the next scan (which will then submit the row).
-    if (sheet.header.requires_imei && !imei.trim()) {
+    // When IMEI is still empty, intercept the Enter, move focus to IMEI,
+    // and wait for the next scan (which will then submit the row).
+    if (sheet.header.requires_imei && !imeiVal) {
       setError(null)
-      imeiInputRef.current?.focus()
-      imeiInputRef.current?.select()
+      focusNext('imei')
       return
     }
     setError(null)
     setBusy(true)
-    const value = serial.trim()
-    const imeiValue = imei.trim()
     try {
       const res = await api.recordScanRow(sheet.header.receipt_id, operator, {
-        serial_number: value,
-        imei: imeiValue || null,
+        serial_number: serialVal,
+        imei: imeiVal || null,
         notes: notes.trim() || null,
       })
       if (res.accepted && res.row) {
@@ -130,9 +145,8 @@ export default function ScanSheetMode({ sheet, operator, onFinished }: Props) {
       setError(e instanceof ApiError ? e.detail : String(e))
     } finally {
       setBusy(false)
-      // Always return focus to the serial input — operator's next scan
-      // shouldn't require a click.
-      serialInputRef.current?.focus()
+      // Always return focus to the serial input for the next scan.
+      focusNext('serial')
     }
   }
 
