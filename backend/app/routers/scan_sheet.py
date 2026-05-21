@@ -135,7 +135,7 @@ async def open_sheet(
             selectinload(Container.do)
             .selectinload(DO.whpo)
             .selectinload(WHPO.customer),
-            selectinload(Container.lines),
+            selectinload(Container.lines).selectinload(ContainerLine.sku),
         )
     )
     if container is None:
