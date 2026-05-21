@@ -144,10 +144,26 @@ export default function ScanSheetMode({ sheet, operator, onFinished }: Props) {
       focusNext('serial')
       return
     }
+    // Format validation — serials are alphanumeric (letters + digits, with
+    // optional dashes); IMEIs are exactly digits.
+    if (!/^[A-Za-z0-9-]+$/.test(serialVal)) {
+      setError('Serial number must be alphanumeric (letters and digits only).')
+      focusNext('serial')
+      if (serialInputRef.current) serialInputRef.current.value = ''
+      setSerial('')
+      return
+    }
     // Scooter: after serial is filled, advance to IMEI and wait for next scan.
     if (sheet.header.requires_imei && !imeiVal) {
       setError(null)
       focusNext('imei')
+      return
+    }
+    if (sheet.header.requires_imei && !/^[0-9]+$/.test(imeiVal)) {
+      setError('IMEI must be digits only.')
+      focusNext('imei')
+      if (imeiInputRef.current) imeiInputRef.current.value = ''
+      setImei('')
       return
     }
     setError(null)

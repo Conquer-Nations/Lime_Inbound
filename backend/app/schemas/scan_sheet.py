@@ -70,9 +70,16 @@ class OpenSheetResponse(BaseModel):
 class RecordScanRequest(BaseModel):
     """A single barcode/serial event from the BT-A500 (or typed manually)."""
 
-    serial_number: str = Field(min_length=1, max_length=120)
+    # Serials: alphanumeric (letters + digits + optional dashes).
+    serial_number: str = Field(
+        min_length=1, max_length=120, pattern=r"^[A-Za-z0-9-]+$"
+    )
     sku: str | None = None
-    imei: str | None = Field(default=None, max_length=40)
+    # IMEI: digits only, length 14–17 (standard is 15; IMEISV is 16).
+    # Empty string treated as "not provided" — same as None.
+    imei: str | None = Field(
+        default=None, max_length=17, pattern=r"^([0-9]{14,17})?$"
+    )
     notes: str | None = Field(default=None, max_length=400)
 
 
