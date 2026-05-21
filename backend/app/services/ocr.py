@@ -353,5 +353,10 @@ async def ocr_container_photo(image_bytes: bytes) -> tuple[list[dict], str]:
         logger.info("OCR: running RapidOCR (local)")
         return await loop.run_in_executor(None, _do_rapidocr, image_bytes)
     except OCRUnavailableError as e:
-        logger.warning("RapidOCR not available: %s. Falling back to EasyOCR.", e)
+        logger.warning("RapidOCR not installed: %s. Falling back to EasyOCR.", e)
+    except Exception as e:
+        # Import errors at runtime (libGL, ONNX) come through here. Don't
+        # silently fall back — surface the real error so we can fix it.
+        logger.exception("RapidOCR runtime error: %s", e)
+        raise OCRUnavailableError(f"RapidOCR runtime error: {e}") from e
     return await loop.run_in_executor(None, _do_ocr, image_bytes)
