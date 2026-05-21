@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { createWorker, PSM } from 'tesseract.js'
+import { OCR_ENDPOINT } from '../api/client'
 import Spinner from './Spinner'
 
 type Status = 'idle' | 'reading' | 'done' | 'error'
@@ -168,24 +168,31 @@ export default function CameraOcr({ onAccept }: Props) {
     setError(null)
     setStatus('reading')
 
+    const form = new FormData()
+    form.append('photo', file)
     try {
-      // Use the worker API so we can constrain the recognizer to ISO 6346's
-      // alphabet (A-Z + 0-9) and tell it the text is sparse (the container
-      // plate is just a few characters in the middle of a large image).
-      const worker = await createWorker('eng')
-      await worker.setParameters({
-        tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789',
-        tessedit_pageseg_mode: PSM.SPARSE_TEXT,
-      })
-      const result = await worker.recognize(file)
-      await worker.terminate()
-
-      const text = result.data.text || ''
-      setRawText(text)
-      const cands = buildCandidates(text)
-      setCandidates(cands)
+      const res = await fetch(OCR_ENDPOINT, { method: 'POST', body: form })
+      if (!res.ok) {
+        let detail = res.statusText
+        try {
+          const body = await res.json()
+          detail =
+            typeof body.detail === 'string'
+              ? body.detail
+              : JSON.stringify(body.detail)
+        } catch {
+          /* ignore */
+        }
+        throw new Error(detail)
+      }
+      const data = (await res.json()) as {
+        candidates: Candidate[]
+        raw_text: string
+      }
+      setRawText(data.raw_text || '')
+      setCandidates(data.candidates || [])
       setStatus('done')
-      if (cands.length > 0) onAccept(cands[0].value)
+      if (data.candidates?.length > 0) onAccept(data.candidates[0].value)
     } catch (e) {
       setError(String(e))
       setStatus('error')

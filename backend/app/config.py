@@ -104,6 +104,14 @@ class Settings(BaseSettings):
     # to fall back to operator-typed container numbers (always works).
     ocr_service_url: str = ""
 
+    # Google Gemini API key (free tier from AI Studio: 15 req/min). When set,
+    # the in-app `/ocr/container-photo` endpoint sends the operator's photo
+    # to Gemini and extracts the ISO 6346 BIC code from the response. Vision
+    # LLMs handle real-world container photos (with door rods, hinges, dirt)
+    # far better than Tesseract.
+    gemini_api_key: str = ""
+    gemini_model: str = "gemini-2.0-flash"
+
     # OneDrive scan-sheet sync. Logic App URL that runs the `ScanSheetAppend`
     # Office Script on `Lime Scan Data.xlsx` — creates (or replaces) a sheet
     # per finished receipt, sheet name == container_no. Best-effort: backend

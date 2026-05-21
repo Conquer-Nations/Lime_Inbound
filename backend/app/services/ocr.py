@@ -1,21 +1,30 @@
 """Server-side OCR for container plate photos.
 
-Uses EasyOCR (PyTorch under the hood) — significantly more accurate than
-client-side Tesseract.js on real-world photos with occlusions / angles.
+Two backends, picked in order:
+  1. Gemini 2.0 Flash (if GEMINI_API_KEY is set) — vision LLM, handles
+     real-world photos with door rods / hinges / dirt / glare. Free tier
+     (15 req/min) is plenty for warehouse use.
+  2. EasyOCR (if installed in the runtime) — fallback.
 
-The Reader is initialized lazily and cached: first call downloads model
-files (~80MB) to ~/.EasyOCR/, subsequent calls reuse the same in-memory
-instance.
+If neither is available the router returns 503 and operators type the
+container number manually.
 """
 
 from __future__ import annotations
 
 import asyncio
+import base64
 import io
+import logging
 import re
 
+import httpx
 import numpy as np
 from PIL import Image
+
+from app.config import settings
+
+logger = logging.getLogger(__name__)
 
 _reader = None
 
@@ -145,7 +154,7 @@ def extract_container_numbers(text: str) -> list[dict]:
 
 
 def _do_ocr(image_bytes: bytes) -> tuple[list[str], str]:
-    """Sync OCR work. Wrapped in an executor by the async caller."""
+    """Sync EasyOCR work. Wrapped in an executor by the async caller."""
     reader = _get_reader()
     image = Image.open(io.BytesIO(image_bytes))
     if image.mode != "RGB":
@@ -158,7 +167,68 @@ def _do_ocr(image_bytes: bytes) -> tuple[list[str], str]:
     return candidates, raw_text
 
 
-async def ocr_container_photo(image_bytes: bytes) -> tuple[list[str], str]:
-    """Run OCR on image bytes off the event loop."""
+_GEMINI_PROMPT = (
+    "You are reading an ISO 6346 container number off a photo of a shipping "
+    "container. The code is always 4 uppercase letters followed by 7 digits "
+    "(the last digit may appear in a small box). Door rods, hinges, dirt, "
+    "and the type-code line (e.g. '45G1') may be visible — ignore those.\n\n"
+    "Reply with ONLY the 11-character code on a single line (e.g. JZPU8021688). "
+    "If you cannot read it, reply NONE."
+)
+
+
+async def _ocr_with_gemini(image_bytes: bytes) -> tuple[list[dict], str]:
+    """Send the image to Gemini and parse a BIC code out of the response."""
+    api_key = settings.gemini_api_key
+    if not api_key:
+        raise OCRUnavailableError("GEMINI_API_KEY not configured")
+
+    # Gemini accepts JPEG/PNG up to ~20MB. We normalize to JPEG.
+    image = Image.open(io.BytesIO(image_bytes))
+    if image.mode != "RGB":
+        image = image.convert("RGB")
+    buf = io.BytesIO()
+    image.save(buf, format="JPEG", quality=88)
+    img_b64 = base64.b64encode(buf.getvalue()).decode("ascii")
+
+    url = (
+        f"https://generativelanguage.googleapis.com/v1beta/models/"
+        f"{settings.gemini_model}:generateContent?key={api_key}"
+    )
+    body = {
+        "contents": [
+            {
+                "parts": [
+                    {"text": _GEMINI_PROMPT},
+                    {"inline_data": {"mime_type": "image/jpeg", "data": img_b64}},
+                ]
+            }
+        ],
+        "generationConfig": {"temperature": 0.0, "maxOutputTokens": 32},
+    }
+
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        r = await client.post(url, json=body)
+    if not r.is_success:
+        raise RuntimeError(f"Gemini {r.status_code}: {r.text[:300]}")
+    data = r.json()
+    try:
+        text = data["candidates"][0]["content"]["parts"][0]["text"].strip()
+    except (KeyError, IndexError, TypeError):
+        text = ""
+
+    candidates = extract_container_numbers(text)
+    return candidates, text
+
+
+async def ocr_container_photo(image_bytes: bytes) -> tuple[list[dict], str]:
+    """Try Gemini first (if configured), fall back to EasyOCR."""
+    if settings.gemini_api_key:
+        try:
+            return await _ocr_with_gemini(image_bytes)
+        except OCRUnavailableError:
+            pass
+        except Exception as e:
+            logger.warning("Gemini OCR failed, falling back: %s", e)
     loop = asyncio.get_event_loop()
     return await loop.run_in_executor(None, _do_ocr, image_bytes)
