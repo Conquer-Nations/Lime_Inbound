@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import {
   api,
   ApiError,
+  type ScanSheetHeader,
   type ScanSheetOpenResponse,
   type ScanSheetRow,
 } from '../api/client'
@@ -42,19 +43,11 @@ export default function ScanSheetMode({ sheet, operator, onFinished }: Props) {
   const [confirmFinish, setConfirmFinish] = useState(false)
   const [finishing, setFinishing] = useState(false)
   const serialInputRef = useRef<HTMLInputElement>(null)
-  const gridRef = useRef<HTMLDivElement>(null)
 
   // Autofocus the serial input on mount and after every successful scan.
   useEffect(() => {
     serialInputRef.current?.focus()
   }, [])
-
-  // Scroll the latest row into view when a row is accepted.
-  useEffect(() => {
-    if (lastAccepted == null) return
-    const el = gridRef.current
-    if (el) el.scrollTop = el.scrollHeight
-  }, [lastAccepted, rows.length])
 
   // Clear duplicate flash after 1.5s so the row goes back to normal.
   useEffect(() => {
@@ -124,37 +117,8 @@ export default function ScanSheetMode({ sheet, operator, onFinished }: Props) {
 
   return (
     <div className="space-y-4">
-      {/* Header card — Receipt block from the template */}
-      <div
-        className="bg-white rounded-xl border border-slate-200 p-5"
-        style={{
-          boxShadow:
-            '0 1px 2px 0 rgba(15,23,42,0.04), 0 8px 24px -8px rgba(15,23,42,0.08)',
-        }}
-      >
-        <div className="text-[10.5px] uppercase tracking-[0.18em] font-bold text-[#0093D0] mb-2">
-          LIME 3PL Inbound
-        </div>
-        <h2 className="text-2xl font-bold tracking-tight text-[#1B4676] font-mono">
-          {h.container_no}
-        </h2>
-        <dl className="mt-4 grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm">
-          <Field k="Received" v={h.received_date} />
-          <Field k="3PL Location" v={h.location} />
-          <Field k="WHPO/Load No" v={h.whpo_number} mono />
-          <Field k="BOL / Tracking" v={h.bol_number ?? '—'} mono />
-          <Field k="Customer" v={h.customer_name} />
-          <Field k="DO #" v={h.do_number} mono />
-          <Field
-            k="Start"
-            v={new Date(h.start_timestamp).toLocaleString()}
-          />
-          <Field
-            k="Status"
-            v={h.is_completed ? 'COMPLETED' : 'IN PROGRESS'}
-          />
-        </dl>
-      </div>
+      {/* Excel-style scan sheet — visual clone of TEMPLATE.xlsx (read-only) */}
+      <ExcelStyleSheet h={h} rows={rows} lastAccepted={lastAccepted} lastDupRowId={lastDupRowId} />
 
       {/* Scan input */}
       <form
@@ -244,85 +208,6 @@ export default function ScanSheetMode({ sheet, operator, onFinished }: Props) {
         </div>
       </form>
 
-      {/* Live grid */}
-      <div
-        ref={gridRef}
-        className="bg-white rounded-xl border border-slate-200 overflow-hidden max-h-[420px] overflow-y-auto"
-        style={{
-          boxShadow:
-            '0 1px 2px 0 rgba(15,23,42,0.04), 0 8px 24px -8px rgba(15,23,42,0.08)',
-        }}
-      >
-        <table className="w-full text-sm">
-          <thead className="bg-[#0B1828] text-white text-[10.5px] uppercase tracking-wider sticky top-0 z-10">
-            <tr>
-              <th className="text-left px-4 py-2 font-semibold">Container Number</th>
-              {h.requires_imei && (
-                <th className="text-right px-4 py-2 font-semibold">Box #</th>
-              )}
-              <th className="text-left px-4 py-2 font-semibold">SKU</th>
-              <th className="text-right px-4 py-2 font-semibold">Received Qty</th>
-              <th className="text-left px-4 py-2 font-semibold">Serial Number</th>
-              <th className="text-left px-4 py-2 font-semibold">IMEI</th>
-              <th className="text-left px-4 py-2 font-semibold">Scanned by</th>
-              <th className="text-left px-4 py-2 font-semibold">Notes</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.length === 0 ? (
-              <tr>
-                <td
-                  colSpan={h.requires_imei ? 8 : 7}
-                  className="px-4 py-6 text-center text-slate-400 text-sm"
-                >
-                  Scans will appear here as they're recorded.
-                </td>
-              </tr>
-            ) : (
-              rows.map((r, i) => {
-                const isDup = r.id === lastDupRowId
-                const isJustAdded = r.id === lastAccepted
-                return (
-                  <tr
-                    key={r.id}
-                    className={`border-t border-slate-100 transition-colors ${
-                      isDup
-                        ? 'bg-red-50'
-                        : isJustAdded
-                        ? 'bg-emerald-50'
-                        : i % 2 === 0
-                        ? 'bg-white'
-                        : 'bg-slate-50/40'
-                    }`}
-                  >
-                    <td className="px-4 py-2 font-mono font-bold text-[#1B4676]">
-                      {h.container_no}
-                    </td>
-                    {h.requires_imei && (
-                      <td className="px-4 py-2 text-right font-mono font-bold text-[#0093D0]">
-                        {r.box_number ?? ''}
-                      </td>
-                    )}
-                    <td className="px-4 py-2 font-mono text-slate-600">
-                      {r.sku ?? '—'}
-                    </td>
-                    <td className="px-4 py-2 text-right font-mono">{r.qty}</td>
-                    <td className="px-4 py-2 font-mono text-[#1B4676]">
-                      {r.serial_number}
-                    </td>
-                    <td className="px-4 py-2 font-mono text-slate-600">
-                      {r.imei ?? ''}
-                    </td>
-                    <td className="px-4 py-2 text-slate-700">{r.scanned_by}</td>
-                    <td className="px-4 py-2 text-slate-600">{r.notes ?? ''}</td>
-                  </tr>
-                )
-              })
-            )}
-          </tbody>
-        </table>
-      </div>
-
       {/* FINISH bar */}
       <div className="bg-white rounded-xl border border-slate-200 p-4 flex items-center justify-between gap-4">
         <div className="text-sm text-slate-600">
@@ -392,25 +277,219 @@ export default function ScanSheetMode({ sheet, operator, onFinished }: Props) {
   )
 }
 
-function Field({
-  k,
-  v,
-  mono = false,
+// ─── Excel-faithful scan sheet (visual clone of TEMPLATE.xlsx, read-only) ───
+
+function ExcelStyleSheet({
+  h,
+  rows,
+  lastAccepted,
+  lastDupRowId,
 }: {
-  k: string
-  v: string
-  mono?: boolean
+  h: ScanSheetHeader
+  rows: ScanSheetRow[]
+  lastAccepted: number | null
+  lastDupRowId: number | null
 }) {
+  const isScooter = h.requires_imei
+  const colCount = isScooter ? 8 : 7
+  // Column widths in px — match TEMPLATE.xlsx proportions
+  const cols = isScooter
+    ? [140, 70, 145, 110, 200, 125, 135, 280]
+    : [140, 145, 145, 200, 125, 135, 280]
+
+  const NAVY = '#073763'
+  const WHITE = '#FFFFFF'
+  const PEACH = '#F9CB9C'
+  const LIGHT_PEACH = '#FCE5CD'
+  const YELLOW = '#FFFF00'
+  const BORDER = '1px solid #888'
+
+  const cellBase: React.CSSProperties = {
+    border: BORDER,
+    fontFamily: 'Arial, sans-serif',
+    padding: '4px 8px',
+    verticalAlign: 'middle',
+  }
+  const label: React.CSSProperties = {
+    ...cellBase,
+    fontWeight: 700,
+    textAlign: 'center',
+    background: WHITE,
+  }
+  const peach: React.CSSProperties = {
+    ...cellBase,
+    background: PEACH,
+    fontWeight: 700,
+    textAlign: 'center',
+  }
+  const lightPeach: React.CSSProperties = {
+    ...cellBase,
+    background: LIGHT_PEACH,
+    fontWeight: 700,
+    textAlign: 'center',
+  }
+  const navy: React.CSSProperties = {
+    ...cellBase,
+    background: NAVY,
+    color: WHITE,
+    fontWeight: 700,
+    textAlign: 'center',
+    whiteSpace: 'pre-wrap',
+  }
+  const yellow: React.CSSProperties = {
+    ...cellBase,
+    background: YELLOW,
+    fontWeight: 700,
+    textAlign: 'center',
+  }
+
   return (
-    <div>
-      <dt className="text-[10px] uppercase tracking-wider font-semibold text-slate-500">
-        {k}
-      </dt>
-      <dd
-        className={`mt-0.5 text-sm text-slate-800 ${mono ? 'font-mono' : ''}`}
-      >
-        {v}
-      </dd>
+    <div className="bg-white border border-slate-300 rounded-md overflow-x-auto">
+      <table style={{ borderCollapse: 'collapse', fontFamily: 'Arial, sans-serif' }}>
+        <colgroup>
+          {cols.map((w, i) => (
+            <col key={i} style={{ width: w }} />
+          ))}
+        </colgroup>
+        <tbody>
+          {/* Title row */}
+          <tr>
+            <td
+              colSpan={colCount}
+              style={{
+                ...cellBase,
+                fontSize: 17,
+                fontWeight: 700,
+                textAlign: 'center',
+                height: 50,
+                background: WHITE,
+              }}
+            >
+              LIME 3PL INBOUND RECEIPT
+            </td>
+          </tr>
+
+          {/* Row 3: Received Date + 3PL Location */}
+          <tr>
+            <td style={{ ...label, fontSize: 13, height: 32 }}>Received Date:</td>
+            <td colSpan={isScooter ? 3 : 2} style={{ ...peach, fontSize: 12 }}>
+              {h.received_date}
+            </td>
+            <td colSpan={2} style={{ ...label, fontSize: 14 }}>
+              3PL Location:
+            </td>
+            <td colSpan={2} style={{ ...navy, fontSize: 12 }}>
+              {h.location}
+            </td>
+          </tr>
+
+          {/* Row 4: blank separator */}
+          <tr>
+            <td colSpan={colCount} style={{ ...cellBase, height: 8, background: WHITE }} />
+          </tr>
+
+          {/* Row 5: Container Number + BOL # */}
+          <tr>
+            <td style={{ ...label, fontSize: 13, height: 32 }}>Container Number</td>
+            <td colSpan={isScooter ? 3 : 2} style={{ ...peach, fontSize: 12 }}>
+              {h.container_no}
+            </td>
+            <td colSpan={2} style={{ ...label, fontSize: 13 }}>
+              BOL # or Tracking #:
+            </td>
+            <td colSpan={2} style={{ ...lightPeach, fontSize: 16 }}>
+              {h.bol_number || '—'}
+            </td>
+          </tr>
+
+          {/* Row 6: Start | Completed | Customer */}
+          <tr>
+            <td style={{ ...label, fontSize: 11, height: 30 }}>Start Timestamp</td>
+            <td style={{ ...label, fontSize: 11 }}>
+              {new Date(h.start_timestamp).toLocaleString()}
+            </td>
+            <td style={{ ...label, fontSize: 11 }}>Completed Timestamp</td>
+            <td style={{ ...label, fontSize: 11 }}>
+              {h.completed_timestamp
+                ? new Date(h.completed_timestamp).toLocaleString()
+                : ''}
+            </td>
+            <td style={{ ...yellow, fontSize: 10 }}>Customer:</td>
+            <td colSpan={isScooter ? 3 : 2} style={{ ...yellow, fontSize: 10 }}>
+              {h.customer_name}
+            </td>
+          </tr>
+
+          {/* Row 7: column header band */}
+          <tr>
+            <td style={{ ...navy, fontSize: 12, height: 60 }}>Container Number</td>
+            {isScooter && <td style={{ ...navy, fontSize: 12 }}>Box #</td>}
+            <td style={{ ...navy, fontSize: 12 }}>SKU</td>
+            <td style={{ ...navy, fontSize: 12 }}>Received Qty:</td>
+            <td style={{ ...navy, fontSize: 12 }}>
+              {'Serial Number\n(For Vehicles and Batteries ONLY)'}
+            </td>
+            <td style={{ ...navy, fontSize: 12 }}>IMEI</td>
+            <td style={{ ...navy, fontSize: 12 }}>{'Scanned by:\n(Insert Name)'}</td>
+            <td style={{ ...navy, fontSize: 12 }}>Notes</td>
+          </tr>
+
+          {/* Data rows */}
+          {rows.length === 0 ? (
+            <tr>
+              <td
+                colSpan={colCount}
+                style={{
+                  ...cellBase,
+                  textAlign: 'center',
+                  color: '#9ca3af',
+                  padding: 24,
+                  background: WHITE,
+                  fontSize: 12,
+                }}
+              >
+                Scans will appear here as they're recorded.
+              </td>
+            </tr>
+          ) : (
+            rows.map((r, i) => {
+              const isDup = r.id === lastDupRowId
+              const isJustAdded = r.id === lastAccepted
+              const rowBg = isDup
+                ? '#fef2f2'
+                : isJustAdded
+                ? '#ecfdf5'
+                : i % 2 === 0
+                ? WHITE
+                : '#fafafa'
+              const dataCell: React.CSSProperties = {
+                ...cellBase,
+                background: rowBg,
+                fontSize: 11,
+                textAlign: 'left',
+              }
+              return (
+                <tr key={r.id}>
+                  <td style={{ ...dataCell, fontWeight: 700, textAlign: 'center' }}>
+                    {h.container_no}
+                  </td>
+                  {isScooter && (
+                    <td style={{ ...dataCell, textAlign: 'center', fontWeight: 700 }}>
+                      {r.box_number ?? ''}
+                    </td>
+                  )}
+                  <td style={dataCell}>{r.sku ?? ''}</td>
+                  <td style={{ ...dataCell, textAlign: 'right' }}>{r.qty}</td>
+                  <td style={{ ...dataCell, fontWeight: 700 }}>{r.serial_number}</td>
+                  <td style={dataCell}>{r.imei ?? ''}</td>
+                  <td style={dataCell}>{r.scanned_by}</td>
+                  <td style={dataCell}>{r.notes ?? ''}</td>
+                </tr>
+              )
+            })
+          )}
+        </tbody>
+      </table>
     </div>
   )
 }
