@@ -93,6 +93,34 @@ export default function ScanSheetMode({ sheet, operator, onFinished }: Props) {
     return () => clearTimeout(t)
   }, [lastDupRowId])
 
+  // ── Auto-advance / auto-submit on scanner input ──────────────────────
+  // Scanner emits ~10 chars in <50ms then (maybe) Enter. We watch the input
+  // values and fire submitOrAdvance() ~250ms after the last keystroke. This
+  // works whether or not the scanner emits a terminator, and never races a
+  // pending state update.
+  useEffect(() => {
+    if (!serial.trim()) return
+    if (busy || sheet.header.is_completed) return
+    // For scooter: we want to advance to IMEI as soon as serial is done.
+    // For non-scooter: we want to submit the row.
+    const t = setTimeout(() => {
+      submitOrAdvance()
+    }, 250)
+    return () => clearTimeout(t)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [serial])
+
+  useEffect(() => {
+    if (!sheet.header.requires_imei) return
+    if (!imei.trim()) return
+    if (busy || sheet.header.is_completed) return
+    const t = setTimeout(() => {
+      submitOrAdvance()
+    }, 250)
+    return () => clearTimeout(t)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [imei])
+
   /** Robustly move focus to the next input. Uses requestAnimationFrame so
    * React has rendered before we move focus — otherwise focus calls during
    * a state update can be lost. */
