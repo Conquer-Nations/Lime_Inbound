@@ -34,6 +34,9 @@ openpyxl>=3.1.5
 # ─── Image handling + lightweight on-prem OCR ──────────────────────────
 pillow>=12.2.0
 numpy>=1.26.0
+# opencv-python-headless: rapidocr imports cv2 — without the headless build
+# Azure App Service Linux is missing libGL and the import crashes at runtime.
+opencv-python-headless>=4.10.0
 # RapidOCR (PaddleOCR's models converted to ONNX). Pure pip install, no
 # torch / no apt-get, ~100MB total. Runs on CPU, fits comfortably in B1.
 # Local OCR — no external API, no per-call cost.
