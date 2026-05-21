@@ -32,7 +32,7 @@ jobs:
           ###### End of Repository/Build Configurations ######
         env:
           VITE_API_BASE: ${{ vars.VITE_API_BASE }}
-          VITE_SCAN_SHEETS_ENABLED: "false"
+          VITE_SCAN_SHEETS_ENABLED: ${{ vars.VITE_SCAN_SHEETS_ENABLED }}
 
   close_pull_request_job:
     if: github.event_name == 'pull_request' && github.event.action == 'closed'
