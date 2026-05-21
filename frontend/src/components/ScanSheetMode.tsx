@@ -43,6 +43,7 @@ export default function ScanSheetMode({ sheet, operator, onFinished }: Props) {
   const [confirmFinish, setConfirmFinish] = useState(false)
   const [finishing, setFinishing] = useState(false)
   const serialInputRef = useRef<HTMLInputElement>(null)
+  const imeiInputRef = useRef<HTMLInputElement>(null)
 
   // Autofocus the serial input on mount and after every successful scan.
   useEffect(() => {
@@ -59,8 +60,13 @@ export default function ScanSheetMode({ sheet, operator, onFinished }: Props) {
   async function submitSerial(e: React.FormEvent) {
     e.preventDefault()
     if (!serial.trim()) return
+    // For scooters: serial → IMEI auto-advance. Scanner emits text+Enter.
+    // When IMEI is still empty, intercept the Enter, move focus to the IMEI
+    // input, and wait for the next scan (which will then submit the row).
     if (sheet.header.requires_imei && !imei.trim()) {
-      setError('IMEI is required for scooter SKUs.')
+      setError(null)
+      imeiInputRef.current?.focus()
+      imeiInputRef.current?.select()
       return
     }
     setError(null)
@@ -153,10 +159,11 @@ export default function ScanSheetMode({ sheet, operator, onFinished }: Props) {
           />
           {h.requires_imei && (
             <input
+              ref={imeiInputRef}
               type="text"
               value={imei}
               onChange={(e) => setImei(e.target.value)}
-              placeholder="IMEI (required for scooters)"
+              placeholder="IMEI (auto after serial scan)"
               spellCheck={false}
               autoComplete="off"
               inputMode="text"
