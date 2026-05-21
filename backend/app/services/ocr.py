@@ -237,25 +237,35 @@ async def _ocr_with_openrouter(image_bytes: bytes) -> tuple[list[dict], str]:
     img_b64 = base64.b64encode(buf.getvalue()).decode("ascii")
 
     system_prompt = (
-        "You are an OCR assistant for a logistics warehouse. The image shows "
-        "the side of a shipping container. Extract the ISO 6346 container "
-        "code: always 4 uppercase letters followed by 7 digits "
-        "(the last digit may appear in a small box). Door rods, hinges, dirt, "
-        "and the type-code line (e.g. '45G1') may be visible — ignore those. "
-        "Reply with ONLY the 11-character code on a single line "
-        "(e.g. JZPU8021688). If you cannot read it, reply NONE."
+        "You read shipping-container ISO 6346 codes from photos. The code is "
+        "ALWAYS exactly 11 characters: 4 uppercase letters then 7 digits "
+        "(no spaces, no separators in your output). The 11th digit (check "
+        "digit) may appear inside a small box on the container — include it. "
+        "Vertical door rods, hinges, dirt, and the type-code line below "
+        "(e.g. '45G1', '22G1') are not part of the code — ignore them.\n\n"
+        "Examples of valid output: JZPU8021688  CMAU1234567  TGHU0123456\n\n"
+        "Respond with ONLY the 11-character code, all on one line, nothing "
+        "else — no preamble, no explanation. If the code is unreadable, "
+        "respond with just: NONE"
     )
 
     body = {
         "model": settings.openrouter_model,
         "temperature": 0.0,
-        "max_tokens": 32,
+        "max_tokens": 64,
         "messages": [
             {"role": "system", "content": system_prompt},
             {
                 "role": "user",
                 "content": [
-                    {"type": "text", "text": "Read the container code from this photo."},
+                    {
+                        "type": "text",
+                        "text": (
+                            "Read the container code from this photo. "
+                            "Return ALL 11 characters: 4 letters + 7 digits "
+                            "(include the check digit even if it's in a separate box)."
+                        ),
+                    },
                     {
                         "type": "image_url",
                         "image_url": {"url": f"data:image/jpeg;base64,{img_b64}"},
