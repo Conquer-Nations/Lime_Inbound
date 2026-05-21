@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import Tesseract from 'tesseract.js'
+import { createWorker, PSM } from 'tesseract.js'
 import Spinner from './Spinner'
 
 type Status = 'idle' | 'reading' | 'done' | 'error'
@@ -21,9 +21,6 @@ const BIC_REGEX = /[A-Z]{4}\d{7}/g
  *  Returns the expected last digit, or null if the input is malformed. */
 function computeCheckDigit(first10: string): number | null {
   if (!/^[A-Z]{4}\d{6}$/.test(first10)) return null
-  // Standard ISO 6346 alphabet weights: A=10 B=12 C=13 D=14 E=15 F=16 G=17 H=18
-  // I=19 J=20 K=21 L=23 M=24 N=25 O=26 P=27 Q=28 R=29 S=30 T=31 U=32 V=34 W=35
-  // X=36 Y=37 Z=38 (no 11, 22, 33 — those are excluded)
   const letterVal: Record<string, number> = {}
   const skip = new Set([11, 22, 33])
   let v = 10
@@ -41,43 +38,110 @@ function computeCheckDigit(first10: string): number | null {
   return (sum % 11) % 10
 }
 
+/** Common letter↔digit OCR confusions. Position-aware: positions 0-3 should be
+ *  letters, positions 4-10 should be digits. We "snap" each char to its expected
+ *  class to recover from minor OCR errors. */
+const LETTER_TO_DIGIT: Record<string, string> = {
+  O: '0', Q: '0', D: '0',
+  I: '1', L: '1',
+  Z: '2',
+  E: '3',
+  A: '4',
+  S: '5',
+  G: '6',
+  T: '7',
+  B: '8',
+  P: '9',
+}
+const DIGIT_TO_LETTER: Record<string, string> = {
+  '0': 'O', '1': 'I', '2': 'Z', '5': 'S', '6': 'G', '8': 'B',
+}
+
+function snapToBicClass(s: string): string | null {
+  if (s.length < 10) return null
+  let out = ''
+  for (let i = 0; i < 11 && i < s.length; i++) {
+    const ch = s[i]
+    if (i < 4) {
+      // Position should be a letter
+      if (/[A-Z]/.test(ch)) out += ch
+      else if (DIGIT_TO_LETTER[ch]) out += DIGIT_TO_LETTER[ch]
+      else return null
+    } else {
+      // Position should be a digit
+      if (/\d/.test(ch)) out += ch
+      else if (LETTER_TO_DIGIT[ch]) out += LETTER_TO_DIGIT[ch]
+      else return null
+    }
+  }
+  return out
+}
+
 function buildCandidates(rawText: string): Candidate[] {
-  const upper = rawText.toUpperCase().replace(/\s+/g, '')
+  // Look at every line independently, in addition to the whole-text flattened
+  // form, so the BIC line wins over noise like the "45G1" type code below it.
+  const lines = rawText.split(/[\n\r]+/).map((l) => l.toUpperCase().replace(/[^A-Z0-9]/g, ''))
+  const flattened = rawText.toUpperCase().replace(/[^A-Z0-9]/g, '')
+  const haystacks = [...lines, flattened].filter((h) => h.length >= 10)
+
   const seen = new Set<string>()
   const out: Candidate[] = []
-  // Direct matches (4 letters + 7 digits anywhere in the text)
-  const matches = upper.match(BIC_REGEX) || []
-  for (const m of matches) {
-    if (seen.has(m)) continue
-    seen.add(m)
-    const expected = computeCheckDigit(m.slice(0, 10))
-    const actual = parseInt(m.slice(10, 11), 10)
+
+  function addCandidate(value: string, source: Candidate['source']) {
+    if (value.length !== 11 || seen.has(value)) return
+    seen.add(value)
+    const expected = computeCheckDigit(value.slice(0, 10))
+    const actual = parseInt(value.slice(10, 11), 10)
     out.push({
-      value: m,
+      value,
       check_digit_valid: expected !== null && expected === actual,
-      source: 'ocr',
+      source,
     })
   }
-  // Try to fix check-digit by recomputing for any 4-letter-6-digit prefix
-  if (out.length === 0) {
-    const prefixes = upper.match(/[A-Z]{4}\d{6}/g) || []
+
+  for (const hay of haystacks) {
+    // 1. Direct regex match (perfect OCR)
+    const direct = hay.match(BIC_REGEX) || []
+    for (const m of direct) addCandidate(m, 'ocr')
+
+    // 2. Position-aware snap: try every 11-char window
+    for (let i = 0; i <= hay.length - 11; i++) {
+      const window = hay.slice(i, i + 11)
+      const snapped = snapToBicClass(window)
+      if (snapped) addCandidate(snapped, 'ocr_check_digit_corrected')
+    }
+
+    // 3. 4-letter + 6-digit pattern: recompute check digit
+    const prefixes = hay.match(/[A-Z]{4}\d{6}/g) || []
     for (const p of prefixes) {
       const expected = computeCheckDigit(p)
       if (expected !== null) {
-        const corrected = p + expected
-        if (!seen.has(corrected)) {
-          seen.add(corrected)
-          out.push({
-            value: corrected,
-            check_digit_valid: true,
-            source: 'ocr_check_digit_corrected',
-          })
+        addCandidate(p + expected, 'ocr_check_digit_corrected')
+      }
+    }
+    // 4. Snap a 10-char window to 4L+6D and recompute check digit
+    for (let i = 0; i <= hay.length - 10; i++) {
+      const window = hay.slice(i, i + 10)
+      const snapped10 = snapToBicClass(window)
+      if (!snapped10) continue
+      const prefix = snapped10.slice(0, 10)
+      if (/^[A-Z]{4}\d{6}$/.test(prefix)) {
+        const expected = computeCheckDigit(prefix)
+        if (expected !== null) {
+          addCandidate(prefix + expected, 'ocr_check_digit_corrected')
         }
       }
     }
   }
-  // Prefer check-digit-valid matches first
-  out.sort((a, b) => Number(b.check_digit_valid) - Number(a.check_digit_valid))
+
+  // Prefer: check-digit-valid > direct ocr > corrected
+  out.sort((a, b) => {
+    if (a.check_digit_valid !== b.check_digit_valid) {
+      return Number(b.check_digit_valid) - Number(a.check_digit_valid)
+    }
+    const rank = { ocr: 0, ocr_check_digit_corrected: 1 } as const
+    return rank[a.source] - rank[b.source]
+  })
   return out
 }
 
@@ -105,12 +169,17 @@ export default function CameraOcr({ onAccept }: Props) {
     setStatus('reading')
 
     try {
-      // Client-side OCR via Tesseract.js — restricted to uppercase letters +
-      // digits to bias the recognizer toward BIC codes and skip distractor text.
-      const result = await Tesseract.recognize(file, 'eng', {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        // tessedit_char_whitelist is the canonical Tesseract knob for this.
+      // Use the worker API so we can constrain the recognizer to ISO 6346's
+      // alphabet (A-Z + 0-9) and tell it the text is sparse (the container
+      // plate is just a few characters in the middle of a large image).
+      const worker = await createWorker('eng')
+      await worker.setParameters({
+        tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789',
+        tessedit_pageseg_mode: PSM.SPARSE_TEXT,
       })
+      const result = await worker.recognize(file)
+      await worker.terminate()
+
       const text = result.data.text || ''
       setRawText(text)
       const cands = buildCandidates(text)
