@@ -221,14 +221,88 @@ async def _ocr_with_gemini(image_bytes: bytes) -> tuple[list[dict], str]:
     return candidates, text
 
 
+async def _ocr_with_openrouter(image_bytes: bytes) -> tuple[list[dict], str]:
+    """Send the image to OpenRouter (same approach as the OCR-Driver-POD repo).
+    OpenRouter relays to a vision LLM (default: free Gemini Flash) and lets us
+    avoid direct-Gemini quota issues entirely."""
+    api_key = settings.openrouter_api_key
+    if not api_key:
+        raise OCRUnavailableError("OPENROUTER_API_KEY not configured")
+
+    image = Image.open(io.BytesIO(image_bytes))
+    if image.mode != "RGB":
+        image = image.convert("RGB")
+    buf = io.BytesIO()
+    image.save(buf, format="JPEG", quality=88)
+    img_b64 = base64.b64encode(buf.getvalue()).decode("ascii")
+
+    system_prompt = (
+        "You are an OCR assistant for a logistics warehouse. The image shows "
+        "the side of a shipping container. Extract the ISO 6346 container "
+        "code: always 4 uppercase letters followed by 7 digits "
+        "(the last digit may appear in a small box). Door rods, hinges, dirt, "
+        "and the type-code line (e.g. '45G1') may be visible — ignore those. "
+        "Reply with ONLY the 11-character code on a single line "
+        "(e.g. JZPU8021688). If you cannot read it, reply NONE."
+    )
+
+    body = {
+        "model": settings.openrouter_model,
+        "temperature": 0.0,
+        "max_tokens": 32,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "Read the container code from this photo."},
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": f"data:image/jpeg;base64,{img_b64}"},
+                    },
+                ],
+            },
+        ],
+    }
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+        "HTTP-Referer": "https://lime.cnwarehousing.com",
+        "X-Title": "Conquer Nation Warehouse",
+    }
+
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        r = await client.post(
+            "https://openrouter.ai/api/v1/chat/completions",
+            json=body,
+            headers=headers,
+        )
+    if not r.is_success:
+        raise RuntimeError(f"OpenRouter {r.status_code}: {r.text[:300]}")
+    data = r.json()
+    text = ""
+    try:
+        text = (data["choices"][0]["message"]["content"] or "").strip()
+    except (KeyError, IndexError, TypeError):
+        pass
+
+    candidates = extract_container_numbers(text)
+    return candidates, text
+
+
 async def ocr_container_photo(image_bytes: bytes) -> tuple[list[dict], str]:
-    """Try Gemini first (if configured), fall back to EasyOCR."""
+    """Provider priority:
+      1. OpenRouter (matches OCR-Driver-POD repo — uses free Gemini Flash by default)
+      2. Direct Gemini AI Studio
+      3. EasyOCR (only if installed; production omits torch)
+    The real provider error is bubbled to the caller so config issues don't
+    masquerade as 'OCR not installed'."""
+    if settings.openrouter_api_key:
+        logger.info("OCR: calling OpenRouter (model=%s)", settings.openrouter_model)
+        return await _ocr_with_openrouter(image_bytes)
     if settings.gemini_api_key:
-        try:
-            return await _ocr_with_gemini(image_bytes)
-        except OCRUnavailableError:
-            pass
-        except Exception as e:
-            logger.warning("Gemini OCR failed, falling back: %s", e)
+        logger.info("OCR: calling Gemini (model=%s)", settings.gemini_model)
+        return await _ocr_with_gemini(image_bytes)
+    logger.info("OCR: no LLM key set, trying EasyOCR fallback")
     loop = asyncio.get_event_loop()
     return await loop.run_in_executor(None, _do_ocr, image_bytes)
