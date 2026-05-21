@@ -25,6 +25,7 @@ from app.config import settings
 from app.db import get_session
 from app.models import DO, WHPO, Container, ContainerLine, Receipt, Scan
 from app.schemas.scan_sheet import (
+    AuditSheetDetail,
     FinishSheetResponse,
     OpenSheetRequest,
     OpenSheetResponse,
@@ -304,6 +305,28 @@ async def finish_sheet(
     receipt.finished_at = datetime.now(timezone.utc)
     receipt.finished_by = operator
     await session.commit()
+
+    # Best-effort: push the finished receipt to OneDrive as a new sheet.
+    # Errors are swallowed; the operator's finish flow never blocks on this.
+    try:
+        from app.services import scan_sheet_onedrive
+
+        rows_q = await session.scalars(
+            select(Scan)
+            .where(Scan.receipt_id == receipt_id)
+            .where(Scan.serial_number.isnot(None))
+            .order_by(Scan.scanned_at.asc())
+        )
+        receipt, container, whpo, do = await _load_receipt_context(session, receipt_id)
+        rows = [_scan_to_row(s, container.container_no, None) for s in rows_q.all()]
+        detail = AuditSheetDetail(
+            header=_build_header(receipt, container, whpo, do),
+            rows=rows,
+        )
+        await scan_sheet_onedrive.push_scan_sheet(detail)
+    except Exception as e:
+        logger.warning("scan-sheet OneDrive push errored on finish: %s", e)
+
     return FinishSheetResponse(
         receipt_id=receipt.id,
         container_no=container.container_no,

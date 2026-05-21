@@ -104,6 +104,12 @@ class Settings(BaseSettings):
     # to fall back to operator-typed container numbers (always works).
     ocr_service_url: str = ""
 
+    # OneDrive scan-sheet sync. Logic App URL that runs the `ScanSheetAppend`
+    # Office Script on `Lime Scan Data.xlsx` — creates (or replaces) a sheet
+    # per finished receipt, sheet name == container_no. Best-effort: backend
+    # logs errors and never fails the operator's finish flow.
+    onedrive_scan_sheet_url: str = ""
+
     # ─── rclone-based OneDrive upload (fallback when Graph apps are blocked)
     # rclone is a third-party file sync tool with its own pre-registered
     # multi-tenant Microsoft app. When USC blocks ALL Microsoft first-party
