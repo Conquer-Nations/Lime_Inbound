@@ -31,13 +31,13 @@ alembic>=1.14.0
 # for operator + auditor downloads. ~8MB, no system deps.
 openpyxl>=3.1.5
 
-# ─── Image handling (no torch / OCR — that lives in dev only) ──────────
+# ─── Image handling + lightweight on-prem OCR ──────────────────────────
 pillow>=12.2.0
-# numpy is needed at module-load time by app/services/ocr.py even though the
-# OCR feature is disabled in prod (the router returns 503). ~30MB, safe to
-# include. Without it the backend fails to start because `from app.routers
-# import ocr as ocr_router` triggers `import numpy as np` which crashes.
 numpy>=1.26.0
+# RapidOCR (PaddleOCR's models converted to ONNX). Pure pip install, no
+# torch / no apt-get, ~100MB total. Runs on CPU, fits comfortably in B1.
+# Local OCR — no external API, no per-call cost.
+rapidocr-onnxruntime>=1.4.0
 
 # ─── Auth / crypto ─────────────────────────────────────────────────────
 bcrypt>=4.2.0

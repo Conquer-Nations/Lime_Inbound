@@ -167,6 +167,40 @@ def _do_ocr(image_bytes: bytes) -> tuple[list[str], str]:
     return candidates, raw_text
 
 
+_rapidocr_engine = None
+
+
+def _get_rapidocr():
+    """Lazy-init RapidOCR engine. First call loads ONNX models (~100MB)."""
+    global _rapidocr_engine
+    if _rapidocr_engine is None:
+        try:
+            from rapidocr_onnxruntime import RapidOCR  # type: ignore[import-untyped]
+        except ImportError as e:
+            raise OCRUnavailableError(
+                "rapidocr-onnxruntime is not installed in this runtime."
+            ) from e
+        _rapidocr_engine = RapidOCR()
+    return _rapidocr_engine
+
+
+def _do_rapidocr(image_bytes: bytes) -> tuple[list[dict], str]:
+    """RapidOCR (PaddleOCR via ONNX) — local, no external API, ~100MB."""
+    engine = _get_rapidocr()
+    image = Image.open(io.BytesIO(image_bytes))
+    if image.mode != "RGB":
+        image = image.convert("RGB")
+    arr = np.array(image)
+    # RapidOCR returns (result, elapse). result is list of [box, text, conf]
+    result, _ = engine(arr)
+    if result is None:
+        raw_text = ""
+    else:
+        raw_text = "\n".join(r[1] for r in result)
+    candidates = extract_container_numbers(raw_text)
+    return candidates, raw_text
+
+
 _GEMINI_PROMPT = (
     "You are reading an ISO 6346 container number off a photo of a shipping "
     "container. The code is always 4 uppercase letters followed by 7 digits "
@@ -302,17 +336,22 @@ async def _ocr_with_openrouter(image_bytes: bytes) -> tuple[list[dict], str]:
 
 async def ocr_container_photo(image_bytes: bytes) -> tuple[list[dict], str]:
     """Provider priority:
-      1. OpenRouter (matches OCR-Driver-POD repo — uses free Gemini Flash by default)
-      2. Direct Gemini AI Studio
-      3. EasyOCR (only if installed; production omits torch)
-    The real provider error is bubbled to the caller so config issues don't
-    masquerade as 'OCR not installed'."""
+      1. OpenRouter (vision LLM, when openrouter_api_key set)
+      2. Direct Gemini AI Studio (when gemini_api_key set)
+      3. RapidOCR (local ONNX, no external API, ~100MB — always available
+         when the package is installed)
+      4. EasyOCR (legacy fallback; only if torch is installed)"""
     if settings.openrouter_api_key:
         logger.info("OCR: calling OpenRouter (model=%s)", settings.openrouter_model)
         return await _ocr_with_openrouter(image_bytes)
     if settings.gemini_api_key:
         logger.info("OCR: calling Gemini (model=%s)", settings.gemini_model)
         return await _ocr_with_gemini(image_bytes)
-    logger.info("OCR: no LLM key set, trying EasyOCR fallback")
     loop = asyncio.get_event_loop()
+    # Try RapidOCR (local) first — small, fast, no external dependency
+    try:
+        logger.info("OCR: running RapidOCR (local)")
+        return await loop.run_in_executor(None, _do_rapidocr, image_bytes)
+    except OCRUnavailableError as e:
+        logger.warning("RapidOCR not available: %s. Falling back to EasyOCR.", e)
     return await loop.run_in_executor(None, _do_ocr, image_bytes)
