@@ -104,19 +104,19 @@ export default function ScanSheetMode({ sheet, operator, onFinished }: Props) {
     })
   }
 
-  async function submitSerial(e: React.FormEvent) {
-    e.preventDefault()
-    // Read straight from DOM, not state — Enter from scanner can fire before
-    // React has finished applying the last keystroke's setState.
+  /** Core scan handler — called when the operator presses Enter (scanner or
+   * keyboard) OR taps the "Add scan" button. Reads input values straight
+   * from the DOM (not React state) so scanner-fast Enter can never race a
+   * pending setState. */
+  async function submitOrAdvance() {
+    if (busy || sheet.header.is_completed) return
     const serialVal = (serialInputRef.current?.value ?? serial).trim()
     const imeiVal = (imeiInputRef.current?.value ?? imei).trim()
     if (!serialVal) {
       focusNext('serial')
       return
     }
-    // For scooters: serial → IMEI auto-advance. Scanner emits text+Enter.
-    // When IMEI is still empty, intercept the Enter, move focus to IMEI,
-    // and wait for the next scan (which will then submit the row).
+    // Scooter: after serial is filled, advance to IMEI and wait for next scan.
     if (sheet.header.requires_imei && !imeiVal) {
       setError(null)
       focusNext('imei')
@@ -136,18 +136,34 @@ export default function ScanSheetMode({ sheet, operator, onFinished }: Props) {
         setSerial('')
         setImei('')
         setNotes('')
+        // Clear DOM values too in case state hasn't applied yet.
+        if (serialInputRef.current) serialInputRef.current.value = ''
+        if (imeiInputRef.current) imeiInputRef.current.value = ''
       } else {
         setLastDupRowId(res.duplicate_of_row_id ?? null)
         setError(res.error ?? 'Scan rejected.')
-        // Don't clear — operator can correct
       }
     } catch (e) {
       setError(e instanceof ApiError ? e.detail : String(e))
     } finally {
       setBusy(false)
-      // Always return focus to the serial input for the next scan.
       focusNext('serial')
     }
+  }
+
+  /** Catch Enter at the input level (more reliable than form onSubmit when
+   * the submit button is disabled — some browsers won't fire onSubmit then). */
+  function onScanKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
+    if (e.key === 'Enter') {
+      e.preventDefault()
+      submitOrAdvance()
+    }
+  }
+
+  // Form onSubmit kept for the "Add scan" tap-button case + accessibility.
+  function submitSerial(e: React.FormEvent) {
+    e.preventDefault()
+    submitOrAdvance()
   }
 
   async function handleFinishConfirmed() {
@@ -200,6 +216,7 @@ export default function ScanSheetMode({ sheet, operator, onFinished }: Props) {
             type="text"
             value={serial}
             onChange={(e) => setSerial(e.target.value)}
+            onKeyDown={onScanKeyDown}
             placeholder="Scan serial number"
             spellCheck={false}
             autoComplete="off"
@@ -215,6 +232,7 @@ export default function ScanSheetMode({ sheet, operator, onFinished }: Props) {
               type="text"
               value={imei}
               onChange={(e) => setImei(e.target.value)}
+              onKeyDown={onScanKeyDown}
               placeholder="IMEI (auto after serial)"
               spellCheck={false}
               autoComplete="off"
