@@ -3,3 +3,19 @@
 @layer base {
   html, body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
 }
+
+/* Operator pages (scan sheet) — lock down mobile gestures for warehouse use.
+   Disables pinch-zoom + double-tap-zoom on the scanner's browser. Inputs
+   still allow text selection so the operator can clear a field if needed. */
+body.role-operator {
+  touch-action: manipulation;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  overscroll-behavior: contain;
+}
+body.role-operator input,
+body.role-operator textarea {
+  -webkit-user-select: text;
+  user-select: text;
+}

@@ -1,0 +1,25 @@
+{
+  "name": "Conquer Nation — Warehouse",
+  "short_name": "CN Warehouse",
+  "description": "Lime 3PL inbound scan sheet — operator & manager console",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#0B1828",
+  "theme_color": "#0B1828",
+  "icons": [
+    {
+      "src": "/cn-logo.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/cn-logo.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

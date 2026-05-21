@@ -50,6 +50,42 @@ export default function ScanSheetMode({ sheet, operator, onFinished }: Props) {
     serialInputRef.current?.focus()
   }, [])
 
+  // Request a screen wake lock so the scanner device doesn't sleep mid-shift.
+  // Best-effort: falls back silently if the browser doesn't support it.
+  useEffect(() => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const nav: any = navigator
+    if (!nav.wakeLock) return
+    let wakeLock: { release: () => Promise<void> } | null = null
+    let cancelled = false
+    nav.wakeLock
+      .request('screen')
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      .then((sentinel: any) => {
+        if (cancelled) {
+          sentinel.release().catch(() => {})
+        } else {
+          wakeLock = sentinel
+        }
+      })
+      .catch(() => {})
+    const reacquire = () => {
+      if (document.visibilityState === 'visible' && !wakeLock && nav.wakeLock) {
+        nav.wakeLock
+          .request('screen')
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          .then((s: any) => (wakeLock = s))
+          .catch(() => {})
+      }
+    }
+    document.addEventListener('visibilitychange', reacquire)
+    return () => {
+      cancelled = true
+      document.removeEventListener('visibilitychange', reacquire)
+      wakeLock?.release().catch(() => {})
+    }
+  }, [])
+
   // Clear duplicate flash after 1.5s so the row goes back to normal.
   useEffect(() => {
     if (lastDupRowId == null) return
@@ -150,11 +186,13 @@ export default function ScanSheetMode({ sheet, operator, onFinished }: Props) {
             type="text"
             value={serial}
             onChange={(e) => setSerial(e.target.value)}
-            placeholder="Scan or type serial number…"
+            placeholder="Scan serial number"
             spellCheck={false}
             autoComplete="off"
-            inputMode="text"
-            className="font-mono w-full border border-slate-300 rounded-md px-4 py-3 text-lg tracking-wider text-[#1B4676] placeholder:text-slate-400 focus:border-[#0093D0] focus:ring-2 focus:ring-[#0093D0]/20 focus:outline-none transition"
+            autoCorrect="off"
+            autoCapitalize="off"
+            inputMode="none"
+            className="font-mono w-full border border-slate-300 rounded-md px-4 py-4 text-xl tracking-wider text-[#1B4676] placeholder:text-slate-400 focus:border-[#0093D0] focus:ring-2 focus:ring-[#0093D0]/20 focus:outline-none transition"
             disabled={busy || h.is_completed}
           />
           {h.requires_imei && (
@@ -163,11 +201,13 @@ export default function ScanSheetMode({ sheet, operator, onFinished }: Props) {
               type="text"
               value={imei}
               onChange={(e) => setImei(e.target.value)}
-              placeholder="IMEI (auto after serial scan)"
+              placeholder="IMEI (auto after serial)"
               spellCheck={false}
               autoComplete="off"
-              inputMode="text"
-              className="font-mono w-full border border-slate-300 rounded-md px-4 py-3 text-lg tracking-wider text-[#1B4676] placeholder:text-slate-400 focus:border-[#0093D0] focus:ring-2 focus:ring-[#0093D0]/20 focus:outline-none transition"
+              autoCorrect="off"
+              autoCapitalize="off"
+              inputMode="none"
+              className="font-mono w-full border border-slate-300 rounded-md px-4 py-4 text-xl tracking-wider text-[#1B4676] placeholder:text-slate-400 focus:border-[#0093D0] focus:ring-2 focus:ring-[#0093D0]/20 focus:outline-none transition"
               disabled={busy || h.is_completed}
             />
           )}
@@ -215,17 +255,16 @@ export default function ScanSheetMode({ sheet, operator, onFinished }: Props) {
         </div>
       </form>
 
-      {/* FINISH bar */}
-      <div className="bg-white rounded-xl border border-slate-200 p-4 flex items-center justify-between gap-4">
-        <div className="text-sm text-slate-600">
-          Done scanning this container? Locking saves the sheet to the database
-          and lets you download it as Excel.
+      {/* FINISH bar — big tappable button on mobile */}
+      <div className="bg-white rounded-xl border border-slate-200 p-4 sm:flex sm:items-center sm:justify-between gap-4">
+        <div className="text-sm text-slate-600 hidden sm:block">
+          Done scanning this container? Locking saves the sheet.
         </div>
         <button
           type="button"
           onClick={() => setConfirmFinish(true)}
           disabled={h.is_completed || rows.length === 0}
-          className="inline-flex items-center gap-2 rounded-full bg-[#1B4676] hover:bg-[#224E72] disabled:bg-slate-200 disabled:text-slate-400 disabled:cursor-not-allowed text-white font-bold px-6 py-3 text-sm transition shadow-[0_8px_24px_-4px_rgba(27,70,118,0.45)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#0093D0] focus-visible:ring-offset-2"
+          className="w-full sm:w-auto inline-flex items-center justify-center gap-2 rounded-full bg-[#1B4676] hover:bg-[#224E72] disabled:bg-slate-200 disabled:text-slate-400 disabled:cursor-not-allowed text-white font-bold px-6 py-4 sm:py-3 text-base sm:text-sm transition shadow-[0_8px_24px_-4px_rgba(27,70,118,0.45)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#0093D0] focus-visible:ring-offset-2"
         >
           <span>FINISH</span>
         </button>

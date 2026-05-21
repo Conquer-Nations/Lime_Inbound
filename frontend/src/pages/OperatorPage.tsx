@@ -21,6 +21,15 @@ export default function OperatorPage() {
   const { user, signOut } = useAuth()
   const operator = user?.id ?? 'unknown'
 
+  // Lock down mobile UX (no pinch-zoom, no text selection on chrome) while
+  // the operator is on this page. Class is scoped via index.css.
+  useEffect(() => {
+    document.body.classList.add('role-operator')
+    return () => {
+      document.body.classList.remove('role-operator')
+    }
+  }, [])
+
   const [phase, setPhase] = useState<Phase>('enter_container')
   const [containerNo, setContainerNo] = useState('')
   const [lookup, setLookup] = useState<ContainerLookupResponse | null>(null)
