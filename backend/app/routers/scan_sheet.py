@@ -62,6 +62,18 @@ def _container_requires_imei(container: Container) -> bool:
     return False
 
 
+def _container_sku(container: Container) -> str | None:
+    """Pick the SKU to display on every scan row for this container. Uses the
+    matched SKU.sku if available, else the raw vendor-provided string from
+    the first ContainerLine. Returns None if the container has no lines."""
+    for line in (container.lines or []):
+        if line.sku is not None and line.sku.sku:
+            return line.sku.sku
+        if line.sku_raw:
+            return line.sku_raw
+    return None
+
+
 def _build_header(receipt: Receipt, container: Container, whpo: WHPO, do: DO) -> ScanSheetHeader:
     return ScanSheetHeader(
         receipt_id=receipt.id,
@@ -116,7 +128,9 @@ async def _load_receipt_context(
             .selectinload(Container.do)
             .selectinload(DO.whpo)
             .selectinload(WHPO.customer),
-            selectinload(Receipt.container).selectinload(Container.lines),
+            selectinload(Receipt.container)
+            .selectinload(Container.lines)
+            .selectinload(ContainerLine.sku),
         )
     )
     receipt = await session.scalar(stmt)
@@ -202,9 +216,10 @@ async def open_sheet(
             sku_by_id[line.sku_id] = line.sku.sku if line.sku else None  # noqa
     # Fallback if relationship not loaded — fetch SKUs lazily by id
     is_scooter = _container_requires_imei(container)
+    sku_default = _container_sku(container)
     for idx, s in enumerate(existing.all()):
         box = _box_for_index(idx) if is_scooter else None
-        rows.append(_scan_to_row(s, container.container_no, None, box))
+        rows.append(_scan_to_row(s, container.container_no, sku_default, box))
 
     await session.commit()
 
@@ -291,7 +306,9 @@ async def record_scan_row(
     is_scooter = _container_requires_imei(container)
     # This new scan is at zero-based index (total - 1)
     box = _box_for_index(total - 1) if is_scooter else None
-    row = _scan_to_row(scan, container.container_no, body.sku, box)
+    # Prefer the vendor-provided SKU from container_lines over body.sku
+    sku_default = _container_sku(container) or body.sku
+    row = _scan_to_row(scan, container.container_no, sku_default, box)
 
     # Fire-and-forget: push the full updated sheet to OneDrive so the
     # manager's workbook reflects each scan as it happens. We don't await —
@@ -328,9 +345,10 @@ async def _push_live_to_onedrive(receipt_id: int) -> None:
                 .order_by(Scan.scanned_at.asc())
             )
             is_scooter = _container_requires_imei(c)
+            sku_default = _container_sku(c)
             rows = [
                 _scan_to_row(
-                    scan, c.container_no, None,
+                    scan, c.container_no, sku_default,
                     _box_for_index(idx) if is_scooter else None,
                 )
                 for idx, scan in enumerate(rows_q.all())
@@ -381,9 +399,10 @@ async def finish_sheet(
         )
         receipt, container, whpo, do = await _load_receipt_context(session, receipt_id)
         is_scooter_f = _container_requires_imei(container)
+        sku_default_f = _container_sku(container)
         rows = [
             _scan_to_row(
-                s, container.container_no, None,
+                s, container.container_no, sku_default_f,
                 _box_for_index(idx) if is_scooter_f else None,
             )
             for idx, s in enumerate(rows_q.all())
@@ -418,9 +437,10 @@ async def view_sheet(receipt_id: int, session: AsyncSession = Depends(get_sessio
         .order_by(Scan.scanned_at.asc())
     )
     is_scooter_v = _container_requires_imei(container)
+    sku_default_v = _container_sku(container)
     rows = [
         _scan_to_row(
-            s, container.container_no, None,
+            s, container.container_no, sku_default_v,
             _box_for_index(idx) if is_scooter_v else None,
         )
         for idx, s in enumerate(rows_q.all())
