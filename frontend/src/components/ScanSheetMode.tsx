@@ -257,6 +257,9 @@ export default function ScanSheetMode({ sheet, operator, onFinished }: Props) {
           <thead className="bg-[#0B1828] text-white text-[10.5px] uppercase tracking-wider sticky top-0 z-10">
             <tr>
               <th className="text-left px-4 py-2 font-semibold">Container Number</th>
+              {h.requires_imei && (
+                <th className="text-right px-4 py-2 font-semibold">Box #</th>
+              )}
               <th className="text-left px-4 py-2 font-semibold">SKU</th>
               <th className="text-right px-4 py-2 font-semibold">Received Qty</th>
               <th className="text-left px-4 py-2 font-semibold">Serial Number</th>
@@ -268,7 +271,10 @@ export default function ScanSheetMode({ sheet, operator, onFinished }: Props) {
           <tbody>
             {rows.length === 0 ? (
               <tr>
-                <td colSpan={7} className="px-4 py-6 text-center text-slate-400 text-sm">
+                <td
+                  colSpan={h.requires_imei ? 8 : 7}
+                  className="px-4 py-6 text-center text-slate-400 text-sm"
+                >
                   Scans will appear here as they're recorded.
                 </td>
               </tr>
@@ -292,6 +298,11 @@ export default function ScanSheetMode({ sheet, operator, onFinished }: Props) {
                     <td className="px-4 py-2 font-mono font-bold text-[#1B4676]">
                       {h.container_no}
                     </td>
+                    {h.requires_imei && (
+                      <td className="px-4 py-2 text-right font-mono font-bold text-[#0093D0]">
+                        {r.box_number ?? ''}
+                      </td>
+                    )}
                     <td className="px-4 py-2 font-mono text-slate-600">
                       {r.sku ?? '—'}
                     </td>

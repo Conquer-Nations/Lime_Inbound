@@ -78,7 +78,12 @@ def _build_header(receipt: Receipt, container: Container, whpo: WHPO, do: DO) ->
     )
 
 
-def _scan_to_row(s: Scan, container_no: str, line_sku: str | None) -> ScanRow:
+def _scan_to_row(
+    s: Scan,
+    container_no: str,
+    line_sku: str | None,
+    box_number: int | None = None,
+) -> ScanRow:
     return ScanRow(
         id=s.id,
         container_no=container_no,
@@ -86,10 +91,16 @@ def _scan_to_row(s: Scan, container_no: str, line_sku: str | None) -> ScanRow:
         qty=1,
         serial_number=s.serial_number,
         imei=s.imei,
+        box_number=box_number,
         scanned_by=s.scanned_by,
         notes=s.row_notes,
         scanned_at=s.scanned_at,
     )
+
+
+def _box_for_index(index_zero_based: int) -> int:
+    """Box number = scan index // 10 + 1. So first 10 = box 1, next 10 = box 2…"""
+    return (index_zero_based // 10) + 1
 
 
 async def _load_receipt_context(
@@ -190,8 +201,10 @@ async def open_sheet(
         if line.sku is not None:
             sku_by_id[line.sku_id] = line.sku.sku if line.sku else None  # noqa
     # Fallback if relationship not loaded — fetch SKUs lazily by id
-    for s in existing.all():
-        rows.append(_scan_to_row(s, container.container_no, None))
+    is_scooter = _container_requires_imei(container)
+    for idx, s in enumerate(existing.all()):
+        box = _box_for_index(idx) if is_scooter else None
+        rows.append(_scan_to_row(s, container.container_no, None, box))
 
     await session.commit()
 
@@ -274,12 +287,61 @@ async def record_scan_row(
         )
 
     await session.commit()
-    row = _scan_to_row(scan, container.container_no, body.sku)
+    total = await _count_scans(session, receipt_id)
+    is_scooter = _container_requires_imei(container)
+    # This new scan is at zero-based index (total - 1)
+    box = _box_for_index(total - 1) if is_scooter else None
+    row = _scan_to_row(scan, container.container_no, body.sku, box)
+
+    # Fire-and-forget: push the full updated sheet to OneDrive so the
+    # manager's workbook reflects each scan as it happens. We don't await —
+    # OneDrive latency must NOT slow the operator's scan loop.
+    try:
+        import asyncio
+        from app.services import scan_sheet_onedrive
+
+        if scan_sheet_onedrive.is_configured():
+            asyncio.create_task(_push_live_to_onedrive(receipt_id))
+    except Exception as e:
+        logger.warning("scan-sheet live OneDrive task spawn failed: %s", e)
+
     return RecordScanResponse(
         accepted=True,
         row=row,
-        total_scanned=await _count_scans(session, receipt_id),
+        total_scanned=total,
     )
+
+
+async def _push_live_to_onedrive(receipt_id: int) -> None:
+    """Best-effort live push: opens its own DB session, builds the detail,
+    POSTs to the Logic App. Never raises — errors are logged."""
+    from app.db import SessionLocal
+    from app.services import scan_sheet_onedrive
+
+    try:
+        async with SessionLocal() as s:
+            r, c, w, d = await _load_receipt_context(s, receipt_id)
+            rows_q = await s.scalars(
+                select(Scan)
+                .where(Scan.receipt_id == receipt_id)
+                .where(Scan.serial_number.isnot(None))
+                .order_by(Scan.scanned_at.asc())
+            )
+            is_scooter = _container_requires_imei(c)
+            rows = [
+                _scan_to_row(
+                    scan, c.container_no, None,
+                    _box_for_index(idx) if is_scooter else None,
+                )
+                for idx, scan in enumerate(rows_q.all())
+            ]
+            detail = AuditSheetDetail(
+                header=_build_header(r, c, w, d),
+                rows=rows,
+            )
+            await scan_sheet_onedrive.push_scan_sheet(detail)
+    except Exception as e:
+        logger.warning("live OneDrive push failed for receipt %s: %s", receipt_id, e)
 
 
 @router.post("/{receipt_id}/finish", response_model=FinishSheetResponse)
@@ -318,7 +380,14 @@ async def finish_sheet(
             .order_by(Scan.scanned_at.asc())
         )
         receipt, container, whpo, do = await _load_receipt_context(session, receipt_id)
-        rows = [_scan_to_row(s, container.container_no, None) for s in rows_q.all()]
+        is_scooter_f = _container_requires_imei(container)
+        rows = [
+            _scan_to_row(
+                s, container.container_no, None,
+                _box_for_index(idx) if is_scooter_f else None,
+            )
+            for idx, s in enumerate(rows_q.all())
+        ]
         detail = AuditSheetDetail(
             header=_build_header(receipt, container, whpo, do),
             rows=rows,
@@ -348,7 +417,14 @@ async def view_sheet(receipt_id: int, session: AsyncSession = Depends(get_sessio
         .where(Scan.serial_number.isnot(None))
         .order_by(Scan.scanned_at.asc())
     )
-    rows = [_scan_to_row(s, container.container_no, None) for s in rows_q.all()]
+    is_scooter_v = _container_requires_imei(container)
+    rows = [
+        _scan_to_row(
+            s, container.container_no, None,
+            _box_for_index(idx) if is_scooter_v else None,
+        )
+        for idx, s in enumerate(rows_q.all())
+    ]
     return OpenSheetResponse(
         header=_build_header(receipt, container, whpo, do),
         rows=rows,

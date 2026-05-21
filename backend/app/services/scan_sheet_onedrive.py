@@ -27,11 +27,14 @@ def is_configured() -> bool:
     return bool(settings.onedrive_scan_sheet_url)
 
 
-def _serialize_row(container_no: str, r) -> list[str]:
-    """Match the column order in TEMPLATE.xlsx data rows (A..G):
-       container_no | sku | qty | serial_number | imei | scanned_by | notes"""
-    return [
-        container_no,
+def _serialize_row(container_no: str, r, is_scooter: bool) -> list[str]:
+    """Match the column order in TEMPLATE.xlsx data rows.
+    Scooter:   container_no | box # | sku | qty | serial | imei | scanned_by | notes
+    Non-scoot: container_no |       | sku | qty | serial | imei | scanned_by | notes"""
+    base_left = [container_no]
+    if is_scooter:
+        base_left.append(str(r.box_number) if r.box_number is not None else "")
+    return base_left + [
         r.sku or "",
         str(r.qty),
         r.serial_number or "",
@@ -49,9 +52,11 @@ async def push_scan_sheet(detail: AuditSheetDetail) -> bool:
         return False
 
     h = detail.header
-    rows = [_serialize_row(h.container_no, r) for r in detail.rows]
+    is_scooter = any(r.box_number is not None for r in detail.rows)
+    rows = [_serialize_row(h.container_no, r, is_scooter) for r in detail.rows]
 
     header_payload = {
+        "is_scooter": is_scooter,
         "container_no": h.container_no,
         "whpo_number": h.whpo_number,
         "do_number": h.do_number,

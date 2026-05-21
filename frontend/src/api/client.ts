@@ -503,6 +503,7 @@ export interface ScanSheetRow {
   qty: number
   serial_number: string | null
   imei: string | null
+  box_number: number | null
   scanned_by: string
   notes: string | null
   scanned_at: string

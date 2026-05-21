@@ -44,6 +44,7 @@ class ScanRow(BaseModel):
     qty: int = 1                   # always 1 per row per spec
     serial_number: str | None
     imei: str | None = None        # template column E, currently always blank
+    box_number: int | None = None  # 1-based, increments every 10 scans (scooters only)
     scanned_by: str
     notes: str | None = None
     scanned_at: datetime
