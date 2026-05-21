@@ -176,11 +176,17 @@ def _get_rapidocr():
     if _rapidocr_engine is None:
         try:
             from rapidocr_onnxruntime import RapidOCR  # type: ignore[import-untyped]
-        except ImportError as e:
+        except Exception as e:
+            # Surface the real underlying error (often libGL / cv2 / onnx)
             raise OCRUnavailableError(
-                "rapidocr-onnxruntime is not installed in this runtime."
+                f"rapidocr-onnxruntime import failed [{type(e).__name__}]: {e}"
             ) from e
-        _rapidocr_engine = RapidOCR()
+        try:
+            _rapidocr_engine = RapidOCR()
+        except Exception as e:
+            raise OCRUnavailableError(
+                f"RapidOCR() init failed [{type(e).__name__}]: {e}"
+            ) from e
     return _rapidocr_engine
 
 
