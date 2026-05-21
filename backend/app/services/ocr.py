@@ -100,14 +100,56 @@ def correct_check_digit(bic: str) -> str:
     return bic[:10] + str(compute_check_digit(bic[:10]))
 
 
+_LETTER_TO_DIGIT = {
+    "O": "0", "Q": "0", "D": "0",
+    "I": "1", "L": "1",
+    "Z": "2",
+    "E": "3",
+    "A": "4",
+    "S": "5",
+    "G": "6",
+    "T": "7",
+    "B": "8",
+    "P": "9",
+}
+_DIGIT_TO_LETTER = {
+    "0": "O", "1": "I", "2": "Z", "5": "S", "6": "G", "8": "B",
+}
+
+
+def _snap_to_bic(window: str) -> str | None:
+    """Snap an 11-char A-Z0-9 window to (4 letters + 7 digits). Recovers from
+    OCR letter↔digit confusions (B↔8, O↔0, S↔5, Z↔2, etc.)."""
+    if len(window) != 11:
+        return None
+    out = ""
+    for i, ch in enumerate(window):
+        if i < 4:
+            if ch.isalpha():
+                out += ch
+            elif ch in _DIGIT_TO_LETTER:
+                out += _DIGIT_TO_LETTER[ch]
+            else:
+                return None
+        else:
+            if ch.isdigit():
+                out += ch
+            elif ch in _LETTER_TO_DIGIT:
+                out += _LETTER_TO_DIGIT[ch]
+            else:
+                return None
+    return out
+
+
 def extract_container_numbers(text: str) -> list[dict]:
     """Find ISO 6346 BIC codes in OCR output.
 
     Returns a list of candidate objects: {value, check_digit_valid, source}.
     Sources:
       - "ocr"                          → matched directly from OCR text
-      - "ocr_check_digit_corrected"    → OCR-detected with wrong check digit;
-                                         replaced with the computed correct one
+      - "ocr_check_digit_corrected"    → OCR-detected with wrong check digit
+                                         or a single letter↔digit confusion
+                                         was repaired
     """
     upper = text.upper()
     candidates: set[str] = set()
@@ -127,6 +169,15 @@ def extract_container_numbers(text: str) -> list[dict]:
         reassembled = m.group(1) + m.group(2) + m.group(3) + m.group(4)
         if _STRICT.fullmatch(reassembled):
             candidates.add(reassembled)
+
+    # Fuzzy snap: try every 11-char window of [A-Z0-9] and coerce each cell
+    # into its expected class (letters → first 4, digits → last 7). Catches
+    # things like JZPU802168B → JZPU8021688 (B mis-read for 8 in the boxed
+    # check-digit cell).
+    for i in range(0, max(0, len(alnum) - 10)):
+        snapped = _snap_to_bic(alnum[i : i + 11])
+        if snapped is not None:
+            candidates.add(snapped)
 
     out: list[dict] = []
     seen: set[str] = set()
