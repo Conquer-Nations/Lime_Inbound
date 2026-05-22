@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Link, Navigate, useNavigate } from 'react-router-dom'
 import { api, ApiError, SCAN_SHEETS_ENABLED } from '../api/client'
 import { useVendorAuth } from '../auth/VendorAuthContext'
@@ -1254,6 +1254,38 @@ function DirectionChooser({
 }: {
   onChoose: (m: Mode) => void
 }) {
+  // Live inventory snapshot so the vendor sees their inbound/outbound/
+  // pending totals on the landing page. Best-effort: failures show as
+  // dashes, never block the page.
+  const [inventory, setInventory] = useState<{
+    total_inbound: number
+    total_outbound: number
+    total_pending: number
+    container_count: number
+  } | null>(null)
+  const [inventoryBusy, setInventoryBusy] = useState(true)
+  useEffect(() => {
+    let cancelled = false
+    api
+      .outboundContainerInventory()
+      .then((r) => {
+        if (cancelled) return
+        setInventory({
+          total_inbound: r.total_inbound,
+          total_outbound: r.total_outbound,
+          total_pending: r.total_pending,
+          container_count: r.containers.length,
+        })
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (!cancelled) setInventoryBusy(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
   return (
     <VendorPortalShell breadcrumb="Choose direction">
       <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-12 sm:py-16">
@@ -1288,8 +1320,122 @@ function DirectionChooser({
             accent="navy"
           />
         </div>
+
+        {/* Container inventory summary — live across all your inbound
+            containers. Clicking opens the full per-container dashboard. */}
+        <button
+          type="button"
+          onClick={() => onChoose('out_inventory')}
+          className="group mt-8 w-full text-left rounded-2xl border border-slate-200 bg-white hover:border-[#1B4676]/50 hover:shadow-[0_24px_60px_-20px_rgba(15,23,42,0.18)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#1B4676] focus-visible:ring-offset-2 transition-all duration-200 overflow-hidden"
+          style={{
+            boxShadow:
+              '0 1px 2px 0 rgba(15,23,42,0.04), 0 8px 24px -8px rgba(15,23,42,0.08)',
+          }}
+        >
+          <div className="p-5 sm:p-6 flex flex-col sm:flex-row sm:items-center gap-5">
+            <div className="flex items-center gap-3">
+              <div
+                className="w-10 h-10 rounded-md bg-[#1B4676]/10 flex items-center justify-center text-[#1B4676]"
+                aria-hidden
+              >
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth={2}
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  className="w-5 h-5"
+                >
+                  <rect width="7" height="7" x="3" y="3" rx="1" />
+                  <rect width="7" height="7" x="14" y="3" rx="1" />
+                  <rect width="7" height="7" x="14" y="14" rx="1" />
+                  <rect width="7" height="7" x="3" y="14" rx="1" />
+                </svg>
+              </div>
+              <div className="leading-tight">
+                <div className="text-[10.5px] uppercase tracking-[0.18em] font-bold text-[#1B4676]">
+                  Container inventory
+                </div>
+                <div className="text-sm font-semibold text-[#1B4676]">
+                  {inventoryBusy
+                    ? 'Loading…'
+                    : inventory
+                    ? `${inventory.container_count} container${inventory.container_count === 1 ? '' : 's'} on hand`
+                    : 'Open the dashboard'}
+                </div>
+              </div>
+            </div>
+
+            <div className="sm:ml-auto grid grid-cols-3 gap-3 sm:gap-5">
+              <SummaryStat
+                label="Inbound"
+                value={inventory ? inventory.total_inbound : null}
+                tone="slate"
+              />
+              <SummaryStat
+                label="Outbound"
+                value={inventory ? inventory.total_outbound : null}
+                tone="navy"
+              />
+              <SummaryStat
+                label="Pending"
+                value={inventory ? inventory.total_pending : null}
+                tone="yellow"
+              />
+            </div>
+
+            <span
+              className="hidden sm:inline-flex items-center gap-1 text-sm font-bold text-[#1B4676] group-hover:translate-x-1 transition-transform"
+              aria-hidden
+            >
+              <span>Open</span>
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth={2}
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                className="w-4 h-4"
+              >
+                <path d="M5 12h14" />
+                <path d="m12 5 7 7-7 7" />
+              </svg>
+            </span>
+          </div>
+        </button>
       </div>
     </VendorPortalShell>
+  )
+}
+
+function SummaryStat({
+  label,
+  value,
+  tone,
+}: {
+  label: string
+  value: number | null
+  tone: 'slate' | 'navy' | 'yellow'
+}) {
+  const bg =
+    tone === 'navy'
+      ? 'bg-[#1B4676] text-white'
+      : tone === 'yellow'
+      ? 'bg-[#FED641] text-[#1B4676]'
+      : 'bg-slate-100 text-slate-800'
+  return (
+    <div className={`rounded-md px-3 py-2 min-w-[5rem] text-center ${bg}`}>
+      <div className="text-[10px] uppercase tracking-wider font-semibold opacity-80">
+        {label}
+      </div>
+      <div className="text-lg font-bold font-mono leading-tight">
+        {value === null ? '—' : value.toLocaleString()}
+      </div>
+    </div>
   )
 }
 
