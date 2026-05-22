@@ -30,6 +30,7 @@ logger = logging.getLogger(__name__)
 # Logic App row-mapping. Appending new columns at the end keeps the
 # existing positions stable.
 HEADERS = [
+    # Order header (cols 0-9)
     "transfer_order_no",
     "po_number",
     "customer",
@@ -40,6 +41,7 @@ HEADERS = [
     "ship_from_address",
     "ship_to_name",
     "ship_to_address",
+    # Line item (cols 10-16)
     "line_no",
     "sku",
     "description",
@@ -47,10 +49,25 @@ HEADERS = [
     "unit",
     "serial_specific",
     "serials_requested",  # semicolon-joined when serial_specific = True
+    # Order meta (cols 17-20)
     "status",
     "submitter_email",
     "submitted_at",
     "notes",
+    # Container + driver block (cols 21-29) — populated for each
+    # OutboundContainer attached to the order. One row is emitted per
+    # (container × line); when no container is attached yet, these fields
+    # are blank. Mirrors inbound's (container × line) layout.
+    "container_no",
+    "container_type",
+    "driver_name",
+    "driver_license",
+    "driver_phone",
+    "truck_license_plate",
+    "carrier",
+    "insurance",
+    "bol_number",
+    # Audit (col 30)
     "last_updated_at",
 ]
 
@@ -139,11 +156,46 @@ async def delete_outbound_rows_for_to(transfer_order_no: str) -> int:
     return 0
 
 
+def _container_block(container) -> dict[str, Any]:
+    """Build the container/driver column dict from one OutboundContainer.
+    Pass None for no-container-yet → all fields blank."""
+    if container is None:
+        return {
+            "container_no": "",
+            "container_type": "",
+            "driver_name": "",
+            "driver_license": "",
+            "driver_phone": "",
+            "truck_license_plate": "",
+            "carrier": "",
+            "insurance": "",
+            "bol_number": "",
+        }
+    return {
+        "container_no": container.container_no or "",
+        "container_type": container.container_type or "",
+        "driver_name": container.driver_name or "",
+        "driver_license": container.driver_license or "",
+        "driver_phone": container.driver_phone or "",
+        "truck_license_plate": container.truck_license_plate or "",
+        "carrier": container.carrier or "",
+        "insurance": container.insurance or "",
+        "bol_number": container.bol_number or "",
+    }
+
+
 def rows_from_order(order, customer_name: str, last_updated_iso: str | None = None) -> list[dict[str, Any]]:
-    """Materialise an OutboundOrder + its lines into one row per line for
-    the OutboundTable. Pure function — no DB access. Caller passes the
-    customer_name (already resolved) to avoid lazy-loading inside an
-    async session."""
+    """Materialise an OutboundOrder + its lines into Excel rows. Pure
+    function — no DB access. Caller passes customer_name (already resolved)
+    to avoid lazy-loading inside an async session.
+
+    Layout:
+      - If the order has N containers, emit N × M rows (one per container
+        × line) so each container's driver/truck info is on every row that
+        belongs to it. Mirrors inbound's (container × line) layout.
+      - If no containers are attached yet, emit M rows (one per line)
+        with the container/driver block blank.
+    """
     base = {
         "transfer_order_no": order.transfer_order_no,
         "po_number": order.po_number or "",
@@ -161,23 +213,31 @@ def rows_from_order(order, customer_name: str, last_updated_iso: str | None = No
         "notes": order.notes or "",
         "last_updated_at": last_updated_iso or "",
     }
+
+    # Containers list: real OutboundContainer rows OR a single None
+    # placeholder so the inner loop always runs at least once.
+    containers = list(order.containers or []) or [None]
+
     rows: list[dict[str, Any]] = []
-    for line in (order.lines or []):
-        serials_joined = ""
-        if line.serial_specific and line.serials:
-            serials_joined = ";".join(
-                s.serial_number for s in line.serials if s.serial_number
+    for container in containers:
+        cblock = _container_block(container)
+        for line in (order.lines or []):
+            serials_joined = ""
+            if line.serial_specific and line.serials:
+                serials_joined = ";".join(
+                    s.serial_number for s in line.serials if s.serial_number
+                )
+            rows.append(
+                {
+                    **base,
+                    "line_no": line.line_no,
+                    "sku": line.sku_raw or "",
+                    "description": line.description or "",
+                    "order_qty": line.order_qty,
+                    "unit": line.unit or "EA",
+                    "serial_specific": "yes" if line.serial_specific else "no",
+                    "serials_requested": serials_joined,
+                    **cblock,
+                }
             )
-        rows.append(
-            {
-                **base,
-                "line_no": line.line_no,
-                "sku": line.sku_raw or "",
-                "description": line.description or "",
-                "order_qty": line.order_qty,
-                "unit": line.unit or "EA",
-                "serial_specific": "yes" if line.serial_specific else "no",
-                "serials_requested": serials_joined,
-            }
-        )
     return rows

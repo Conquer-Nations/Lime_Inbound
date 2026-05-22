@@ -234,12 +234,13 @@ async def submit_outbound_order(
     )
     await session.commit()
 
-    # Best-effort OneDrive Excel sync. Re-load the order with lines+serials
-    # eager so the rows builder works without lazy-loading.
+    # Best-effort OneDrive Excel sync. Re-load with everything eager so
+    # rows_from_order doesn't lazy-load in this async session.
     refreshed = await session.scalar(
         select(OutboundOrder)
         .options(
             selectinload(OutboundOrder.lines).selectinload(OutboundLine.serials),
+            selectinload(OutboundOrder.containers),
         )
         .where(OutboundOrder.id == order.id)
     )
@@ -337,6 +338,7 @@ async def update_outbound_order(
             .options(
                 selectinload(OutboundOrder.customer),
                 selectinload(OutboundOrder.lines).selectinload(OutboundLine.serials),
+                selectinload(OutboundOrder.containers),
             )
             .where(OutboundOrder.id == order.id)
         )
@@ -507,6 +509,32 @@ async def attach_outbound_container(
         )
     )
     await session.commit()
+
+    # Resync OutboundTable so the new container + driver info shows up.
+    # Delete the order's existing rows then re-append with the full
+    # container set on each row (one row per container × line).
+    if outbound_sheet_sync.is_configured():
+        await outbound_sheet_sync.delete_outbound_rows_for_to(
+            order.transfer_order_no
+        )
+        refreshed = await session.scalar(
+            select(OutboundOrder)
+            .options(
+                selectinload(OutboundOrder.customer),
+                selectinload(OutboundOrder.lines).selectinload(OutboundLine.serials),
+                selectinload(OutboundOrder.containers),
+            )
+            .where(OutboundOrder.id == order.id)
+        )
+        if refreshed is not None:
+            customer_name = refreshed.customer.name if refreshed.customer else ""
+            rows = outbound_sheet_sync.rows_from_order(
+                refreshed,
+                customer_name,
+                last_updated_iso=datetime.now(timezone.utc).isoformat(),
+            )
+            await outbound_sheet_sync.append_outbound_rows(rows)
+
     return OutboundContainerAttachResponse(
         container_id=c.id, container_no=c.container_no, status=c.status
     )
