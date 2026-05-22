@@ -41,6 +41,9 @@ opencv-python-headless>=4.10.0
 # torch / no apt-get, ~100MB total. Runs on CPU, fits comfortably in B1.
 # Local OCR — no external API, no per-call cost.
 rapidocr-onnxruntime>=1.4.0
+# pypdfium2: render PDF picking tickets to images before sending to the
+# vision LLM. Pure wheel, no system deps (~6MB).
+pypdfium2>=4.30.0
 
 # ─── Auth / crypto ─────────────────────────────────────────────────────
 bcrypt>=4.2.0

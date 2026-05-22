@@ -419,3 +419,189 @@ async def ocr_container_photo(image_bytes: bytes) -> tuple[list[dict], str]:
     # error. Surface the import / runtime error directly instead.
     logger.info("OCR: running RapidOCR (local)")
     return await loop.run_in_executor(None, _do_rapidocr, image_bytes)
+
+
+# ─── Picking-ticket extraction ─────────────────────────────────────────
+
+
+def _pdf_first_page_to_png(pdf_bytes: bytes) -> bytes:
+    """Render the first page of a PDF to a PNG using pypdfium2. We only need
+    the first page — picking tickets put the order header + ship-to on it."""
+    try:
+        import pypdfium2 as pdfium
+    except ImportError as e:
+        raise OCRUnavailableError(
+            "pypdfium2 not installed — PDF picking tickets unsupported. "
+            "Upload an image (PNG/JPEG) of the picking ticket instead."
+        ) from e
+
+    doc = pdfium.PdfDocument(pdf_bytes)
+    if len(doc) == 0:
+        raise ValueError("PDF has no pages.")
+    page = doc[0]
+    # scale=2 → ~144 DPI, plenty for vision LLMs to read addresses
+    pil_image = page.render(scale=2).to_pil()
+    buf = io.BytesIO()
+    pil_image.save(buf, format="PNG")
+    return buf.getvalue()
+
+
+async def extract_picking_ticket(file_bytes: bytes, content_type: str) -> dict:
+    """Send a picking-ticket image/PDF to OpenRouter Gemini and return
+    structured order fields:
+      {
+        transfer_order_no, order_date, priority, memo,
+        ship_to_name, ship_to_address,
+        ship_from_name, ship_from_address,
+        lines: [{sku, description, order_qty, unit}],
+      }
+    Every field is best-effort — the LLM returns null when it can't read
+    a field rather than hallucinating. Caller decides what to prefill."""
+    if not settings.openrouter_api_key:
+        raise OCRUnavailableError(
+            "Picking-ticket extraction needs OPENROUTER_API_KEY (vision LLM). "
+            "Type the ship-to address manually instead."
+        )
+
+    # PDF → first-page PNG so the vision model gets a consistent image input.
+    if content_type == "application/pdf":
+        image_bytes = await asyncio.get_event_loop().run_in_executor(
+            None, _pdf_first_page_to_png, file_bytes
+        )
+        mime = "image/png"
+    else:
+        image_bytes = file_bytes
+        mime = content_type or "image/jpeg"
+
+    img_b64 = base64.b64encode(image_bytes).decode("ascii")
+
+    system_prompt = (
+        "You read warehouse picking tickets / Transfer Order documents and "
+        "extract structured fields. Return ONLY a single JSON object — no "
+        "preamble, no markdown fences, no explanation.\n\n"
+        "Schema:\n"
+        "{\n"
+        '  "transfer_order_no": string|null,   // e.g. "TO21787"\n'
+        '  "order_date": string|null,           // ISO YYYY-MM-DD if shown\n'
+        '  "priority": string|null,             // "normal" or "urgent"\n'
+        '  "memo": string|null,                 // memo line if shown\n'
+        '  "ship_from_name": string|null,\n'
+        '  "ship_from_address": string|null,    // multi-line OK, use \\n\n'
+        '  "ship_to_name": string|null,         // destination name / location code\n'
+        '  "ship_to_address": string|null,      // multi-line OK, use \\n\n'
+        '  "lines": [\n'
+        '    {"sku": string, "description": string|null, '
+        '"order_qty": number, "unit": string|null}\n'
+        "  ]\n"
+        "}\n\n"
+        "Rules:\n"
+        "- Use null (not empty string) when a field is missing.\n"
+        "- For ship_to_address: include street, city, state/region, postal code, "
+        "country if present, separated by \\n.\n"
+        "- For lines: read every SKU row in the line-items table. order_qty is "
+        "the requested quantity, not the picked quantity.\n"
+        "- DO NOT invent data. If the page only shows ship-to and you can't "
+        "find a SKU table, return an empty lines array."
+    )
+
+    body = {
+        "model": settings.openrouter_model,
+        "temperature": 0.0,
+        "max_tokens": 1200,
+        "response_format": {"type": "json_object"},
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": (
+                            "Extract the picking-ticket fields from this "
+                            "document. Pay special attention to the ship-to "
+                            "address — that's the primary field. Return "
+                            "JSON matching the schema."
+                        ),
+                    },
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": f"data:{mime};base64,{img_b64}"},
+                    },
+                ],
+            },
+        ],
+    }
+    headers = {
+        "Authorization": f"Bearer {settings.openrouter_api_key}",
+        "Content-Type": "application/json",
+        "HTTP-Referer": "https://lime.cnwarehousing.com",
+        "X-Title": "Conquer Nation Warehouse",
+    }
+
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        r = await client.post(
+            "https://openrouter.ai/api/v1/chat/completions",
+            json=body,
+            headers=headers,
+        )
+    if not r.is_success:
+        raise RuntimeError(f"OpenRouter {r.status_code}: {r.text[:300]}")
+
+    data = r.json()
+    try:
+        text = (data["choices"][0]["message"]["content"] or "").strip()
+    except (KeyError, IndexError, TypeError):
+        raise RuntimeError("OpenRouter returned no message content.")
+
+    # Defensive: some models still wrap JSON in ```json fences despite the
+    # response_format hint — strip them.
+    if text.startswith("```"):
+        text = re.sub(r"^```(?:json)?\s*", "", text)
+        text = re.sub(r"\s*```$", "", text)
+
+    import json as _json
+
+    try:
+        parsed = _json.loads(text)
+    except _json.JSONDecodeError as e:
+        raise RuntimeError(
+            f"Picking-ticket OCR returned non-JSON: {text[:200]}"
+        ) from e
+
+    # Normalise: clamp lines to list of dicts with expected keys
+    lines = parsed.get("lines") or []
+    if not isinstance(lines, list):
+        lines = []
+    cleaned_lines = []
+    for ln in lines:
+        if not isinstance(ln, dict):
+            continue
+        sku = ln.get("sku")
+        if not sku:
+            continue
+        try:
+            qty = int(ln.get("order_qty") or 0)
+        except (TypeError, ValueError):
+            qty = 0
+        if qty < 1:
+            continue
+        cleaned_lines.append(
+            {
+                "sku": str(sku).strip().upper(),
+                "description": (ln.get("description") or None),
+                "order_qty": qty,
+                "unit": (ln.get("unit") or "EA"),
+            }
+        )
+
+    return {
+        "transfer_order_no": parsed.get("transfer_order_no") or None,
+        "order_date": parsed.get("order_date") or None,
+        "priority": parsed.get("priority") or None,
+        "memo": parsed.get("memo") or None,
+        "ship_from_name": parsed.get("ship_from_name") or None,
+        "ship_from_address": parsed.get("ship_from_address") or None,
+        "ship_to_name": parsed.get("ship_to_name") or None,
+        "ship_to_address": parsed.get("ship_to_address") or None,
+        "lines": cleaned_lines,
+    }

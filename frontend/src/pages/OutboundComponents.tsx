@@ -1,10 +1,11 @@
-import { useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import {
   api,
   ApiError,
   type OutboundLineInput,
   type OutboundOrderRead,
   type OutboundOrderListItem,
+  type PickingTicketExtraction,
 } from '../api/client'
 import Spinner from '../components/Spinner'
 import { useVendorAuth } from '../auth/VendorAuthContext'
@@ -314,6 +315,62 @@ export function OutboundNewOrderForm({ onBack }: { onBack: () => void }) {
   const parsed = paste.trim() ? parseOutboundPaste(paste) : { lines: [], orders: [] }
   const parseErrors = parsed.lines.filter((l) => l.error)
 
+  // Picking-ticket upload state
+  const pickingFileRef = useRef<HTMLInputElement | null>(null)
+  const [pickingBusy, setPickingBusy] = useState(false)
+  const [pickingError, setPickingError] = useState<string | null>(null)
+  const [pickingExtract, setPickingExtract] = useState<PickingTicketExtraction | null>(null)
+  const [pickingFilename, setPickingFilename] = useState<string | null>(null)
+
+  async function handlePickingTicketUpload(file: File) {
+    setPickingError(null)
+    setPickingExtract(null)
+    setPickingFilename(file.name)
+    setPickingBusy(true)
+    try {
+      const result = await api.extractPickingTicket(file)
+      setPickingExtract(result)
+      // Auto-fill any fields that came back — never overwrite something
+      // the user already typed.
+      if (result.ship_to_name && !shipToName.trim()) setShipToName(result.ship_to_name)
+      if (result.ship_to_address && !shipToAddress.trim())
+        setShipToAddress(result.ship_to_address)
+      if (result.ship_from_name && !shipFromName.trim())
+        setShipFromName(result.ship_from_name)
+      if (result.ship_from_address && shipFromAddress.trim() === '2651 E 12 St\nVernon CA 90023\nUnited States') {
+        // Replace the default Ship-From only if user hasn't changed it
+        setShipFromAddress(result.ship_from_address)
+      }
+      if (result.transfer_order_no && !tno.trim()) setTno(result.transfer_order_no)
+      if (result.order_date && !orderDate) setOrderDate(result.order_date)
+      if (result.memo && !memo.trim()) setMemo(result.memo)
+      if (result.priority && (result.priority === 'urgent' || result.priority === 'normal')) {
+        setPriority(result.priority)
+      }
+      // Auto-fill lines if the form still has a single empty line
+      const formIsEmpty =
+        lines.length === 1 && !lines[0].sku.trim() && !lines[0].order_qty.trim()
+      if (result.lines.length > 0 && formIsEmpty) {
+        setLines(
+          result.lines.map((l, i) => ({
+            id: crypto.randomUUID(),
+            line_no: i + 1,
+            sku: l.sku,
+            description: l.description || '',
+            order_qty: String(l.order_qty),
+            unit: l.unit || 'EA',
+            serial_specific: false,
+            serials: '',
+          })),
+        )
+      }
+    } catch (e) {
+      setPickingError(e instanceof ApiError ? e.detail : String(e))
+    } finally {
+      setPickingBusy(false)
+    }
+  }
+
   function applyOrder(order: ParsedOutboundOrder) {
     setTno(order.transfer_order_no)
     setShipToName(order.destination)
@@ -601,7 +658,41 @@ TO21787 - LPN-001771 - Helmets - 25 units - Long Island City`}
           </div>
         </Section>
 
-        <Section title="Ship to">
+        <Section
+          title="Ship to"
+          right={
+            <div className="flex items-center gap-2">
+              <input
+                ref={pickingFileRef}
+                type="file"
+                accept="application/pdf,image/*"
+                className="hidden"
+                onChange={(e) => {
+                  const f = e.target.files?.[0]
+                  if (f) handlePickingTicketUpload(f)
+                  // Reset the input so the same file can be re-uploaded
+                  if (pickingFileRef.current) pickingFileRef.current.value = ''
+                }}
+              />
+              <button
+                type="button"
+                onClick={() => pickingFileRef.current?.click()}
+                disabled={pickingBusy}
+                className="inline-flex items-center gap-1.5 rounded-md bg-[#FED641] hover:bg-[#E6C200] disabled:bg-slate-200 disabled:text-slate-400 text-[#1B4676] text-xs font-bold px-3 py-1.5 transition"
+                title="Upload picking ticket (PDF or image) — fills Ship-to from the document"
+              >
+                {pickingBusy ? (
+                  <>
+                    <Spinner size={14} className="text-[#1B4676]" />
+                    <span>Reading…</span>
+                  </>
+                ) : (
+                  <span>↥ Upload picking ticket</span>
+                )}
+              </button>
+            </div>
+          }
+        >
           <div className="grid grid-cols-1 gap-3">
             <Field label="Destination name" required>
               <Input
@@ -618,6 +709,41 @@ TO21787 - LPN-001771 - Helmets - 25 units - Long Island City`}
                 placeholder="48-29 31st Place&#10;Long Island City NY 11101&#10;United States"
               />
             </Field>
+
+            {/* Picking-ticket extraction status */}
+            {pickingError && (
+              <div role="alert" className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-md px-3 py-2.5">
+                Couldn't read{pickingFilename ? ` ${pickingFilename}` : ' the file'}: {pickingError}
+              </div>
+            )}
+            {pickingExtract && !pickingError && (
+              <div className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2.5 text-sm text-emerald-900">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <div className="font-semibold">
+                      Picking ticket read{pickingFilename ? `: ${pickingFilename}` : ''}
+                    </div>
+                    <ul className="mt-1 text-xs text-emerald-800 space-y-0.5">
+                      {pickingExtract.transfer_order_no && (
+                        <li>· TO# <span className="font-mono">{pickingExtract.transfer_order_no}</span></li>
+                      )}
+                      {pickingExtract.ship_to_name && (
+                        <li>· Ship to: {pickingExtract.ship_to_name}</li>
+                      )}
+                      {pickingExtract.lines.length > 0 && (
+                        <li>
+                          · {pickingExtract.lines.length} line item
+                          {pickingExtract.lines.length === 1 ? '' : 's'} detected
+                        </li>
+                      )}
+                    </ul>
+                    <p className="mt-1.5 text-[11px] text-emerald-700 italic">
+                      Fields you'd already typed were preserved. Review and edit anything below before submitting.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         </Section>
 

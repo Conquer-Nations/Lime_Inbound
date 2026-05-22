@@ -509,6 +509,37 @@ export const api = {
 
   outboundInventory: () =>
     request<InventoryResponse>('/vendor/outbound/inventory'),
+
+  extractPickingTicket: (file: File) => {
+    const fd = new FormData()
+    fd.append('file', file)
+    return requestMultipart<PickingTicketExtraction>(
+      '/ocr/picking-ticket',
+      'POST',
+      fd,
+    )
+  },
+}
+
+// ─── Picking-ticket extraction ────────────────────────────────────────
+
+export interface PickingTicketExtractedLine {
+  sku: string
+  description: string | null
+  order_qty: number
+  unit: string | null
+}
+
+export interface PickingTicketExtraction {
+  transfer_order_no: string | null
+  order_date: string | null
+  priority: string | null
+  memo: string | null
+  ship_from_name: string | null
+  ship_from_address: string | null
+  ship_to_name: string | null
+  ship_to_address: string | null
+  lines: PickingTicketExtractedLine[]
 }
 
 // ─── Scan-sheet types (mirror backend Pydantic schemas) ───────────────
