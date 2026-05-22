@@ -534,7 +534,7 @@ async def attach_outbound_container(
             ref_type="outbound_container",
             ref_id=c.id,
             message=(
-                f"Container {container_no} ({ctype}) attached to "
+                f"Container {c.container_no} ({ctype}) attached to "
                 f"{order.transfer_order_no}."
             ),
         )
