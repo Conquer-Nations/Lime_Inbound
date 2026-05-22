@@ -236,6 +236,9 @@ async def submit_outbound_order(
 
     # Best-effort OneDrive Excel sync. Re-load with everything eager so
     # rows_from_order doesn't lazy-load in this async session.
+    # populate_existing=True forces SQLAlchemy to OVERWRITE the already-
+    # cached relationship collections — without it, expire_on_commit=False
+    # on the session keeps stale `order.lines` from before the update.
     refreshed = await session.scalar(
         select(OutboundOrder)
         .options(
@@ -243,6 +246,7 @@ async def submit_outbound_order(
             selectinload(OutboundOrder.containers),
         )
         .where(OutboundOrder.id == order.id)
+        .execution_options(populate_existing=True)
     )
     if refreshed is not None and outbound_sheet_sync.is_configured():
         rows = outbound_sheet_sync.rows_from_order(refreshed, customer.name)
@@ -329,6 +333,7 @@ async def update_outbound_order(
 
     # Resync Excel: delete the old rows for this TO, then re-append the new
     # state. Mirrors the inbound update flow's delete-and-re-append pattern.
+    # populate_existing=True is required — see the submit endpoint comment.
     if outbound_sheet_sync.is_configured():
         await outbound_sheet_sync.delete_outbound_rows_for_to(
             order.transfer_order_no
@@ -341,6 +346,7 @@ async def update_outbound_order(
                 selectinload(OutboundOrder.containers),
             )
             .where(OutboundOrder.id == order.id)
+            .execution_options(populate_existing=True)
         )
         if refreshed is not None:
             customer_name = refreshed.customer.name if refreshed.customer else ""
@@ -513,6 +519,7 @@ async def attach_outbound_container(
     # Resync OutboundTable so the new container + driver info shows up.
     # Delete the order's existing rows then re-append with the full
     # container set on each row (one row per container × line).
+    # populate_existing=True is required — see the submit endpoint comment.
     if outbound_sheet_sync.is_configured():
         await outbound_sheet_sync.delete_outbound_rows_for_to(
             order.transfer_order_no
@@ -525,6 +532,7 @@ async def attach_outbound_container(
                 selectinload(OutboundOrder.containers),
             )
             .where(OutboundOrder.id == order.id)
+            .execution_options(populate_existing=True)
         )
         if refreshed is not None:
             customer_name = refreshed.customer.name if refreshed.customer else ""
