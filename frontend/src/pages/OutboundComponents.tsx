@@ -29,9 +29,7 @@ export function OutboundModeChooser({
   onChoose,
   onBack,
 }: {
-  onChoose: (
-    m: 'out_new' | 'out_driver' | 'out_update' | 'out_view' | 'out_inventory',
-  ) => void
+  onChoose: (m: 'out_new' | 'out_driver' | 'out_update' | 'out_view') => void
   onBack: () => void
 }) {
   return (
@@ -57,7 +55,7 @@ export function OutboundModeChooser({
           </div>
 
           {/* Cards */}
-          <div className="mt-10 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-5 items-stretch">
+          <div className="mt-10 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5 items-stretch">
             <OutboundIntakeCard
               icon={<OutPackageIcon className="w-6 h-6" />}
               eyebrow="Order"
@@ -97,16 +95,6 @@ export function OutboundModeChooser({
               metaRight={{ icon: <OutHashIcon className="w-3.5 h-3.5" />, label: 'TO #' }}
               ctaLabel="View order"
               onClick={() => onChoose('out_view')}
-            />
-            <OutboundIntakeCard
-              icon={<OutGridIcon className="w-6 h-6" />}
-              eyebrow="Inventory"
-              title="Container inventory"
-              description="See per-container inbound, outbound, and pending units across every TO you've placed. Live snapshot."
-              metaLeft={{ icon: <OutClockIcon className="w-3.5 h-3.5" />, label: 'Live' }}
-              metaRight={{ icon: <OutContainerIcon className="w-3.5 h-3.5" />, label: 'Per container' }}
-              ctaLabel="Open dashboard"
-              onClick={() => onChoose('out_inventory')}
             />
           </div>
 

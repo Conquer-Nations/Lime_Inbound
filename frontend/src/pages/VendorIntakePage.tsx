@@ -263,7 +263,7 @@ export default function VendorIntakePage() {
     return <OutboundViewOrderForm onBack={() => setMode('out_choose')} />
   }
   if (mode === 'out_inventory') {
-    return <OutboundInventoryDashboard onBack={() => setMode('out_choose')} />
+    return <OutboundInventoryDashboard onBack={() => setMode('direction')} />
   }
   // mode === 'new' falls through to the existing form below
 
