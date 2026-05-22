@@ -267,7 +267,16 @@ class Receipt(Base):
     __tablename__ = "receipts"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    container_id: Mapped[int] = mapped_column(ForeignKey("containers.id"), index=True)
+    # 'inbound' → container_id set, scans go into the `scans` table.
+    # 'outbound' → outbound_container_id set, scans go into outbound_scans
+    #              and each links to the matching inbound Scan by serial.
+    kind: Mapped[str] = mapped_column(String(16), default="inbound")
+    container_id: Mapped[int | None] = mapped_column(
+        ForeignKey("containers.id"), index=True
+    )
+    outbound_container_id: Mapped[int | None] = mapped_column(
+        ForeignKey("outbound_containers.id"), index=True
+    )
     status: Mapped[str] = mapped_column(String(16), default="in_progress", index=True)
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -275,7 +284,8 @@ class Receipt(Base):
     finished_by: Mapped[str | None] = mapped_column(String(80))
     notes: Mapped[str | None] = mapped_column(Text)
 
-    container: Mapped[Container] = relationship()
+    container: Mapped[Container | None] = relationship()
+    outbound_container: Mapped["OutboundContainer | None"] = relationship()
 
 
 class Pallet(Base):

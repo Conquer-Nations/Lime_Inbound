@@ -16,12 +16,13 @@ from pydantic import BaseModel, Field
 
 
 class ScanSheetHeader(BaseModel):
-    """Read-only top of the operator's sheet — pre-filled from WHPO+Container."""
+    """Read-only top of the operator's sheet — pre-filled from WHPO+Container
+    (or, for outbound truck loads, from TO + OutboundContainer)."""
 
     receipt_id: int
     container_no: str
-    whpo_number: str
-    do_number: str
+    whpo_number: str  # for outbound, this is the Transfer Order #
+    do_number: str  # for outbound, this is the auto-issued PO #
     customer_name: str
     bol_number: str | None = None
     received_date: date
@@ -30,6 +31,8 @@ class ScanSheetHeader(BaseModel):
     location: str = "Conquer Nation, Vernon, CA."
     is_completed: bool = False
     requires_imei: bool = False        # true when any container line is a scooter
+    # 'inbound' (default) or 'outbound'. Frontend can ignore — same shape.
+    kind: str = "inbound"
 
 
 # ─── Scan row (per-item, append-only) ───────────────────────────────────

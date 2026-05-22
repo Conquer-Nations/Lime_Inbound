@@ -124,6 +124,9 @@ class Settings(BaseSettings):
     # per finished receipt, sheet name == container_no. Best-effort: backend
     # logs errors and never fails the operator's finish flow.
     onedrive_scan_sheet_url: str = ""
+    # Outbound counterpart — Lime Outbound Scan Data.xlsx. Fired on outbound
+    # scan-sheet finish. Same body shape; different workbook + Office Script.
+    onedrive_outbound_scan_sheet_url: str = ""
 
     # OneDrive outbound sync — mirror of the inbound webhooks, pointing at
     # `Lime Outbound Data.xlsx`.

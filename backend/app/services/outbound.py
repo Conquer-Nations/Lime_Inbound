@@ -192,19 +192,26 @@ async def list_container_inventory_for_company(
     )
     inbound_rows = (await session.execute(inbound_stmt)).all()
 
-    # 2. Outbound allocations from outbound_lines.source_container_no.
+    # 2. Outbound shipped — counted from actual OutboundScans. Each
+    # OutboundScan links to an inbound Scan via inbound_scan_id; we trace
+    # back to (container, sku) and aggregate. This is the physical truth
+    # — only units the operator has actually scanned onto an outgoing
+    # truck count as "outbound". Order_qty allocations on outbound_lines
+    # are intent; scans are reality.
     outbound_stmt = (
         select(
-            OutboundLine.source_container_no,
-            OutboundLine.sku_raw,
-            func.sum(OutboundLine.order_qty),
+            Container.container_no,
+            ContainerLine.sku_raw,
+            func.count(),
         )
-        .join(OutboundOrder, OutboundLine.outbound_order_id == OutboundOrder.id)
-        .join(Customer, OutboundOrder.customer_id == Customer.id)
+        .join(Scan, Scan.container_id == Container.id)
+        .join(OutboundScan, OutboundScan.inbound_scan_id == Scan.id)
+        .join(DO, Container.do_id == DO.id)
+        .join(WHPO, DO.whpo_id == WHPO.id)
+        .join(Customer, WHPO.customer_id == Customer.id)
+        .join(ContainerLine, ContainerLine.container_id == Container.id)
         .where(func.lower(Customer.name) == norm_co)
-        .where(OutboundLine.source_container_no.isnot(None))
-        .where(OutboundOrder.status != "cancelled")
-        .group_by(OutboundLine.source_container_no, OutboundLine.sku_raw)
+        .group_by(Container.container_no, ContainerLine.sku_raw)
     )
     outbound_rows = (await session.execute(outbound_stmt)).all()
     outbound_map = {
