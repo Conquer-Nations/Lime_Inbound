@@ -104,6 +104,7 @@ class OutboundContainerRead(BaseModel):
     carrier: str | None
     insurance: str | None
     bol_number: str | None
+    scheduled_arrival_at: datetime | None
     started_at: datetime | None
     sealed_at: datetime | None
 
@@ -150,12 +151,17 @@ class OutboundOrderListResponse(BaseModel):
 
 
 class OutboundContainerAttachRequest(BaseModel):
-    """Vendor attaches an outbound container (BIC or truck) to a Transfer
-    Order and fills in driver/truck info — exact mirror of the inbound
-    driver-info screen."""
+    """Vendor attaches a truck (or, rarely, a BIC container) to a Transfer
+    Order and fills in driver / carrier info. For outbound we don't
+    receive a container number — the backend auto-generates one if the
+    payload omits it and there's no plate to use as a natural key."""
 
-    container_no: str = Field(min_length=1, max_length=40)
-    container_type: str = Field(default="bic", max_length=16)  # "bic" or "truck"
+    # Optional: vendor doesn't get a container # for outbound. Backend
+    # auto-derives from truck plate / generates a placeholder when blank.
+    container_no: str | None = Field(default=None, max_length=40)
+    # Default "truck" because the vast majority of outbound shipments
+    # leave on a smaller truck, not a BIC container.
+    container_type: str = Field(default="truck", max_length=16)
     driver_name: str | None = Field(default=None, max_length=120)
     driver_license: str | None = Field(default=None, max_length=60)
     driver_phone: str | None = Field(default=None, max_length=40)
@@ -163,6 +169,8 @@ class OutboundContainerAttachRequest(BaseModel):
     insurance: str | None = Field(default=None, max_length=400)
     carrier: str | None = Field(default=None, max_length=120)
     bol_number: str | None = Field(default=None, max_length=80)
+    # When the driver is scheduled to arrive at the dock. Optional.
+    scheduled_arrival_at: datetime | None = None
 
 
 class OutboundContainerAttachResponse(BaseModel):

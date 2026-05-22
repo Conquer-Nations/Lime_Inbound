@@ -69,6 +69,10 @@ HEADERS = [
     "bol_number",
     # Audit (col 30)
     "last_updated_at",
+    # Outbound-specific: when the truck is scheduled to arrive at the
+    # dock. Appended at the end so existing column positions stay locked.
+    # (col 31)
+    "scheduled_arrival_at",
 ]
 
 
@@ -170,7 +174,9 @@ def _container_block(container) -> dict[str, Any]:
             "carrier": "",
             "insurance": "",
             "bol_number": "",
+            "scheduled_arrival_at": "",
         }
+    sched = getattr(container, "scheduled_arrival_at", None)
     return {
         "container_no": container.container_no or "",
         "container_type": container.container_type or "",
@@ -181,6 +187,7 @@ def _container_block(container) -> dict[str, Any]:
         "carrier": container.carrier or "",
         "insurance": container.insurance or "",
         "bol_number": container.bol_number or "",
+        "scheduled_arrival_at": sched.isoformat() if sched else "",
     }
 
 

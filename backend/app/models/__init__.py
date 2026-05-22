@@ -472,6 +472,12 @@ class OutboundContainer(Base):
     insurance: Mapped[str | None] = mapped_column(Text)
     carrier: Mapped[str | None] = mapped_column(String(120))
     bol_number: Mapped[str | None] = mapped_column(String(80))
+    # When the truck is scheduled to arrive at the dock. Comes either from
+    # the driver info sheet (OCR'd at upload) or from manual entry on the
+    # Driver & truck info form. Nullable.
+    scheduled_arrival_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
 
     order: Mapped[OutboundOrder] = relationship(back_populates="containers")
     scans: Mapped[list[OutboundScan]] = relationship(

@@ -543,6 +543,7 @@ export interface DriverDocsExtraction {
   carrier: string | null
   insurance: string | null
   bol_number: string | null
+  scheduled_arrival_at: string | null // ISO 8601 datetime
 }
 
 // ─── Picking-ticket extraction ────────────────────────────────────────
@@ -717,6 +718,7 @@ export interface OutboundContainerRead {
   carrier: string | null
   insurance: string | null
   bol_number: string | null
+  scheduled_arrival_at: string | null
   started_at: string | null
   sealed_at: string | null
 }
@@ -758,7 +760,7 @@ export interface OutboundOrderListResponse {
 }
 
 export interface OutboundContainerAttachRequest {
-  container_no: string
+  container_no?: string | null
   container_type?: 'bic' | 'truck'
   driver_name?: string | null
   driver_license?: string | null
@@ -767,6 +769,7 @@ export interface OutboundContainerAttachRequest {
   insurance?: string | null
   carrier?: string | null
   bol_number?: string | null
+  scheduled_arrival_at?: string | null
 }
 
 export interface OutboundContainerAttachResponse {

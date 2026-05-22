@@ -139,6 +139,7 @@ def _container_to_read(c: OutboundContainer) -> OutboundContainerRead:
         carrier=c.carrier,
         insurance=c.insurance,
         bol_number=c.bol_number,
+        scheduled_arrival_at=c.scheduled_arrival_at,
         started_at=c.started_at,
         sealed_at=c.sealed_at,
     )
@@ -457,36 +458,59 @@ async def attach_outbound_container(
     session: AsyncSession = Depends(get_session),
     vendor: dict = Depends(current_vendor_required),
 ):
-    """Vendor attaches an outbound container (BIC or truck) and the
-    driver / truck / BOL / insurance / carrier info."""
+    """Vendor attaches a truck (or, rarely, a BIC container) and the
+    driver / carrier / BOL / insurance info. Outbound doesn't receive
+    a container # from the vendor, so we auto-derive one when missing."""
     order = await _load_order_for_vendor(session, transfer_order_no, vendor)
-    container_no = payload.container_no.strip().upper()
-    ctype = (payload.container_type or "bic").lower()
+    ctype = (payload.container_type or "truck").lower()
     if ctype not in ("bic", "truck"):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="container_type must be 'bic' or 'truck'.",
         )
-    # Idempotent: re-attaching with the same container_no updates fields.
-    existing = await session.scalar(
-        select(OutboundContainer).where(
-            OutboundContainer.container_no == container_no
+
+    explicit_no = (payload.container_no or "").strip().upper() or None
+    plate = (payload.truck_license_plate or "").strip().upper() or None
+
+    # Lookup existing container — by explicit container_no first, then by
+    # (TO, truck plate) so editing the same truck always updates one row.
+    existing = None
+    if explicit_no:
+        existing = await session.scalar(
+            select(OutboundContainer).where(
+                OutboundContainer.container_no == explicit_no
+            )
         )
-    )
+    elif plate:
+        existing = await session.scalar(
+            select(OutboundContainer).where(
+                OutboundContainer.outbound_order_id == order.id,
+                OutboundContainer.truck_license_plate == plate,
+            )
+        )
+
     if existing is not None:
         if existing.outbound_order_id != order.id:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail=(
-                    f"Container {container_no} is already attached to a "
-                    "different Transfer Order."
+                    f"Container {existing.container_no} is already attached "
+                    "to a different Transfer Order."
                 ),
             )
         c = existing
     else:
+        # Auto-generate container_no when nothing was supplied. Prefer the
+        # truck plate (natural key); fall back to a TO-scoped placeholder.
+        synth_no = (
+            explicit_no
+            or plate
+            or f"OUT-{order.transfer_order_no}-"
+            f"{int(datetime.now(timezone.utc).timestamp())}"
+        )
         c = OutboundContainer(
             outbound_order_id=order.id,
-            container_no=container_no,
+            container_no=synth_no,
             container_type=ctype,
             status="open",
         )
@@ -501,6 +525,7 @@ async def attach_outbound_container(
     c.insurance = payload.insurance
     c.carrier = payload.carrier
     c.bol_number = payload.bol_number
+    c.scheduled_arrival_at = payload.scheduled_arrival_at
 
     session.add(
         ActivityLog(

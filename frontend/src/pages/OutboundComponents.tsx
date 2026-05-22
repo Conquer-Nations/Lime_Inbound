@@ -1062,8 +1062,6 @@ function CompactField({
 
 export function OutboundDriverInfoForm({ onBack }: { onBack: () => void }) {
   const [tno, setTno] = useState('')
-  const [containerNo, setContainerNo] = useState('')
-  const [containerType, setContainerType] = useState<'bic' | 'truck'>('bic')
   const [driverName, setDriverName] = useState('')
   const [driverLicense, setDriverLicense] = useState('')
   const [driverPhone, setDriverPhone] = useState('')
@@ -1071,6 +1069,7 @@ export function OutboundDriverInfoForm({ onBack }: { onBack: () => void }) {
   const [carrier, setCarrier] = useState('')
   const [insurance, setInsurance] = useState('')
   const [bol, setBol] = useState('')
+  const [scheduledArrival, setScheduledArrival] = useState('') // datetime-local
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [done, setDone] = useState<{ container: string } | null>(null)
@@ -1092,10 +1091,6 @@ export function OutboundDriverInfoForm({ onBack }: { onBack: () => void }) {
       const result = await api.extractDriverDocs(files)
       setDocsExtract(result)
       // Non-destructive autofill — never overwrite a typed value.
-      if (result.container_no && !containerNo.trim())
-        setContainerNo(result.container_no)
-      if (result.container_type && result.container_type !== containerType)
-        setContainerType(result.container_type)
       if (result.driver_name && !driverName.trim()) setDriverName(result.driver_name)
       if (result.driver_license && !driverLicense.trim())
         setDriverLicense(result.driver_license)
@@ -1106,6 +1101,10 @@ export function OutboundDriverInfoForm({ onBack }: { onBack: () => void }) {
       if (result.carrier && !carrier.trim()) setCarrier(result.carrier)
       if (result.insurance && !insurance.trim()) setInsurance(result.insurance)
       if (result.bol_number && !bol.trim()) setBol(result.bol_number)
+      if (result.scheduled_arrival_at && !scheduledArrival) {
+        // Trim seconds + timezone if present so <input type="datetime-local"> accepts it.
+        setScheduledArrival(result.scheduled_arrival_at.slice(0, 16))
+      }
     } catch (e) {
       setDocsError(e instanceof ApiError ? e.detail : String(e))
     } finally {
@@ -1117,13 +1116,11 @@ export function OutboundDriverInfoForm({ onBack }: { onBack: () => void }) {
     e.preventDefault()
     setError(null)
     if (!tno.trim()) return setError('Transfer Order # is required.')
-    if (!containerNo.trim())
-      return setError('Container # (or truck plate) is required.')
     setBusy(true)
     try {
       const res = await api.attachOutboundContainer(tno.trim(), {
-        container_no: containerNo.trim().toUpperCase(),
-        container_type: containerType,
+        container_no: null, // backend auto-derives from plate / TO
+        container_type: 'truck',
         driver_name: driverName.trim() || null,
         driver_license: driverLicense.trim() || null,
         driver_phone: driverPhone.trim() || null,
@@ -1131,6 +1128,9 @@ export function OutboundDriverInfoForm({ onBack }: { onBack: () => void }) {
         carrier: carrier.trim() || null,
         insurance: insurance.trim() || null,
         bol_number: bol.trim() || null,
+        scheduled_arrival_at: scheduledArrival
+          ? new Date(scheduledArrival).toISOString()
+          : null,
       })
       setDone({ container: res.container_no })
     } catch (e) {
@@ -1171,9 +1171,10 @@ export function OutboundDriverInfoForm({ onBack }: { onBack: () => void }) {
             Driver & truck info
           </h1>
           <p className="mt-1 text-sm text-slate-600">
-            Attach an outbound container to a Transfer Order. Upload photos of
-            the driver's license, insurance card, truck plate, and BOL — we'll
-            read whatever we can. Fill in anything that's still blank.
+            Tell us when the driver is arriving at the dock and who's driving.
+            Upload the driver information sheet (and any supporting photos —
+            CDL, insurance card, truck plate, BOL) and we'll OCR what we can.
+            Everything below is optional except the TO #.
           </p>
         </div>
 
@@ -1231,10 +1232,10 @@ export function OutboundDriverInfoForm({ onBack }: { onBack: () => void }) {
               ) : (
                 <>
                   <div className="font-semibold text-[#1B4676]">
-                    Upload driver documents
+                    Upload driver information sheet + photos
                   </div>
                   <div className="mt-0.5 text-sm text-slate-600">
-                    Photos of driver's license, insurance, plate, BOL — any combination, up to 6 files. We'll OCR all of them at once.
+                    Driver info sheet, CDL, insurance, plate, BOL — any combination, up to 6 files. We'll OCR all of them at once (including the scheduled arrival time).
                   </div>
                 </>
               )}
@@ -1248,29 +1249,27 @@ export function OutboundDriverInfoForm({ onBack }: { onBack: () => void }) {
           </div>
         )}
 
-        <Section title="Transfer Order + container">
+        <Section title="Transfer Order + arrival">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <Field label="Transfer Order #" required>
               <Input value={tno} onChange={setTno} placeholder="TO21787" />
             </Field>
-            <Field label="Container type">
-              <select
-                value={containerType}
-                onChange={(e) => setContainerType(e.target.value as 'bic' | 'truck')}
-                className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm focus:border-[#0093D0] focus:ring-2 focus:ring-[#0093D0]/20 focus:outline-none"
-              >
-                <option value="bic">BIC container (ISO 6346)</option>
-                <option value="truck">Truck / trailer (license plate)</option>
-              </select>
-            </Field>
-            <Field label={containerType === 'bic' ? 'Container number' : 'Truck / trailer plate'} required>
-              <Input
-                value={containerNo}
-                onChange={setContainerNo}
-                placeholder={containerType === 'bic' ? 'JZPU8021688' : '1ABC234'}
+            <Field label="Driver arrives at dock">
+              <input
+                type="datetime-local"
+                value={scheduledArrival}
+                onChange={(e) => setScheduledArrival(e.target.value)}
+                className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm text-slate-800 focus:border-[#0093D0] focus:ring-2 focus:ring-[#0093D0]/20 focus:outline-none transition"
               />
             </Field>
-            <Field label="BOL # or Tracking #">
+            <Field label="Truck plate">
+              <Input
+                value={truckPlate}
+                onChange={setTruckPlate}
+                placeholder="1ABC234"
+              />
+            </Field>
+            <Field label="BOL # / Tracking #">
               <Input value={bol} onChange={setBol} placeholder="e.g. 36185694" />
             </Field>
           </div>
@@ -1287,15 +1286,14 @@ export function OutboundDriverInfoForm({ onBack }: { onBack: () => void }) {
             <Field label="Driver phone">
               <Input value={driverPhone} onChange={setDriverPhone} />
             </Field>
-            <Field label="Truck license plate">
-              <Input value={truckPlate} onChange={setTruckPlate} />
-            </Field>
             <Field label="Carrier">
               <Input value={carrier} onChange={setCarrier} />
             </Field>
-            <Field label="Insurance">
-              <Input value={insurance} onChange={setInsurance} />
-            </Field>
+            <div className="sm:col-span-2">
+              <Field label="Insurance (policy # + provider)">
+                <Input value={insurance} onChange={setInsurance} />
+              </Field>
+            </div>
           </div>
         </Section>
 
@@ -2003,7 +2001,7 @@ export function OutboundUpdateOrderForm({ onBack }: { onBack: () => void }) {
 
         {/* Editable containers section */}
         <Section
-          title="Containers & driver info"
+          title="Trucks & driver info"
           right={
             !locked && editingContainerId !== 'new' && (
               <button
@@ -2011,14 +2009,14 @@ export function OutboundUpdateOrderForm({ onBack }: { onBack: () => void }) {
                 onClick={() => setEditingContainerId('new')}
                 className="inline-flex items-center gap-1.5 rounded-md bg-[#1B4676] hover:bg-[#224E72] text-white text-xs font-semibold px-3 py-1.5 transition"
               >
-                + Add container
+                + Add truck
               </button>
             )
           }
         >
           {original!.containers.length === 0 && editingContainerId !== 'new' && (
             <p className="text-sm text-slate-500 italic">
-              No containers attached yet. Click <span className="font-semibold">+ Add container</span> to attach a BIC container or truck and its driver info.
+              No trucks attached yet. Click <span className="font-semibold">+ Add truck</span> to record the truck plate, driver info, BOL, and scheduled arrival time.
             </p>
           )}
 
@@ -2401,10 +2399,10 @@ function ContainerEditCard({
   onSaved: () => void
 }) {
   const isNew = container === null
-  const [containerNo, setContainerNo] = useState(container?.container_no ?? '')
-  const [containerType, setContainerType] = useState<'bic' | 'truck'>(
-    (container?.container_type as 'bic' | 'truck') || 'bic',
-  )
+  // container_no stays on existing rows so the upsert hits the right
+  // OutboundContainer; for new attaches we pass null and let the backend
+  // auto-derive it from the truck plate.
+  const lockedContainerNo = container?.container_no ?? null
   const [driverName, setDriverName] = useState(container?.driver_name ?? '')
   const [driverLicense, setDriverLicense] = useState(container?.driver_license ?? '')
   const [driverPhone, setDriverPhone] = useState(container?.driver_phone ?? '')
@@ -2412,6 +2410,11 @@ function ContainerEditCard({
   const [carrier, setCarrier] = useState(container?.carrier ?? '')
   const [insurance, setInsurance] = useState(container?.insurance ?? '')
   const [bol, setBol] = useState(container?.bol_number ?? '')
+  const [scheduledArrival, setScheduledArrival] = useState(
+    container?.scheduled_arrival_at
+      ? container.scheduled_arrival_at.slice(0, 16)
+      : '',
+  )
 
   const [docsBusy, setDocsBusy] = useState(false)
   const [docsError, setDocsError] = useState<string | null>(null)
@@ -2430,9 +2433,6 @@ function ContainerEditCard({
     try {
       const result = await api.extractDriverDocs(files)
       setDocsExtract(result)
-      if (result.container_no && !containerNo.trim()) setContainerNo(result.container_no)
-      if (result.container_type && result.container_type !== containerType)
-        setContainerType(result.container_type)
       if (result.driver_name && !driverName.trim()) setDriverName(result.driver_name)
       if (result.driver_license && !driverLicense.trim())
         setDriverLicense(result.driver_license)
@@ -2443,6 +2443,9 @@ function ContainerEditCard({
       if (result.carrier && !carrier.trim()) setCarrier(result.carrier)
       if (result.insurance && !insurance.trim()) setInsurance(result.insurance)
       if (result.bol_number && !bol.trim()) setBol(result.bol_number)
+      if (result.scheduled_arrival_at && !scheduledArrival) {
+        setScheduledArrival(result.scheduled_arrival_at.slice(0, 16))
+      }
     } catch (e) {
       setDocsError(e instanceof ApiError ? e.detail : String(e))
     } finally {
@@ -2452,15 +2455,11 @@ function ContainerEditCard({
 
   async function save() {
     setSaveError(null)
-    if (!containerNo.trim()) {
-      setSaveError('Container # is required.')
-      return
-    }
     setSaving(true)
     try {
       await api.attachOutboundContainer(tno, {
-        container_no: containerNo.trim().toUpperCase(),
-        container_type: containerType,
+        container_no: lockedContainerNo, // null for new (backend auto-derives)
+        container_type: 'truck',
         driver_name: driverName.trim() || null,
         driver_license: driverLicense.trim() || null,
         driver_phone: driverPhone.trim() || null,
@@ -2468,6 +2467,9 @@ function ContainerEditCard({
         carrier: carrier.trim() || null,
         insurance: insurance.trim() || null,
         bol_number: bol.trim() || null,
+        scheduled_arrival_at: scheduledArrival
+          ? new Date(scheduledArrival).toISOString()
+          : null,
       })
       onSaved()
     } catch (e) {
@@ -2479,16 +2481,32 @@ function ContainerEditCard({
 
   // Collapsed (read-only) summary mode for existing containers
   if (!editing && container) {
+    const eta = container.scheduled_arrival_at
+      ? new Date(container.scheduled_arrival_at).toLocaleString(undefined, {
+          dateStyle: 'medium',
+          timeStyle: 'short',
+        })
+      : null
     return (
       <div className="rounded-lg border border-slate-200 bg-white px-4 py-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
-        <div className="font-mono font-bold text-[#1B4676]">{container.container_no}</div>
-        <span className="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">
-          {container.container_type}
-        </span>
+        <div className="font-mono font-bold text-[#1B4676]">
+          {container.truck_license_plate || container.container_no}
+        </div>
         <span className="text-slate-600">·</span>
         <span className="text-slate-700">{container.driver_name || 'no driver'}</span>
         <span className="text-slate-600">·</span>
         <span className="text-slate-700">{container.carrier || 'no carrier'}</span>
+        {eta && (
+          <>
+            <span className="text-slate-600">·</span>
+            <span className="text-slate-700">
+              <span className="text-[10px] uppercase tracking-wider text-slate-500 font-semibold mr-1">
+                ETA
+              </span>
+              {eta}
+            </span>
+          </>
+        )}
         <span className="text-slate-600">·</span>
         <span className="text-slate-500">BOL {container.bol_number || '—'}</span>
         {!locked && (
@@ -2509,7 +2527,9 @@ function ContainerEditCard({
     <div className="rounded-lg border-2 border-[#1B4676]/30 bg-[#1B4676]/[0.02] p-4 space-y-4">
       <div className="flex items-center justify-between gap-3">
         <div className="text-xs uppercase tracking-wider font-bold text-[#1B4676]">
-          {isNew ? 'New container' : `Editing ${container?.container_no}`}
+          {isNew
+            ? 'New truck'
+            : `Editing ${container?.truck_license_plate || container?.container_no}`}
         </div>
         <button
           type="button"
@@ -2566,25 +2586,15 @@ function ContainerEditCard({
       )}
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-        <CompactField label="Container type">
-          <select
-            value={containerType}
-            onChange={(e) => setContainerType(e.target.value as 'bic' | 'truck')}
-            className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm focus:border-[#0093D0] focus:ring-2 focus:ring-[#0093D0]/20 focus:outline-none"
-            disabled={!isNew}
-          >
-            <option value="bic">BIC container (ISO 6346)</option>
-            <option value="truck">Truck / trailer (license plate)</option>
-          </select>
+        <CompactField label="Truck plate">
+          <Input value={truckPlate} onChange={setTruckPlate} placeholder="1ABC234" />
         </CompactField>
-        <CompactField
-          label={containerType === 'bic' ? 'Container #' : 'Truck plate'}
-          required
-        >
-          <Input
-            value={containerNo}
-            onChange={setContainerNo}
-            placeholder={containerType === 'bic' ? 'JZPU8021688' : '1ABC234'}
+        <CompactField label="Driver arrives at dock">
+          <input
+            type="datetime-local"
+            value={scheduledArrival}
+            onChange={(e) => setScheduledArrival(e.target.value)}
+            className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm text-slate-800 focus:border-[#0093D0] focus:ring-2 focus:ring-[#0093D0]/20 focus:outline-none transition"
           />
         </CompactField>
         <CompactField label="Driver name">
@@ -2596,20 +2606,15 @@ function ContainerEditCard({
         <CompactField label="Driver phone">
           <Input value={driverPhone} onChange={setDriverPhone} />
         </CompactField>
-        <CompactField label="Truck license plate">
-          <Input value={truckPlate} onChange={setTruckPlate} />
-        </CompactField>
         <CompactField label="Carrier">
           <Input value={carrier} onChange={setCarrier} />
         </CompactField>
         <CompactField label="Insurance">
           <Input value={insurance} onChange={setInsurance} />
         </CompactField>
-        <div className="sm:col-span-2">
-          <CompactField label="BOL # / Tracking #">
-            <Input value={bol} onChange={setBol} />
-          </CompactField>
-        </div>
+        <CompactField label="BOL # / Tracking #">
+          <Input value={bol} onChange={setBol} />
+        </CompactField>
       </div>
 
       {saveError && (
@@ -2639,7 +2644,7 @@ function ContainerEditCard({
               <span>Saving…</span>
             </>
           ) : (
-            <span>{isNew ? 'Attach container' : 'Save driver info'}</span>
+            <span>{isNew ? 'Attach truck' : 'Save driver info'}</span>
           )}
         </button>
       </div>

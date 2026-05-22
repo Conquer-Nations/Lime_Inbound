@@ -660,27 +660,37 @@ async def extract_driver_docs(
         "consolidated JSON of fields. The user uploads any combination of: "
         "driver's license, commercial driver's license, insurance card / "
         "policy declaration, truck license-plate photo, BIC-container "
-        "code photo, Bill of Lading, dispatch order. Pull whatever you "
-        "can read; leave the rest as null. Return ONLY the JSON, no "
-        "preamble or markdown.\n\n"
+        "code photo, Bill of Lading, dispatch order, and (most "
+        "importantly for outbound) a driver information sheet — a typed "
+        "form the customer sends listing the driver, truck, carrier, "
+        "BOL #, and the scheduled arrival date/time at the dock. Pull "
+        "whatever you can read; leave the rest as null. Return ONLY the "
+        "JSON, no preamble or markdown.\n\n"
         "Schema:\n"
         "{\n"
-        '  "container_no": string|null,         // BIC code or truck #\n'
-        '  "container_type": "bic"|"truck"|null,// best guess\n'
-        '  "driver_name": string|null,          // from CDL / DL\n'
+        '  "container_no": string|null,         // BIC code if the doc actually shows one\n'
+        '  "container_type": "bic"|"truck"|null,// best guess; default to "truck"\n'
+        '  "driver_name": string|null,          // from CDL / DL / info sheet\n'
         '  "driver_license": string|null,       // license number\n'
-        '  "driver_phone": string|null,         // rarely on docs; OK to skip\n'
+        '  "driver_phone": string|null,         // from info sheet if shown\n'
         '  "truck_license_plate": string|null,  // plate (alphanumeric, no spaces)\n'
         '  "carrier": string|null,              // company name on truck / BOL / insurance\n'
         '  "insurance": string|null,            // policy # + carrier (one line is fine)\n'
-        '  "bol_number": string|null            // BOL / pro number\n'
+        '  "bol_number": string|null,           // BOL / pro number\n'
+        '  "scheduled_arrival_at": string|null  // ISO 8601 datetime, e.g.\n'
+        '                                        // "2026-05-25T14:30:00" — when\n'
+        '                                        // the truck is due at the dock\n'
         "}\n\n"
         "Rules:\n"
         "- Use null when a field isn't visible. Don't guess.\n"
         "- container_no: if it's a clearly-ISO-6346 4-letter+7-digit code, "
-        "use that; if the doc shows a US/state license plate, put that here "
-        "AND set container_type=\"truck\".\n"
+        "use that; otherwise leave null (the truck plate goes in "
+        "truck_license_plate, not container_no).\n"
         "- driver_license: just the number, not 'DL: 12345'.\n"
+        "- scheduled_arrival_at: combine the date + time fields on the "
+        "driver info sheet into ISO 8601 (no timezone). If only a date is "
+        "shown, use 00:00 for time. If only a time is shown without a "
+        "date, return null.\n"
         "- Trim whitespace. Uppercase plate codes."
     )
 
@@ -760,4 +770,5 @@ async def extract_driver_docs(
         "carrier": _clean(parsed.get("carrier")),
         "insurance": _clean(parsed.get("insurance")),
         "bol_number": _clean(parsed.get("bol_number")),
+        "scheduled_arrival_at": _clean(parsed.get("scheduled_arrival_at")),
     }
