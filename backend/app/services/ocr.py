@@ -605,3 +605,159 @@ async def extract_picking_ticket(file_bytes: bytes, content_type: str) -> dict:
         "ship_to_address": parsed.get("ship_to_address") or None,
         "lines": cleaned_lines,
     }
+
+
+# ─── Driver / truck document extraction ────────────────────────────────
+
+
+async def extract_driver_docs(
+    files: list[tuple[bytes, str]],
+) -> dict:
+    """Accept one or more driver/truck document images (or PDFs) and return
+    the consolidated set of fields the OutboundContainer attach form needs:
+
+        {
+          container_no, container_type ('bic'|'truck'|null),
+          driver_name, driver_license, driver_phone,
+          truck_license_plate, carrier, insurance, bol_number,
+        }
+
+    Every field is null when not found — caller decides which to prefill,
+    and the form lets the vendor type anything that's missing. Files can
+    be a mix: driver's-license photo + insurance card + plate shot + BOL,
+    etc. The LLM sees them all in one prompt and emits one merged JSON.
+    """
+    if not settings.openrouter_api_key:
+        raise OCRUnavailableError(
+            "Driver-docs extraction needs OPENROUTER_API_KEY. "
+            "Type the fields manually instead."
+        )
+    if not files:
+        raise ValueError("No files supplied.")
+
+    # Convert any PDFs to PNGs; pass images through as-is.
+    image_parts: list[dict] = []
+    for raw, content_type in files:
+        ct = (content_type or "").lower()
+        if ct == "application/pdf":
+            image_bytes = await asyncio.get_event_loop().run_in_executor(
+                None, _pdf_first_page_to_png, raw
+            )
+            mime = "image/png"
+        else:
+            image_bytes = raw
+            mime = ct or "image/jpeg"
+        img_b64 = base64.b64encode(image_bytes).decode("ascii")
+        image_parts.append(
+            {
+                "type": "image_url",
+                "image_url": {"url": f"data:{mime};base64,{img_b64}"},
+            }
+        )
+
+    system_prompt = (
+        "You read trucking / driver supporting documents and return one "
+        "consolidated JSON of fields. The user uploads any combination of: "
+        "driver's license, commercial driver's license, insurance card / "
+        "policy declaration, truck license-plate photo, BIC-container "
+        "code photo, Bill of Lading, dispatch order. Pull whatever you "
+        "can read; leave the rest as null. Return ONLY the JSON, no "
+        "preamble or markdown.\n\n"
+        "Schema:\n"
+        "{\n"
+        '  "container_no": string|null,         // BIC code or truck #\n'
+        '  "container_type": "bic"|"truck"|null,// best guess\n'
+        '  "driver_name": string|null,          // from CDL / DL\n'
+        '  "driver_license": string|null,       // license number\n'
+        '  "driver_phone": string|null,         // rarely on docs; OK to skip\n'
+        '  "truck_license_plate": string|null,  // plate (alphanumeric, no spaces)\n'
+        '  "carrier": string|null,              // company name on truck / BOL / insurance\n'
+        '  "insurance": string|null,            // policy # + carrier (one line is fine)\n'
+        '  "bol_number": string|null            // BOL / pro number\n'
+        "}\n\n"
+        "Rules:\n"
+        "- Use null when a field isn't visible. Don't guess.\n"
+        "- container_no: if it's a clearly-ISO-6346 4-letter+7-digit code, "
+        "use that; if the doc shows a US/state license plate, put that here "
+        "AND set container_type=\"truck\".\n"
+        "- driver_license: just the number, not 'DL: 12345'.\n"
+        "- Trim whitespace. Uppercase plate codes."
+    )
+
+    body = {
+        "model": settings.openrouter_model,
+        "temperature": 0.0,
+        "max_tokens": 600,
+        "response_format": {"type": "json_object"},
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": (
+                            f"Extract driver / truck fields from "
+                            f"{len(image_parts)} attached document"
+                            f"{'s' if len(image_parts) != 1 else ''}. "
+                            "Return JSON matching the schema."
+                        ),
+                    },
+                    *image_parts,
+                ],
+            },
+        ],
+    }
+    headers = {
+        "Authorization": f"Bearer {settings.openrouter_api_key}",
+        "Content-Type": "application/json",
+        "HTTP-Referer": "https://lime.cnwarehousing.com",
+        "X-Title": "Conquer Nation Warehouse",
+    }
+
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        r = await client.post(
+            "https://openrouter.ai/api/v1/chat/completions",
+            json=body,
+            headers=headers,
+        )
+    if not r.is_success:
+        raise RuntimeError(f"OpenRouter {r.status_code}: {r.text[:300]}")
+
+    data = r.json()
+    try:
+        text = (data["choices"][0]["message"]["content"] or "").strip()
+    except (KeyError, IndexError, TypeError):
+        raise RuntimeError("OpenRouter returned no message content.")
+
+    if text.startswith("```"):
+        text = re.sub(r"^```(?:json)?\s*", "", text)
+        text = re.sub(r"\s*```$", "", text)
+
+    import json as _json
+
+    try:
+        parsed = _json.loads(text)
+    except _json.JSONDecodeError as e:
+        raise RuntimeError(f"Driver-docs OCR returned non-JSON: {text[:200]}") from e
+
+    def _clean(v):
+        if v is None:
+            return None
+        s = str(v).strip()
+        return s if s else None
+
+    ct = _clean(parsed.get("container_type"))
+    if ct and ct.lower() not in ("bic", "truck"):
+        ct = None
+    return {
+        "container_no": _clean(parsed.get("container_no")),
+        "container_type": ct.lower() if ct else None,
+        "driver_name": _clean(parsed.get("driver_name")),
+        "driver_license": _clean(parsed.get("driver_license")),
+        "driver_phone": _clean(parsed.get("driver_phone")),
+        "truck_license_plate": _clean(parsed.get("truck_license_plate")),
+        "carrier": _clean(parsed.get("carrier")),
+        "insurance": _clean(parsed.get("insurance")),
+        "bol_number": _clean(parsed.get("bol_number")),
+    }

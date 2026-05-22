@@ -2,6 +2,7 @@ import { Fragment, useEffect, useRef, useState, type ReactNode } from 'react'
 import {
   api,
   ApiError,
+  type DriverDocsExtraction,
   type OutboundLineInput,
   type OutboundOrderRead,
   type OutboundOrderListItem,
@@ -17,6 +18,9 @@ function useVendorCompany(): string {
 }
 
 // ─── 4-card chooser under OUTBOUND ─────────────────────────────────────
+// Same shape as the inbound ModeChooser (rich icon tiles + meta strip +
+// dark CTA bar) but with the navy/yellow palette instead of cyan, to
+// signal that outbound is the "ship-out" half of the portal.
 
 export function OutboundModeChooser({
   onChoose,
@@ -27,67 +31,128 @@ export function OutboundModeChooser({
 }) {
   return (
     <OutboundShell breadcrumb="Outbound — select workflow" onBack={onBack}>
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12 sm:py-16">
-        <div className="max-w-3xl">
-          <div className="inline-flex items-center gap-2 px-2.5 py-1 rounded-full bg-[#1B4676]/10 border border-[#1B4676]/25 text-[#1B4676] text-[11px] font-semibold tracking-[0.14em] uppercase mb-5">
-            <span className="w-1.5 h-1.5 rounded-full bg-[#1B4676]" aria-hidden />
-            Outbound
+      <main className="relative z-10">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12 sm:py-16">
+          {/* Hero */}
+          <div className="max-w-3xl">
+            <div className="inline-flex items-center gap-2 px-2.5 py-1 rounded-full bg-[#1B4676]/10 border border-[#1B4676]/30 text-[#1B4676] text-[11px] font-semibold tracking-[0.14em] uppercase mb-5">
+              <span className="w-1.5 h-1.5 rounded-full bg-[#1B4676]" aria-hidden />
+              Outbound
+            </div>
+            <h1 className="text-3xl sm:text-4xl lg:text-[2.75rem] font-bold tracking-tight text-[#1B4676] leading-[1.1]">
+              What are you sending out today?
+            </h1>
+            <p className="mt-4 text-base sm:text-lg text-slate-600 max-w-2xl leading-relaxed">
+              Pick the outbound workflow that matches your shipment. Conquer Nation
+              operations is notified the moment your Transfer Order lands in our system.
+            </p>
+            <p className="mt-3 text-[11px] uppercase tracking-[0.22em] text-slate-400 font-semibold">
+              Logistics Simplified.
+            </p>
           </div>
-          <h1 className="text-3xl sm:text-4xl lg:text-[2.75rem] font-bold tracking-tight text-[#1B4676] leading-[1.1]">
-            What are you sending out today?
-          </h1>
-          <p className="mt-4 text-base sm:text-lg text-slate-600 max-w-2xl leading-relaxed">
-            Pick the outbound workflow that matches your shipment. Place a new
-            Transfer Order, attach driver / truck details, update an existing
-            order, or look up one already on file.
-          </p>
-        </div>
 
-        <div className="mt-10 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5 items-stretch">
-          <OutboundCard
-            eyebrow="Order"
-            title="New outbound order"
-            description="Submit a Transfer Order / Picking Ticket — destination, SKU lines, optional specific serials."
-            ctaLabel="Start new order"
-            onClick={() => onChoose('out_new')}
-          />
-          <OutboundCard
-            eyebrow="Driver"
-            title="Driver & truck info"
-            description="Attach an outbound container (BIC or truck) and driver / carrier / insurance / BOL info."
-            ctaLabel="Add driver details"
-            onClick={() => onChoose('out_driver')}
-          />
-          <OutboundCard
-            eyebrow="Amend"
-            title="Update order"
-            description="Amend an open Transfer Order — fix destination, change lines, before picking starts."
-            ctaLabel="Update order"
-            onClick={() => onChoose('out_update')}
-          />
-          <OutboundCard
-            eyebrow="Review"
-            title="View order"
-            description="Pull up a Transfer Order to see lines, picked counts, and attached containers."
-            ctaLabel="View order"
-            onClick={() => onChoose('out_view')}
-          />
+          {/* Cards */}
+          <div className="mt-10 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5 items-stretch">
+            <OutboundIntakeCard
+              icon={<OutPackageIcon className="w-6 h-6" />}
+              eyebrow="Order"
+              title="New outbound order"
+              description="Submit a Transfer Order / Picking Ticket — destination, SKU lines, optional specific serials. Internal PO# is auto-issued."
+              metaLeft={{ icon: <OutClockIcon className="w-3.5 h-3.5" />, label: '~2 min' }}
+              metaRight={{ icon: <OutHashIcon className="w-3.5 h-3.5" />, label: 'TO #' }}
+              ctaLabel="Start new order"
+              onClick={() => onChoose('out_new')}
+            />
+            <OutboundIntakeCard
+              icon={<OutTruckIcon className="w-6 h-6" />}
+              eyebrow="Driver"
+              title="Driver & truck info"
+              description="Attach an outbound container (BIC or truck) and driver / carrier / insurance / BOL. Upload photos to auto-fill."
+              metaLeft={{ icon: <OutClockIcon className="w-3.5 h-3.5" />, label: '~1 min' }}
+              metaRight={{ icon: <OutContainerIcon className="w-3.5 h-3.5" />, label: 'Container #' }}
+              ctaLabel="Add driver details"
+              onClick={() => onChoose('out_driver')}
+            />
+            <OutboundIntakeCard
+              icon={<OutEditIcon className="w-6 h-6" />}
+              eyebrow="Amend"
+              title="Update order"
+              description="Amend an open Transfer Order — fix destination, change lines, swap driver info, before picking starts."
+              metaLeft={{ icon: <OutClockIcon className="w-3.5 h-3.5" />, label: '~1 min' }}
+              metaRight={{ icon: <OutHashIcon className="w-3.5 h-3.5" />, label: 'TO #' }}
+              ctaLabel="Update order"
+              onClick={() => onChoose('out_update')}
+            />
+            <OutboundIntakeCard
+              icon={<OutEyeIcon className="w-6 h-6" />}
+              eyebrow="Review"
+              title="View order"
+              description="Pull up a Transfer Order to see lines, picked counts, attached containers, and driver details on file."
+              metaLeft={{ icon: <OutClockIcon className="w-3.5 h-3.5" />, label: '~30 sec' }}
+              metaRight={{ icon: <OutHashIcon className="w-3.5 h-3.5" />, label: 'TO #' }}
+              ctaLabel="View order"
+              onClick={() => onChoose('out_view')}
+            />
+          </div>
+
+          {/* Support strip */}
+          <section
+            aria-label="Operations support"
+            className="mt-12 rounded-xl border border-slate-200 bg-white p-5 sm:p-6 flex flex-col sm:flex-row sm:items-center gap-5 sm:gap-8 shadow-sm"
+          >
+            <div className="flex items-center gap-3">
+              <div
+                className="w-10 h-10 rounded-md bg-[#1B4676]/10 flex items-center justify-center text-[#1B4676]"
+                aria-hidden
+              >
+                <OutHelpIcon className="w-5 h-5" />
+              </div>
+              <div className="leading-tight">
+                <div className="text-sm font-bold text-[#1B4676]">Need help shipping out?</div>
+                <div className="text-xs text-slate-500">
+                  Ops keeps a real human on call during warehouse hours.
+                </div>
+              </div>
+            </div>
+            <div className="sm:ml-auto flex flex-wrap items-center gap-x-6 gap-y-2 text-xs text-slate-600">
+              <a
+                href="tel:+13106786768"
+                className="inline-flex items-center gap-1.5 hover:text-[#1B4676] font-semibold"
+              >
+                <OutPhoneIcon className="w-3.5 h-3.5 text-[#1B4676]" />
+                <span>(310) 678-6768</span>
+              </a>
+              <a
+                href="mailto:developer@conquernation.com"
+                className="inline-flex items-center gap-1.5 hover:text-[#1B4676] font-semibold"
+              >
+                <OutMailIcon className="w-3.5 h-3.5 text-[#1B4676]" />
+                <span>developer@conquernation.com</span>
+              </a>
+            </div>
+          </section>
         </div>
-      </div>
+      </main>
     </OutboundShell>
   )
 }
 
-function OutboundCard({
+function OutboundIntakeCard({
+  icon,
   eyebrow,
   title,
   description,
+  metaLeft,
+  metaRight,
   ctaLabel,
   onClick,
 }: {
+  icon: ReactNode
   eyebrow: string
   title: string
   description: string
+  metaLeft: { icon: ReactNode; label: string }
+  metaRight: { icon: ReactNode; label: string }
   ctaLabel: string
   onClick: () => void
 }) {
@@ -95,22 +160,173 @@ function OutboundCard({
     <button
       type="button"
       onClick={onClick}
-      className="group text-left bg-white rounded-2xl border border-slate-200 hover:border-[#1B4676] hover:shadow-[0_24px_60px_-20px_rgba(15,23,42,0.18)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#0093D0] focus-visible:ring-offset-2 transition-all duration-200 p-6 flex flex-col"
+      className="group relative h-full flex flex-col text-left rounded-xl bg-white border border-slate-200 hover:border-[#1B4676]/50 transition-all overflow-hidden focus:outline-none focus-visible:ring-2 focus-visible:ring-[#1B4676] focus-visible:ring-offset-2"
+      style={{
+        boxShadow:
+          '0 1px 2px 0 rgba(15,23,42,0.04), 0 8px 24px -8px rgba(15,23,42,0.08)',
+      }}
     >
-      <div className="text-[10.5px] uppercase tracking-[0.18em] font-bold text-[#1B4676]">
-        {eyebrow}
+      <div className="p-6 flex-1 flex flex-col">
+        <div className="flex items-start justify-between gap-3">
+          <div
+            className="w-12 h-12 rounded-lg bg-[#1B4676] flex items-center justify-center text-white group-hover:bg-[#0B1828] transition flex-shrink-0"
+            aria-hidden
+          >
+            {icon}
+          </div>
+          <span className="text-[10.5px] uppercase tracking-[0.18em] text-slate-500 font-semibold text-right">
+            {eyebrow}
+          </span>
+        </div>
+        <h2 className="mt-6 text-xl font-bold text-[#1B4676] leading-snug min-h-[3.5rem]">
+          {title}
+        </h2>
+        <p className="mt-2 text-sm text-slate-600 leading-relaxed flex-1">
+          {description}
+        </p>
+        <div className="mt-6 flex items-center gap-3 text-xs text-slate-500 flex-wrap">
+          <span className="inline-flex items-center gap-1.5">
+            {metaLeft.icon}
+            <span className="whitespace-nowrap">{metaLeft.label}</span>
+          </span>
+          <span className="w-px h-3 bg-slate-200" aria-hidden />
+          <span className="inline-flex items-center gap-1.5">
+            {metaRight.icon}
+            <span className="whitespace-nowrap">{metaRight.label}</span>
+          </span>
+        </div>
       </div>
-      <div className="mt-2 text-xl font-bold tracking-tight text-[#1B4676]">
-        {title}
-      </div>
-      <p className="mt-2 text-sm text-slate-600 leading-relaxed flex-1">
-        {description}
-      </p>
-      <div className="mt-5 inline-flex items-center gap-2 text-sm font-semibold text-[#1B4676] group-hover:translate-x-1 transition-transform">
-        <span>{ctaLabel}</span>
-        <span aria-hidden>→</span>
+      {/* Navy CTA bar — outbound's dark counterpart to the inbound cyan bar */}
+      <div
+        className="px-6 py-4 flex items-center justify-between gap-2 transition text-white"
+        style={{
+          background: 'linear-gradient(90deg, #1B4676 0%, #0B1828 100%)',
+        }}
+      >
+        <span className="font-bold text-sm leading-tight">{ctaLabel}</span>
+        <OutArrowRightIcon className="w-4 h-4 group-hover:translate-x-1 transition-transform flex-shrink-0" />
       </div>
     </button>
+  )
+}
+
+// ─── Inline icons for the outbound chooser ─────────────────────────────
+// Lucide-style, 24x24, currentColor stroke. Duplicated locally (rather
+// than imported from VendorIntakePage) so OutboundComponents stays
+// self-contained.
+
+function OutIcon({ children, className }: { children: ReactNode; className?: string }) {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+      aria-hidden="true"
+    >
+      {children}
+    </svg>
+  )
+}
+
+function OutPackageIcon({ className }: { className?: string }) {
+  return (
+    <OutIcon className={className}>
+      <path d="m16 16 4-4-4-4" />
+      <path d="M20 12H8" />
+      <path d="M4 4v16h12V4z" />
+    </OutIcon>
+  )
+}
+function OutTruckIcon({ className }: { className?: string }) {
+  return (
+    <OutIcon className={className}>
+      <path d="M14 18V6a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v11a1 1 0 0 0 1 1h2" />
+      <path d="M15 18H9" />
+      <path d="M19 18h2a1 1 0 0 0 1-1v-3.65a1 1 0 0 0-.22-.624l-3.48-4.35A1 1 0 0 0 17.52 8H14" />
+      <circle cx="17" cy="18" r="2" />
+      <circle cx="7" cy="18" r="2" />
+    </OutIcon>
+  )
+}
+function OutEditIcon({ className }: { className?: string }) {
+  return (
+    <OutIcon className={className}>
+      <path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z" />
+      <path d="m15 5 4 4" />
+    </OutIcon>
+  )
+}
+function OutEyeIcon({ className }: { className?: string }) {
+  return (
+    <OutIcon className={className}>
+      <path d="M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0" />
+      <circle cx="12" cy="12" r="3" />
+    </OutIcon>
+  )
+}
+function OutClockIcon({ className }: { className?: string }) {
+  return (
+    <OutIcon className={className}>
+      <circle cx="12" cy="12" r="10" />
+      <polyline points="12 6 12 12 16 14" />
+    </OutIcon>
+  )
+}
+function OutHashIcon({ className }: { className?: string }) {
+  return (
+    <OutIcon className={className}>
+      <line x1="4" x2="20" y1="9" y2="9" />
+      <line x1="4" x2="20" y1="15" y2="15" />
+      <line x1="10" x2="8" y1="3" y2="21" />
+      <line x1="16" x2="14" y1="3" y2="21" />
+    </OutIcon>
+  )
+}
+function OutContainerIcon({ className }: { className?: string }) {
+  return (
+    <OutIcon className={className}>
+      <path d="M22 7.7c0-.6-.4-1.2-.8-1.5l-6.3-3.9a1.72 1.72 0 0 0-1.9 0l-10 6c-.5.3-.9.9-.9 1.5v8.1c0 .5.4 1.2.8 1.5l6.3 3.9a1.72 1.72 0 0 0 1.9 0l10-6c.5-.3.9-.9.9-1.5Z" />
+      <path d="M10 21.9V14L2.1 9.1" />
+      <path d="m10 14 11.9-6.9" />
+      <path d="M14 19.5V8.5" />
+    </OutIcon>
+  )
+}
+function OutArrowRightIcon({ className }: { className?: string }) {
+  return (
+    <OutIcon className={className}>
+      <path d="M5 12h14" />
+      <path d="m12 5 7 7-7 7" />
+    </OutIcon>
+  )
+}
+function OutHelpIcon({ className }: { className?: string }) {
+  return (
+    <OutIcon className={className}>
+      <circle cx="12" cy="12" r="10" />
+      <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" />
+      <path d="M12 17h.01" />
+    </OutIcon>
+  )
+}
+function OutPhoneIcon({ className }: { className?: string }) {
+  return (
+    <OutIcon className={className}>
+      <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92Z" />
+    </OutIcon>
+  )
+}
+function OutMailIcon({ className }: { className?: string }) {
+  return (
+    <OutIcon className={className}>
+      <rect width="20" height="16" x="2" y="4" rx="2" />
+      <path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7" />
+    </OutIcon>
   )
 }
 
@@ -858,11 +1074,50 @@ export function OutboundDriverInfoForm({ onBack }: { onBack: () => void }) {
   const [error, setError] = useState<string | null>(null)
   const [done, setDone] = useState<{ container: string } | null>(null)
 
+  // Driver-docs upload state
+  const docsFileRef = useRef<HTMLInputElement | null>(null)
+  const [docsBusy, setDocsBusy] = useState(false)
+  const [docsError, setDocsError] = useState<string | null>(null)
+  const [docsExtract, setDocsExtract] = useState<DriverDocsExtraction | null>(null)
+  const [docsCount, setDocsCount] = useState(0)
+
+  async function handleDocsUpload(files: File[]) {
+    if (!files.length) return
+    setDocsError(null)
+    setDocsExtract(null)
+    setDocsCount(files.length)
+    setDocsBusy(true)
+    try {
+      const result = await api.extractDriverDocs(files)
+      setDocsExtract(result)
+      // Non-destructive autofill — never overwrite a typed value.
+      if (result.container_no && !containerNo.trim())
+        setContainerNo(result.container_no)
+      if (result.container_type && result.container_type !== containerType)
+        setContainerType(result.container_type)
+      if (result.driver_name && !driverName.trim()) setDriverName(result.driver_name)
+      if (result.driver_license && !driverLicense.trim())
+        setDriverLicense(result.driver_license)
+      if (result.driver_phone && !driverPhone.trim())
+        setDriverPhone(result.driver_phone)
+      if (result.truck_license_plate && !truckPlate.trim())
+        setTruckPlate(result.truck_license_plate)
+      if (result.carrier && !carrier.trim()) setCarrier(result.carrier)
+      if (result.insurance && !insurance.trim()) setInsurance(result.insurance)
+      if (result.bol_number && !bol.trim()) setBol(result.bol_number)
+    } catch (e) {
+      setDocsError(e instanceof ApiError ? e.detail : String(e))
+    } finally {
+      setDocsBusy(false)
+    }
+  }
+
   async function submit(e: React.FormEvent) {
     e.preventDefault()
     setError(null)
     if (!tno.trim()) return setError('Transfer Order # is required.')
-    if (!containerNo.trim()) return setError('Container # (or truck plate) is required.')
+    if (!containerNo.trim())
+      return setError('Container # (or truck plate) is required.')
     setBusy(true)
     try {
       const res = await api.attachOutboundContainer(tno.trim(), {
@@ -910,12 +1165,87 @@ export function OutboundDriverInfoForm({ onBack }: { onBack: () => void }) {
   return (
     <OutboundShell breadcrumb="Outbound — driver & truck" onBack={onBack}>
       <form onSubmit={submit} className="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 py-10 space-y-6">
-        <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-[#1B4676]">
-          Driver & truck info
-        </h1>
-        <p className="text-sm text-slate-600">
-          Attach the outbound container (BIC code or truck plate) to a Transfer Order and capture driver / carrier / BOL info.
-        </p>
+        <div>
+          <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-[#1B4676]">
+            Driver & truck info
+          </h1>
+          <p className="mt-1 text-sm text-slate-600">
+            Attach an outbound container to a Transfer Order. Upload photos of
+            the driver's license, insurance card, truck plate, and BOL — we'll
+            read whatever we can. Fill in anything that's still blank.
+          </p>
+        </div>
+
+        {/* Driver-docs upload card */}
+        <input
+          ref={docsFileRef}
+          type="file"
+          accept="application/pdf,image/*"
+          multiple
+          className="hidden"
+          onChange={(e) => {
+            const list = e.target.files
+            if (list && list.length > 0) handleDocsUpload(Array.from(list))
+            if (docsFileRef.current) docsFileRef.current.value = ''
+          }}
+        />
+
+        <button
+          type="button"
+          onClick={() => docsFileRef.current?.click()}
+          disabled={docsBusy}
+          className={`w-full rounded-2xl border-2 border-dashed transition p-5 sm:p-6 text-left ${
+            docsExtract
+              ? 'border-emerald-300 bg-emerald-50/40 hover:bg-emerald-50'
+              : 'border-[#1B4676]/30 bg-[#1B4676]/[0.03] hover:bg-[#1B4676]/[0.06]'
+          } disabled:opacity-60 disabled:cursor-wait`}
+        >
+          <div className="flex items-start gap-4">
+            <div
+              className={`shrink-0 w-11 h-11 rounded-full grid place-items-center font-bold text-lg ${
+                docsExtract ? 'bg-emerald-100 text-emerald-700' : 'bg-[#FED641] text-[#1B4676]'
+              }`}
+              aria-hidden
+            >
+              {docsExtract ? '✓' : '↥'}
+            </div>
+            <div className="flex-1 min-w-0">
+              {docsBusy ? (
+                <div className="flex items-center gap-2 text-[#1B4676] font-semibold">
+                  <Spinner size={16} className="text-[#1B4676]" />
+                  <span>Reading {docsCount} document{docsCount === 1 ? '' : 's'}…</span>
+                </div>
+              ) : docsExtract ? (
+                <>
+                  <div className="font-semibold text-emerald-900">
+                    Driver documents read ({docsCount} file{docsCount === 1 ? '' : 's'})
+                  </div>
+                  <div className="mt-0.5 text-sm text-emerald-800">
+                    Fields below were prefilled from what we could read. Edit anything that's wrong; nothing's mandatory.
+                  </div>
+                  <div className="mt-1 text-xs text-emerald-700 underline">
+                    Upload more / replace
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="font-semibold text-[#1B4676]">
+                    Upload driver documents
+                  </div>
+                  <div className="mt-0.5 text-sm text-slate-600">
+                    Photos of driver's license, insurance, plate, BOL — any combination, up to 6 files. We'll OCR all of them at once.
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        </button>
+
+        {docsError && (
+          <div role="alert" className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-md px-3 py-2.5">
+            Couldn't read the documents: {docsError}
+          </div>
+        )}
 
         <Section title="Transfer Order + container">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -945,7 +1275,7 @@ export function OutboundDriverInfoForm({ onBack }: { onBack: () => void }) {
           </div>
         </Section>
 
-        <Section title="Driver + carrier">
+        <Section title="Driver + carrier (all optional — fill what isn't auto-filled)">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <Field label="Driver name">
               <Input value={driverName} onChange={setDriverName} />

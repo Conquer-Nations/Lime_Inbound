@@ -519,6 +519,30 @@ export const api = {
       fd,
     )
   },
+
+  extractDriverDocs: (files: File[]) => {
+    const fd = new FormData()
+    for (const f of files) fd.append('files', f)
+    return requestMultipart<DriverDocsExtraction>(
+      '/ocr/driver-docs',
+      'POST',
+      fd,
+    )
+  },
+}
+
+// ─── Driver-docs OCR extraction ───────────────────────────────────────
+
+export interface DriverDocsExtraction {
+  container_no: string | null
+  container_type: 'bic' | 'truck' | null
+  driver_name: string | null
+  driver_license: string | null
+  driver_phone: string | null
+  truck_license_plate: string | null
+  carrier: string | null
+  insurance: string | null
+  bol_number: string | null
 }
 
 // ─── Picking-ticket extraction ────────────────────────────────────────

@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+from typing import List
+
 from fastapi import APIRouter, File, HTTPException, UploadFile, status
 
 from app.services.ocr import (
     OCRUnavailableError,
+    extract_driver_docs,
     extract_picking_ticket,
     ocr_container_photo,
 )
@@ -92,6 +95,63 @@ async def picking_ticket(file: UploadFile = File(...)):
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Picking-ticket extraction failed: {e}",
+        )
+
+    return result
+
+
+@router.post("/driver-docs")
+async def driver_docs(files: List[UploadFile] = File(...)):
+    """Accept 1-N driver / truck documents (any mix of CDL, insurance card,
+    plate photo, BOL, BIC container photo) and return one consolidated
+    JSON of driver / container fields. All fields are best-effort and
+    null when not extractable — the form lets the vendor type anything
+    missing without requiring any field."""
+    if not files:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="At least one file is required.",
+        )
+    if len(files) > 6:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Upload at most 6 documents at once.",
+        )
+
+    file_payloads: list[tuple[bytes, str]] = []
+    total_bytes = 0
+    for f in files:
+        ct = (f.content_type or "").lower()
+        is_pdf = ct == "application/pdf"
+        is_image = ct.startswith("image/")
+        if not (is_pdf or is_image):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"{f.filename}: must be a PDF or image.",
+            )
+        raw = await f.read()
+        total_bytes += len(raw)
+        if total_bytes > MAX_PICKING_TICKET_BYTES:
+            raise HTTPException(
+                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                detail=(
+                    f"Combined upload exceeds "
+                    f"{MAX_PICKING_TICKET_BYTES // (1024 * 1024)}MB."
+                ),
+            )
+        file_payloads.append((raw, ct))
+
+    try:
+        result = await extract_driver_docs(file_payloads)
+    except OCRUnavailableError as e:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(e),
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Driver-docs extraction failed: {e}",
         )
 
     return result
