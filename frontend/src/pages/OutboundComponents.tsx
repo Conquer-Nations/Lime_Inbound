@@ -152,7 +152,119 @@ function OutboundShell({
   )
 }
 
-// ─── New Outbound Order form ───────────────────────────────────────────
+// ─── Email-paste parser ────────────────────────────────────────────────
+//
+// Customer emails a list like:
+//   TO21787 - LPN-001769 - Scooters - 3 units - Long Island City
+//   TO21788 - LPN-001770 - Batteries - 50 units - LA Hub
+//   TO21787 - LPN-001771 - Helmets - 25 units - Long Island City
+//
+// Columns: TO# | SKU | Product Type | Qty (with optional "units"/"ea") | Destination
+//
+// Same TO# = multiple lines on one order. Destination from the first row
+// of that TO# wins (subsequent rows with the same TO# but a different
+// destination are flagged as a soft warning in the preview).
+
+export interface ParsedOutboundLine {
+  raw: string
+  line_idx: number
+  transfer_order_no: string
+  sku: string
+  product_type: string
+  qty: number
+  destination: string
+  error: string | null
+}
+
+export interface ParsedOutboundOrder {
+  transfer_order_no: string
+  destination: string
+  lines: ParsedOutboundLine[]
+  warning: string | null
+}
+
+const QTY_RE = /([0-9]+)/
+
+export function parseOutboundPaste(text: string): {
+  lines: ParsedOutboundLine[]
+  orders: ParsedOutboundOrder[]
+} {
+  const out: ParsedOutboundLine[] = []
+  const raws = text.split(/\r?\n/)
+  let idx = 0
+  for (const raw of raws) {
+    const trimmed = raw.trim()
+    if (!trimmed) continue
+    idx += 1
+    // Split on dash variants (- — –) or pipes, with flexible whitespace
+    const parts = trimmed.split(/\s*[-—–|]\s*/).map((p) => p.trim()).filter(Boolean)
+    if (parts.length < 5) {
+      out.push({
+        raw: trimmed,
+        line_idx: idx,
+        transfer_order_no: '',
+        sku: '',
+        product_type: '',
+        qty: 0,
+        destination: '',
+        error: `Need 5 columns (TO# - SKU - Product Type - Qty - Destination); got ${parts.length}.`,
+      })
+      continue
+    }
+    // First 4 fixed, destination is everything past field 4 rejoined
+    const [tno, sku, ptype, qtyRaw, ...rest] = parts
+    const destination = rest.join(' - ')
+    const qtyMatch = qtyRaw.match(QTY_RE)
+    if (!qtyMatch) {
+      out.push({
+        raw: trimmed,
+        line_idx: idx,
+        transfer_order_no: tno,
+        sku,
+        product_type: ptype,
+        qty: 0,
+        destination,
+        error: `Couldn't read a quantity from "${qtyRaw}".`,
+      })
+      continue
+    }
+    out.push({
+      raw: trimmed,
+      line_idx: idx,
+      transfer_order_no: tno.toUpperCase(),
+      sku: sku.toUpperCase(),
+      product_type: ptype,
+      qty: parseInt(qtyMatch[1], 10),
+      destination,
+      error: null,
+    })
+  }
+
+  // Group by TO#
+  const byTno = new Map<string, ParsedOutboundLine[]>()
+  for (const l of out) {
+    if (l.error || !l.transfer_order_no) continue
+    const arr = byTno.get(l.transfer_order_no) || []
+    arr.push(l)
+    byTno.set(l.transfer_order_no, arr)
+  }
+  const orders: ParsedOutboundOrder[] = []
+  for (const [tno, lines] of byTno) {
+    const dest = lines[0].destination
+    const mismatch = lines.find((l) => l.destination !== dest)
+    orders.push({
+      transfer_order_no: tno,
+      destination: dest,
+      lines,
+      warning: mismatch
+        ? `Lines on ${tno} have mixed destinations (using "${dest}" for the order).`
+        : null,
+    })
+  }
+  return { lines: out, orders }
+}
+
+// ─── Form-line draft (manual + paste-derived) ──────────────────────────
 
 interface LineDraft {
   id: string
@@ -178,8 +290,11 @@ function emptyLine(line_no: number): LineDraft {
   }
 }
 
+// ─── New Outbound Order form (paste-driven) ────────────────────────────
+
 export function OutboundNewOrderForm({ onBack }: { onBack: () => void }) {
   const company = useVendorCompany()
+  const [paste, setPaste] = useState('')
   const [tno, setTno] = useState('')
   const [orderDate, setOrderDate] = useState('')
   const [priority, setPriority] = useState<'normal' | 'urgent'>('normal')
@@ -195,6 +310,31 @@ export function OutboundNewOrderForm({ onBack }: { onBack: () => void }) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [done, setDone] = useState<{ tno: string; lines: number } | null>(null)
+
+  const parsed = paste.trim() ? parseOutboundPaste(paste) : { lines: [], orders: [] }
+  const parseErrors = parsed.lines.filter((l) => l.error)
+
+  function applyOrder(order: ParsedOutboundOrder) {
+    setTno(order.transfer_order_no)
+    setShipToName(order.destination)
+    setLines(
+      order.lines.map((l, i) => ({
+        id: crypto.randomUUID(),
+        line_no: i + 1,
+        sku: l.sku,
+        description: l.product_type,
+        order_qty: String(l.qty),
+        unit: 'EA',
+        serial_specific: false,
+        serials: '',
+      })),
+    )
+    setError(null)
+    // Scroll to the order header so the user sees the prefilled fields
+    requestAnimationFrame(() => {
+      window.scrollTo({ top: 220, behavior: 'smooth' })
+    })
+  }
 
   function addLine() {
     setLines((prev) => [...prev, emptyLine(prev.length + 1)])
@@ -313,6 +453,117 @@ export function OutboundNewOrderForm({ onBack }: { onBack: () => void }) {
         <p className="text-sm text-slate-600">
           Submitting on behalf of <span className="font-semibold">{company || '(no company)'}</span>.
         </p>
+
+        {/* Paste from email */}
+        <Section title="Paste from email">
+          <div>
+            <label className="block text-xs font-semibold text-[#1B4676] mb-1.5">
+              Paste one line per (Transfer Order × SKU)
+            </label>
+            <p className="text-xs text-slate-500 mb-2">
+              Format:&nbsp;
+              <code className="bg-slate-100 text-[#1B4676] px-1.5 py-0.5 rounded font-mono">
+                TO# - SKU - Product Type - Qty - Destination
+              </code>
+              &nbsp;— dash-separated, any spacing. Same TO# on multiple lines = one order.
+            </p>
+            <textarea
+              className="w-full border border-slate-300 rounded-md px-3 py-2 font-mono text-sm text-slate-800 placeholder:text-slate-400 focus:border-[#0093D0] focus:ring-2 focus:ring-[#0093D0]/20 focus:outline-none transition h-44"
+              placeholder={`TO21787 - LPN-001769 - Scooters - 3 units - Long Island City
+TO21788 - LPN-001770 - Batteries - 50 units - LA Hub
+TO21787 - LPN-001771 - Helmets - 25 units - Long Island City`}
+              value={paste}
+              onChange={(e) => setPaste(e.target.value)}
+              spellCheck={false}
+            />
+
+            {(parsed.orders.length > 0 || parseErrors.length > 0) && (
+              <div className="mt-4 space-y-3">
+                {parseErrors.length > 0 && (
+                  <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2.5 text-sm">
+                    <div className="text-red-800 font-semibold mb-1">
+                      {parseErrors.length} line{parseErrors.length === 1 ? '' : 's'} couldn't be parsed:
+                    </div>
+                    <ul className="list-disc list-inside text-red-700 space-y-0.5">
+                      {parseErrors.slice(0, 5).map((l) => (
+                        <li key={l.line_idx}>
+                          Line {l.line_idx}: {l.error}
+                        </li>
+                      ))}
+                      {parseErrors.length > 5 && (
+                        <li className="text-red-600 italic">
+                          …and {parseErrors.length - 5} more
+                        </li>
+                      )}
+                    </ul>
+                  </div>
+                )}
+
+                {parsed.orders.map((o) => (
+                  <div
+                    key={o.transfer_order_no}
+                    className="rounded-lg border border-[#1B4676]/20 bg-[#1B4676]/[0.03] p-4"
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <div className="text-[11px] uppercase tracking-[0.14em] font-bold text-[#1B4676]">
+                          Transfer Order
+                        </div>
+                        <div className="font-mono font-bold text-[#1B4676] text-lg">
+                          {o.transfer_order_no}
+                        </div>
+                        <div className="text-sm text-slate-700 mt-0.5">
+                          → {o.destination}
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => applyOrder(o)}
+                        className="shrink-0 inline-flex items-center gap-1.5 rounded-md bg-[#FED641] hover:bg-[#E6C200] text-[#1B4676] text-xs font-bold px-3 py-1.5 transition"
+                      >
+                        Use this order
+                      </button>
+                    </div>
+                    {o.warning && (
+                      <div className="mt-2 text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded px-2 py-1">
+                        ⚠ {o.warning}
+                      </div>
+                    )}
+                    <table className="mt-3 w-full text-sm">
+                      <thead>
+                        <tr className="text-left text-[10.5px] uppercase tracking-wider text-slate-500 border-b border-slate-200">
+                          <th className="py-1.5 pr-3 font-semibold">Line</th>
+                          <th className="py-1.5 pr-3 font-semibold">SKU</th>
+                          <th className="py-1.5 pr-3 font-semibold">Product type</th>
+                          <th className="py-1.5 pr-3 font-semibold text-right">Qty</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {o.lines.map((l, i) => (
+                          <tr key={i} className="border-b border-slate-100 last:border-0">
+                            <td className="py-1.5 pr-3 text-slate-500">{i + 1}</td>
+                            <td className="py-1.5 pr-3 font-mono text-[#1B4676]">{l.sku}</td>
+                            <td className="py-1.5 pr-3 text-slate-700">{l.product_type}</td>
+                            <td className="py-1.5 pr-3 text-right font-semibold text-slate-800">
+                              {l.qty}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ))}
+
+                {parsed.orders.length > 1 && (
+                  <p className="text-xs text-slate-500 italic">
+                    Multiple Transfer Orders detected. Click <span className="font-semibold">Use this order</span> on
+                    the one you want to submit first — submit it, then come back and submit the next.
+                  </p>
+                )}
+              </div>
+            )}
+          </div>
+        </Section>
 
         {/* Header */}
         <Section title="Order header">
