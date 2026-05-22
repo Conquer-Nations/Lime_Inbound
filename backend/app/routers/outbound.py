@@ -41,6 +41,7 @@ from app.schemas.outbound import (
     OutboundUpdateResponse,
 )
 from app.services import outbound as outbound_service
+from app.services import outbound_sheet_sync
 from app.services.vendor_auth_service import current_vendor_required
 
 logger = logging.getLogger(__name__)
@@ -173,8 +174,14 @@ async def submit_outbound_order(
 
     customer = await _ensure_customer(session, payload.customer)
 
+    # Auto-issue an internal Pickup Order # (PO-YYYY-NNNN) — the year comes
+    # from the picking ticket's order_date when present, else today's year.
+    po_year = (payload.order_date or datetime.now(timezone.utc).date()).year
+    po_number = await outbound_service.next_po_number(session, po_year)
+
     order = OutboundOrder(
         transfer_order_no=payload.transfer_order_no.strip(),
+        po_number=po_number,
         customer_id=customer.id,
         order_date=payload.order_date,
         priority=(payload.priority or "normal").lower(),
@@ -220,16 +227,30 @@ async def submit_outbound_order(
             ref_type="outbound_order",
             ref_id=order.id,
             message=(
-                f"Transfer Order {order.transfer_order_no} submitted "
-                f"({len(payload.lines)} lines) by {customer.name}"
+                f"Transfer Order {order.transfer_order_no} → {po_number} "
+                f"submitted ({len(payload.lines)} lines) by {customer.name}"
             ),
         )
     )
     await session.commit()
 
+    # Best-effort OneDrive Excel sync. Re-load the order with lines+serials
+    # eager so the rows builder works without lazy-loading.
+    refreshed = await session.scalar(
+        select(OutboundOrder)
+        .options(
+            selectinload(OutboundOrder.lines).selectinload(OutboundLine.serials),
+        )
+        .where(OutboundOrder.id == order.id)
+    )
+    if refreshed is not None and outbound_sheet_sync.is_configured():
+        rows = outbound_sheet_sync.rows_from_order(refreshed, customer.name)
+        await outbound_sheet_sync.append_outbound_rows(rows)
+
     return OutboundIntakeResponse(
         order_id=order.id,
         transfer_order_no=order.transfer_order_no,
+        po_number=order.po_number,
         status=order.status,
         submitted_at=order.submitted_at,
     )
@@ -305,9 +326,33 @@ async def update_outbound_order(
     )
     await session.commit()
 
+    # Resync Excel: delete the old rows for this TO, then re-append the new
+    # state. Mirrors the inbound update flow's delete-and-re-append pattern.
+    if outbound_sheet_sync.is_configured():
+        await outbound_sheet_sync.delete_outbound_rows_for_to(
+            order.transfer_order_no
+        )
+        refreshed = await session.scalar(
+            select(OutboundOrder)
+            .options(
+                selectinload(OutboundOrder.customer),
+                selectinload(OutboundOrder.lines).selectinload(OutboundLine.serials),
+            )
+            .where(OutboundOrder.id == order.id)
+        )
+        if refreshed is not None:
+            customer_name = refreshed.customer.name if refreshed.customer else ""
+            rows = outbound_sheet_sync.rows_from_order(
+                refreshed,
+                customer_name,
+                last_updated_iso=datetime.now(timezone.utc).isoformat(),
+            )
+            await outbound_sheet_sync.append_outbound_rows(rows)
+
     return OutboundUpdateResponse(
         order_id=order.id,
         transfer_order_no=order.transfer_order_no,
+        po_number=order.po_number,
         status=order.status,
     )
 
@@ -336,6 +381,7 @@ async def list_my_outbound_orders(
             OutboundOrderListItem(
                 id=o.id,
                 transfer_order_no=o.transfer_order_no,
+                po_number=o.po_number,
                 customer_name=name,
                 order_date=o.order_date,
                 priority=o.priority,
@@ -370,6 +416,7 @@ async def view_outbound_order(
     return OutboundOrderRead(
         id=order.id,
         transfer_order_no=order.transfer_order_no,
+        po_number=order.po_number,
         customer_name=order.customer.name if order.customer else "",
         order_date=order.order_date,
         priority=order.priority,

@@ -65,6 +65,7 @@ class OutboundOrderUpdateRequest(BaseModel):
 class OutboundIntakeResponse(BaseModel):
     order_id: int
     transfer_order_no: str
+    po_number: str | None
     status: str
     submitted_at: datetime
 
@@ -72,6 +73,7 @@ class OutboundIntakeResponse(BaseModel):
 class OutboundUpdateResponse(BaseModel):
     order_id: int
     transfer_order_no: str
+    po_number: str | None
     status: str
 
 
@@ -109,6 +111,7 @@ class OutboundContainerRead(BaseModel):
 class OutboundOrderRead(BaseModel):
     id: int
     transfer_order_no: str
+    po_number: str | None
     customer_name: str
     order_date: date | None
     priority: str
@@ -130,6 +133,7 @@ class OutboundOrderListItem(BaseModel):
 
     id: int
     transfer_order_no: str
+    po_number: str | None
     customer_name: str
     order_date: date | None
     priority: str

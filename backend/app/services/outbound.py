@@ -11,6 +11,8 @@ represented by inbound Scan X is no longer available.
 
 from __future__ import annotations
 
+import re
+
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -18,11 +20,29 @@ from app.models import (
     Container,
     ContainerLine,
     DO,
+    OutboundOrder,
     OutboundScan,
     SKU,
     Scan,
     WHPO,
 )
+
+
+async def next_po_number(session: AsyncSession, year: int) -> str:
+    """Generate the next sequential Pickup Order # for `year`. Mirror of
+    inbound's `_next_do_number` — PO-YYYY-NNNN, gap-OK after wipes."""
+    prefix = f"PO-{year}-"
+    latest = await session.scalar(
+        select(func.max(OutboundOrder.po_number)).where(
+            OutboundOrder.po_number.like(f"{prefix}%")
+        )
+    )
+    if latest is None:
+        seq = 1
+    else:
+        m = re.search(r"(\d+)$", latest)
+        seq = (int(m.group(1)) + 1) if m else 1
+    return f"{prefix}{seq:04d}"
 
 
 async def list_available_inventory_for_company(

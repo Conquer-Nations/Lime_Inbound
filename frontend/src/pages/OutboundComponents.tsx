@@ -309,7 +309,7 @@ export function OutboundNewOrderForm({ onBack }: { onBack: () => void }) {
   const [lines, setLines] = useState<LineDraft[]>([emptyLine(1)])
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [done, setDone] = useState<{ tno: string; lines: number } | null>(null)
+  const [done, setDone] = useState<{ tno: string; po: string | null; lines: number } | null>(null)
 
   // Picking-ticket upload state
   const pickingFileRef = useRef<HTMLInputElement | null>(null)
@@ -437,7 +437,7 @@ export function OutboundNewOrderForm({ onBack }: { onBack: () => void }) {
         lines: cleanLines,
         notes: notes.trim() || null,
       })
-      setDone({ tno: res.transfer_order_no, lines: cleanLines.length })
+      setDone({ tno: res.transfer_order_no, po: res.po_number, lines: cleanLines.length })
     } catch (e) {
       setError(e instanceof ApiError ? e.detail : String(e))
     } finally {
@@ -457,11 +457,20 @@ export function OutboundNewOrderForm({ onBack }: { onBack: () => void }) {
               Transfer Order recorded
             </h2>
             <p className="mt-3 text-slate-600">
+              Customer TO{' '}
               <span className="font-mono font-bold text-[#1B4676]">
                 {done.tno}
               </span>{' '}
               · {done.lines} line{done.lines === 1 ? '' : 's'}
             </p>
+            {done.po && (
+              <p className="mt-1 text-sm text-slate-600">
+                Internal Pickup Order:{' '}
+                <span className="font-mono font-bold text-[#1B4676]">
+                  {done.po}
+                </span>
+              </p>
+            )}
             <button
               type="button"
               onClick={onBack}
@@ -1017,7 +1026,7 @@ export function OutboundUpdateOrderForm({ onBack }: { onBack: () => void }) {
 
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [done, setDone] = useState<{ tno: string; lines: number } | null>(null)
+  const [done, setDone] = useState<{ tno: string; po: string | null; lines: number } | null>(null)
 
   const locked = original
     ? original.status !== 'open' && original.status !== 'picking'
@@ -1141,7 +1150,7 @@ export function OutboundUpdateOrderForm({ onBack }: { onBack: () => void }) {
         lines: cleanLines,
         notes: notes.trim() || null,
       })
-      setDone({ tno: res.transfer_order_no, lines: cleanLines.length })
+      setDone({ tno: res.transfer_order_no, po: res.po_number, lines: cleanLines.length })
     } catch (e) {
       setError(e instanceof ApiError ? e.detail : String(e))
     } finally {
@@ -1169,11 +1178,20 @@ export function OutboundUpdateOrderForm({ onBack }: { onBack: () => void }) {
               Transfer Order amended
             </h2>
             <p className="mt-3 text-slate-600">
+              Customer TO{' '}
               <span className="font-mono font-bold text-[#1B4676]">
                 {done.tno}
               </span>{' '}
               · {done.lines} line{done.lines === 1 ? '' : 's'}
             </p>
+            {done.po && (
+              <p className="mt-1 text-sm text-slate-600">
+                Internal Pickup Order:{' '}
+                <span className="font-mono font-bold text-[#1B4676]">
+                  {done.po}
+                </span>
+              </p>
+            )}
             <div className="mt-6 flex items-center justify-center gap-3">
               <button
                 type="button"
@@ -1269,7 +1287,16 @@ export function OutboundUpdateOrderForm({ onBack }: { onBack: () => void }) {
             </h1>
             <p className="mt-1 text-sm text-slate-600">
               Submitting on behalf of{' '}
-              <span className="font-semibold">{company || '(no company)'}</span>.
+              <span className="font-semibold">{company || '(no company)'}</span>
+              {original!.po_number && (
+                <>
+                  {' '}· Internal PO{' '}
+                  <span className="font-mono font-semibold text-[#1B4676]">
+                    {original!.po_number}
+                  </span>
+                </>
+              )}
+              .
             </p>
           </div>
           <button
@@ -1628,9 +1655,22 @@ export function OutboundViewOrderForm({ onBack }: { onBack: () => void }) {
         {order && (
           <div className="bg-white rounded-xl border border-slate-200 p-5 space-y-4">
             <div className="flex flex-wrap items-baseline justify-between gap-3">
-              <h2 className="text-xl font-bold text-[#1B4676]">
-                {order.transfer_order_no}
-              </h2>
+              <div>
+                <div className="text-[11px] uppercase tracking-[0.14em] font-bold text-slate-500">
+                  Customer Transfer Order
+                </div>
+                <h2 className="text-xl font-bold text-[#1B4676] font-mono">
+                  {order.transfer_order_no}
+                </h2>
+                {order.po_number && (
+                  <div className="mt-1 text-xs text-slate-600">
+                    Internal PO:{' '}
+                    <span className="font-mono font-bold text-[#1B4676]">
+                      {order.po_number}
+                    </span>
+                  </div>
+                )}
+              </div>
               <span className="inline-flex items-center px-2.5 py-0.5 rounded-full bg-slate-100 text-slate-700 text-xs font-semibold uppercase tracking-wider">
                 {order.status}
               </span>
@@ -1706,16 +1746,23 @@ export function OutboundViewOrderForm({ onBack }: { onBack: () => void }) {
             <ul className="divide-y divide-slate-100 text-sm">
               {list.map((o) => (
                 <li key={o.id} className="py-2 flex items-center justify-between gap-3">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setTno(o.transfer_order_no)
-                      void lookup(new Event('submit') as unknown as React.FormEvent)
-                    }}
-                    className="font-mono font-bold text-[#1B4676] hover:underline"
-                  >
-                    {o.transfer_order_no}
-                  </button>
+                  <div className="flex flex-col">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setTno(o.transfer_order_no)
+                        void lookup(new Event('submit') as unknown as React.FormEvent)
+                      }}
+                      className="text-left font-mono font-bold text-[#1B4676] hover:underline"
+                    >
+                      {o.transfer_order_no}
+                    </button>
+                    {o.po_number && (
+                      <span className="text-[11px] font-mono text-slate-500">
+                        PO: {o.po_number}
+                      </span>
+                    )}
+                  </div>
                   <span className="text-xs text-slate-500">
                     {o.status} · {o.line_count} line{o.line_count === 1 ? '' : 's'} · {o.priority}
                   </span>

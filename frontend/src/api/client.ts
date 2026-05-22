@@ -657,6 +657,7 @@ export interface OutboundOrderUpdateRequest {
 export interface OutboundIntakeResponse {
   order_id: number
   transfer_order_no: string
+  po_number: string | null
   status: string
   submitted_at: string
 }
@@ -664,6 +665,7 @@ export interface OutboundIntakeResponse {
 export interface OutboundUpdateResponse {
   order_id: number
   transfer_order_no: string
+  po_number: string | null
   status: string
 }
 
@@ -698,6 +700,7 @@ export interface OutboundContainerRead {
 export interface OutboundOrderRead {
   id: number
   transfer_order_no: string
+  po_number: string | null
   customer_name: string
   order_date: string | null
   priority: string
@@ -717,6 +720,7 @@ export interface OutboundOrderRead {
 export interface OutboundOrderListItem {
   id: number
   transfer_order_no: string
+  po_number: string | null
   customer_name: string
   order_date: string | null
   priority: string

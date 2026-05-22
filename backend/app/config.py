@@ -125,6 +125,17 @@ class Settings(BaseSettings):
     # logs errors and never fails the operator's finish flow.
     onedrive_scan_sheet_url: str = ""
 
+    # OneDrive outbound sync — mirror of the inbound webhooks, pointing at
+    # `Lime Outbound Data.xlsx`.
+    #   - onedrive_outbound_webhook_url: Logic App that APPENDs rows to
+    #     OutboundTable. Fired on every TO submit + update.
+    #   - onedrive_outbound_ops_url: Logic App + Office Script dispatcher
+    #     for delete-by-TO + clear-table operations (mirror of
+    #     onedrive_vendors_ops_url).
+    # Both optional. When unset, backend just skips the call with INFO log.
+    onedrive_outbound_webhook_url: str = ""
+    onedrive_outbound_ops_url: str = ""
+
     # ─── rclone-based OneDrive upload (fallback when Graph apps are blocked)
     # rclone is a third-party file sync tool with its own pre-registered
     # multi-tenant Microsoft app. When USC blocks ALL Microsoft first-party

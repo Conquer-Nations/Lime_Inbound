@@ -369,6 +369,9 @@ class OutboundOrder(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     transfer_order_no: Mapped[str] = mapped_column(String(80), unique=True, index=True)
+    # Internal Pickup Order # — auto-issued PO-YYYY-NNNN on submit. Stable
+    # across updates (mirrors how DO# is stable across WHPO amendments).
+    po_number: Mapped[str | None] = mapped_column(String(20), unique=True)
     customer_id: Mapped[int] = mapped_column(ForeignKey("customers.id"), index=True)
     order_date: Mapped[date | None] = mapped_column(Date)
     priority: Mapped[str] = mapped_column(String(32), default="normal")  # urgent / normal
