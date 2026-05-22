@@ -927,26 +927,569 @@ export function OutboundDriverInfoForm({ onBack }: { onBack: () => void }) {
   )
 }
 
-// ─── Update existing order (minimal — pulls + replaces lines) ──────────
+// ─── Update existing order ─────────────────────────────────────────────
 
 export function OutboundUpdateOrderForm({ onBack }: { onBack: () => void }) {
+  const company = useVendorCompany()
+  const [stage, setStage] = useState<'lookup' | 'edit'>('lookup')
+  const [tnoLookup, setTnoLookup] = useState('')
+  const [lookupBusy, setLookupBusy] = useState(false)
+  const [lookupError, setLookupError] = useState<string | null>(null)
+  const [original, setOriginal] = useState<OutboundOrderRead | null>(null)
+
+  // Editable form state — populated when an order loads
+  const [orderDate, setOrderDate] = useState('')
+  const [priority, setPriority] = useState<'normal' | 'urgent'>('normal')
+  const [memo, setMemo] = useState('')
+  const [shipFromName, setShipFromName] = useState('')
+  const [shipFromAddress, setShipFromAddress] = useState('')
+  const [shipToName, setShipToName] = useState('')
+  const [shipToAddress, setShipToAddress] = useState('')
+  const [notes, setNotes] = useState('')
+  const [lines, setLines] = useState<LineDraft[]>([])
+
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [done, setDone] = useState<{ tno: string; lines: number } | null>(null)
+
+  const locked = original
+    ? original.status !== 'open' && original.status !== 'picking'
+    : false
+  const hasPickedLines = original
+    ? original.lines.some((l) => l.picked_qty > 0)
+    : false
+  const hasContainers = original ? original.containers.length > 0 : false
+
+  async function lookup(e: React.FormEvent) {
+    e.preventDefault()
+    setLookupError(null)
+    if (!tnoLookup.trim()) {
+      setLookupError('Enter a Transfer Order #.')
+      return
+    }
+    setLookupBusy(true)
+    try {
+      const o = await api.viewOutboundOrder(tnoLookup.trim().toUpperCase())
+      setOriginal(o)
+      setOrderDate(o.order_date || '')
+      setPriority((o.priority as 'normal' | 'urgent') || 'normal')
+      setMemo(o.memo || '')
+      setShipFromName(o.ship_from_name || '')
+      setShipFromAddress(o.ship_from_address || '')
+      setShipToName(o.ship_to_name || '')
+      setShipToAddress(o.ship_to_address || '')
+      setNotes(o.notes || '')
+      setLines(
+        o.lines.map((l, i) => ({
+          id: crypto.randomUUID(),
+          line_no: i + 1,
+          sku: l.sku,
+          description: l.description || '',
+          order_qty: String(l.order_qty),
+          unit: l.unit || 'EA',
+          serial_specific: l.serial_specific,
+          serials: (l.serials_requested || []).join('\n'),
+        })),
+      )
+      setStage('edit')
+    } catch (e) {
+      setLookupError(
+        e instanceof ApiError
+          ? e.status === 404
+            ? `Transfer Order ${tnoLookup.trim()} not found.`
+            : e.detail
+          : String(e),
+      )
+    } finally {
+      setLookupBusy(false)
+    }
+  }
+
+  function addLine() {
+    setLines((prev) => [...prev, emptyLine(prev.length + 1)])
+  }
+  function removeLine(id: string) {
+    setLines((prev) =>
+      prev
+        .filter((l) => l.id !== id)
+        .map((l, i) => ({ ...l, line_no: i + 1 })),
+    )
+  }
+  function update<K extends keyof LineDraft>(
+    id: string,
+    k: K,
+    v: LineDraft[K],
+  ) {
+    setLines((prev) => prev.map((l) => (l.id === id ? { ...l, [k]: v } : l)))
+  }
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault()
+    if (!original) return
+    setError(null)
+    if (!shipToName.trim() && !shipToAddress.trim())
+      return setError('Ship-To destination is required.')
+    if (lines.length === 0) return setError('At least one line item is required.')
+    const cleanLines: OutboundLineInput[] = []
+    for (const l of lines) {
+      if (!l.sku.trim() || !l.order_qty.trim()) {
+        return setError(`Line ${l.line_no}: SKU and Order Qty are required.`)
+      }
+      const qty = parseInt(l.order_qty, 10)
+      if (Number.isNaN(qty) || qty < 1)
+        return setError(`Line ${l.line_no}: Order Qty must be a positive integer.`)
+      const serials = l.serial_specific
+        ? l.serials
+            .split(/[\s,;]+/)
+            .map((s) => s.trim())
+            .filter(Boolean)
+        : []
+      if (l.serial_specific && serials.length !== qty) {
+        return setError(
+          `Line ${l.line_no}: serial-specific requires exactly ${qty} serials (got ${serials.length}).`,
+        )
+      }
+      cleanLines.push({
+        line_no: l.line_no,
+        sku: l.sku.trim(),
+        description: l.description.trim() || null,
+        order_qty: qty,
+        unit: l.unit.trim() || 'EA',
+        serial_specific: l.serial_specific,
+        serials: l.serial_specific ? serials : null,
+      })
+    }
+
+    setBusy(true)
+    try {
+      const res = await api.updateOutboundOrder(original.transfer_order_no, {
+        customer: company,
+        order_date: orderDate || null,
+        priority,
+        memo: memo.trim() || null,
+        ship_from_name: shipFromName.trim() || null,
+        ship_from_address: shipFromAddress.trim() || null,
+        ship_to_name: shipToName.trim() || null,
+        ship_to_address: shipToAddress.trim() || null,
+        lines: cleanLines,
+        notes: notes.trim() || null,
+      })
+      setDone({ tno: res.transfer_order_no, lines: cleanLines.length })
+    } catch (e) {
+      setError(e instanceof ApiError ? e.detail : String(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  function backToLookup() {
+    setStage('lookup')
+    setOriginal(null)
+    setError(null)
+    setDone(null)
+  }
+
+  // ── Success view
+  if (done) {
+    return (
+      <OutboundShell breadcrumb="Outbound — order updated" onBack={onBack}>
+        <div className="max-w-2xl mx-auto px-4 sm:px-6 lg:px-8 py-16">
+          <div className="bg-white rounded-2xl border border-emerald-200 p-8 text-center">
+            <div className="inline-flex items-center gap-2 px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-800 text-[11px] font-bold uppercase tracking-wider mb-4">
+              Updated
+            </div>
+            <h2 className="text-3xl font-bold text-[#1B4676]">
+              Transfer Order amended
+            </h2>
+            <p className="mt-3 text-slate-600">
+              <span className="font-mono font-bold text-[#1B4676]">
+                {done.tno}
+              </span>{' '}
+              · {done.lines} line{done.lines === 1 ? '' : 's'}
+            </p>
+            <div className="mt-6 flex items-center justify-center gap-3">
+              <button
+                type="button"
+                onClick={backToLookup}
+                className="inline-flex items-center gap-2 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-800 font-semibold px-5 py-3 text-sm transition"
+              >
+                Amend another order
+              </button>
+              <button
+                type="button"
+                onClick={onBack}
+                className="inline-flex items-center gap-2 rounded-full bg-[#1B4676] hover:bg-[#224E72] text-white font-bold px-6 py-3 text-sm transition"
+              >
+                Back to outbound menu
+              </button>
+            </div>
+          </div>
+        </div>
+      </OutboundShell>
+    )
+  }
+
+  // ── Lookup stage
+  if (stage === 'lookup') {
+    return (
+      <OutboundShell breadcrumb="Outbound — update order" onBack={onBack}>
+        <div className="max-w-2xl mx-auto px-4 sm:px-6 lg:px-8 py-10 space-y-6">
+          <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-[#1B4676]">
+            Update outbound order
+          </h1>
+          <p className="text-sm text-slate-600">
+            Enter the Transfer Order # you want to amend. Edits are only
+            allowed while the order is{' '}
+            <span className="font-semibold text-[#1B4676]">open</span> or{' '}
+            <span className="font-semibold text-[#1B4676]">picking</span> — once
+            it ships, the record is locked.
+          </p>
+
+          <form onSubmit={lookup} className="space-y-4">
+            <Field label="Transfer Order #" required>
+              <Input
+                value={tnoLookup}
+                onChange={(v) => setTnoLookup(v.toUpperCase())}
+                placeholder="TO21787"
+              />
+            </Field>
+
+            {lookupError && (
+              <div role="alert" className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-md px-3 py-2.5">
+                {lookupError}
+              </div>
+            )}
+
+            <div className="flex items-center justify-end gap-3">
+              <button
+                type="button"
+                onClick={onBack}
+                disabled={lookupBusy}
+                className="inline-flex items-center gap-2 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-800 font-semibold px-5 py-3 text-sm transition disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={lookupBusy}
+                className="inline-flex items-center gap-2 rounded-full bg-[#1B4676] hover:bg-[#224E72] disabled:bg-slate-300 text-white font-bold px-6 py-3 text-sm transition"
+              >
+                {lookupBusy ? (
+                  <>
+                    <Spinner size={16} className="text-white" />
+                    <span>Looking up…</span>
+                  </>
+                ) : (
+                  <span>Look up order</span>
+                )}
+              </button>
+            </div>
+          </form>
+        </div>
+      </OutboundShell>
+    )
+  }
+
+  // ── Edit stage — original guaranteed non-null here
   return (
-    <OutboundShell breadcrumb="Outbound — update order" onBack={onBack}>
-      <div className="max-w-2xl mx-auto px-4 sm:px-6 lg:px-8 py-16">
-        <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-[#1B4676]">
-          Update outbound order
-        </h1>
-        <p className="mt-3 text-slate-600">
-          Coming in the next commit — same shape as the new-order form, pre-filled from an existing Transfer Order, with the option to amend lines before picking starts.
-        </p>
-        <button
-          type="button"
-          onClick={onBack}
-          className="mt-6 inline-flex items-center gap-2 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-800 font-semibold px-5 py-3 text-sm transition"
+    <OutboundShell breadcrumb={`Outbound — amend ${original!.transfer_order_no}`} onBack={onBack}>
+      <form onSubmit={submit} className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-10 space-y-6">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-[#1B4676]">
+              Amend Transfer Order{' '}
+              <span className="font-mono">{original!.transfer_order_no}</span>
+            </h1>
+            <p className="mt-1 text-sm text-slate-600">
+              Submitting on behalf of{' '}
+              <span className="font-semibold">{company || '(no company)'}</span>.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={backToLookup}
+            className="text-sm text-[#1B4676] hover:underline font-semibold"
+          >
+            ← Pick a different order
+          </button>
+        </div>
+
+        {/* Status / lock banner */}
+        <div
+          className={`rounded-lg border px-4 py-3 text-sm ${
+            locked
+              ? 'border-red-300 bg-red-50 text-red-800'
+              : hasContainers || hasPickedLines
+              ? 'border-amber-300 bg-amber-50 text-amber-900'
+              : 'border-emerald-300 bg-emerald-50 text-emerald-900'
+          }`}
         >
-          Back
-        </button>
-      </div>
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+            <span className="font-semibold">
+              Status:{' '}
+              <span className="font-mono uppercase tracking-wider">{original!.status}</span>
+            </span>
+            <span>·</span>
+            <span>{original!.lines.length} line{original!.lines.length === 1 ? '' : 's'}</span>
+            <span>·</span>
+            <span>
+              {original!.containers.length} container
+              {original!.containers.length === 1 ? '' : 's'}
+            </span>
+          </div>
+          {locked && (
+            <p className="mt-1">
+              This order is {original!.status} — amendments are blocked. Cancel
+              and re-submit a new TO if anything needs to change.
+            </p>
+          )}
+          {!locked && hasPickedLines && (
+            <p className="mt-1">
+              ⚠ Some lines have items already picked. Reducing quantities or
+              removing those lines may de-sync the pick. Talk to ops before
+              submitting.
+            </p>
+          )}
+          {!locked && !hasPickedLines && hasContainers && (
+            <p className="mt-1">
+              Containers are attached but no items picked yet — safe to amend.
+            </p>
+          )}
+        </div>
+
+        {/* Read-only containers list */}
+        {hasContainers && (
+          <Section title="Attached containers (read-only)">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-left text-[10.5px] uppercase tracking-wider text-slate-500 border-b border-slate-200">
+                  <th className="py-1.5 pr-3 font-semibold">Container #</th>
+                  <th className="py-1.5 pr-3 font-semibold">Type</th>
+                  <th className="py-1.5 pr-3 font-semibold">Carrier</th>
+                  <th className="py-1.5 pr-3 font-semibold">Driver</th>
+                  <th className="py-1.5 pr-3 font-semibold">Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {original!.containers.map((c) => (
+                  <tr key={c.id} className="border-b border-slate-100 last:border-0">
+                    <td className="py-1.5 pr-3 font-mono text-[#1B4676]">{c.container_no}</td>
+                    <td className="py-1.5 pr-3 uppercase text-xs text-slate-600">{c.container_type}</td>
+                    <td className="py-1.5 pr-3 text-slate-700">{c.carrier || '—'}</td>
+                    <td className="py-1.5 pr-3 text-slate-700">{c.driver_name || '—'}</td>
+                    <td className="py-1.5 pr-3 text-xs uppercase tracking-wider text-slate-600">
+                      {c.status}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <p className="mt-2 text-xs text-slate-500 italic">
+              Driver / truck info changes go through{' '}
+              <span className="font-semibold">Driver & truck info</span> on the
+              outbound menu, not here.
+            </p>
+          </Section>
+        )}
+
+        {/* Header */}
+        <Section title="Order header">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <Field label="Transfer Order #">
+              <Input value={original!.transfer_order_no} onChange={() => {}} />
+              <p className="mt-1 text-[11px] text-slate-500">TO # can't be changed.</p>
+            </Field>
+            <Field label="Order date">
+              <Input type="date" value={orderDate} onChange={setOrderDate} />
+            </Field>
+            <Field label="Priority">
+              <select
+                value={priority}
+                onChange={(e) => setPriority(e.target.value as 'normal' | 'urgent')}
+                disabled={locked}
+                className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm focus:border-[#0093D0] focus:ring-2 focus:ring-[#0093D0]/20 focus:outline-none disabled:bg-slate-50 disabled:text-slate-400"
+              >
+                <option value="normal">Normal</option>
+                <option value="urgent">Urgent</option>
+              </select>
+            </Field>
+            <Field label="Memo">
+              <Input value={memo} onChange={setMemo} />
+            </Field>
+          </div>
+        </Section>
+
+        <Section title="Ship from">
+          <div className="grid grid-cols-1 gap-3">
+            <Field label="Name">
+              <Input value={shipFromName} onChange={setShipFromName} />
+            </Field>
+            <Field label="Address">
+              <Textarea value={shipFromAddress} onChange={setShipFromAddress} rows={3} />
+            </Field>
+          </div>
+        </Section>
+
+        <Section title="Ship to">
+          <div className="grid grid-cols-1 gap-3">
+            <Field label="Destination name" required>
+              <Input value={shipToName} onChange={setShipToName} />
+            </Field>
+            <Field label="Address">
+              <Textarea value={shipToAddress} onChange={setShipToAddress} rows={3} />
+            </Field>
+          </div>
+        </Section>
+
+        <Section
+          title="Line items"
+          right={
+            <button
+              type="button"
+              onClick={addLine}
+              disabled={locked}
+              className="inline-flex items-center gap-1.5 rounded-md bg-[#1B4676] hover:bg-[#224E72] disabled:bg-slate-300 text-white text-xs font-semibold px-3 py-1.5 transition"
+            >
+              + Add line
+            </button>
+          }
+        >
+          <div className="space-y-4">
+            {lines.map((line) => {
+              const origLine = original!.lines[line.line_no - 1]
+              const pickedOnLine = origLine?.picked_qty ?? 0
+              return (
+                <div
+                  key={line.id}
+                  className="rounded-lg border border-slate-200 bg-slate-50/40 p-4 space-y-3"
+                >
+                  <div className="flex items-center justify-between">
+                    <div className="text-xs uppercase tracking-wider font-bold text-slate-500">
+                      Line {line.line_no}
+                      {pickedOnLine > 0 && (
+                        <span className="ml-2 text-amber-700 normal-case tracking-normal">
+                          ({pickedOnLine} already picked)
+                        </span>
+                      )}
+                    </div>
+                    {lines.length > 1 && (
+                      <button
+                        type="button"
+                        onClick={() => removeLine(line.id)}
+                        disabled={locked}
+                        className="text-xs text-red-600 hover:text-red-800 font-semibold disabled:text-slate-300"
+                      >
+                        Remove
+                      </button>
+                    )}
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-6 gap-3">
+                    <div className="sm:col-span-2">
+                      <Field label="SKU" required>
+                        <Input
+                          value={line.sku}
+                          onChange={(v) => update(line.id, 'sku', v)}
+                        />
+                      </Field>
+                    </div>
+                    <div className="sm:col-span-3">
+                      <Field label="Description">
+                        <Input
+                          value={line.description}
+                          onChange={(v) => update(line.id, 'description', v)}
+                        />
+                      </Field>
+                    </div>
+                    <div>
+                      <Field label="Qty" required>
+                        <Input
+                          type="number"
+                          value={line.order_qty}
+                          onChange={(v) => update(line.id, 'order_qty', v)}
+                          min={1}
+                        />
+                      </Field>
+                    </div>
+                    <div>
+                      <Field label="Unit">
+                        <Input
+                          value={line.unit}
+                          onChange={(v) => update(line.id, 'unit', v)}
+                        />
+                      </Field>
+                    </div>
+                    <div className="sm:col-span-5 flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        id={`ss-upd-${line.id}`}
+                        checked={line.serial_specific}
+                        onChange={(e) =>
+                          update(line.id, 'serial_specific', e.target.checked)
+                        }
+                        className="w-4 h-4"
+                      />
+                      <label
+                        htmlFor={`ss-upd-${line.id}`}
+                        className="text-sm text-slate-700"
+                      >
+                        Customer specified exact serials for this line
+                      </label>
+                    </div>
+                    {line.serial_specific && (
+                      <div className="sm:col-span-6">
+                        <Field
+                          label={`Serial numbers (${line.order_qty || 0} required, one per line or comma-separated)`}
+                        >
+                          <Textarea
+                            value={line.serials}
+                            onChange={(v) => update(line.id, 'serials', v)}
+                            rows={Math.min(8, Math.max(2, parseInt(line.order_qty || '1', 10)))}
+                          />
+                        </Field>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        </Section>
+
+        <Section title="Notes (optional)">
+          <Textarea value={notes} onChange={setNotes} rows={3} />
+        </Section>
+
+        {error && (
+          <div role="alert" className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-md px-3 py-2.5">
+            {error}
+          </div>
+        )}
+
+        <div className="flex items-center justify-end gap-3 pt-2">
+          <button
+            type="button"
+            onClick={backToLookup}
+            disabled={busy}
+            className="inline-flex items-center gap-2 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-800 font-semibold px-5 py-3 text-sm transition disabled:opacity-50"
+          >
+            Cancel
+          </button>
+          <button
+            type="submit"
+            disabled={busy || locked}
+            className="inline-flex items-center gap-2 rounded-full bg-[#1B4676] hover:bg-[#224E72] disabled:bg-slate-300 text-white font-bold px-6 py-3 text-sm transition shadow-[0_8px_24px_-4px_rgba(27,70,118,0.45)]"
+          >
+            {busy ? (
+              <>
+                <Spinner size={16} className="text-white" />
+                <span>Saving…</span>
+              </>
+            ) : (
+              <span>{locked ? 'Amendments locked' : 'Save changes'}</span>
+            )}
+          </button>
+        </div>
+      </form>
     </OutboundShell>
   )
 }
