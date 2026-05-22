@@ -473,6 +473,42 @@ export const api = {
     if (!res.ok) throw new ApiError(res.status, res.statusText)
     return res.blob()
   },
+
+  // ─── Outbound (Phase 2) ────────────────────────────────────────────
+  submitOutboundOrder: (payload: OutboundOrderSubmission) =>
+    request<OutboundIntakeResponse>('/vendor/outbound/order', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+
+  updateOutboundOrder: (
+    transfer_order_no: string,
+    payload: OutboundOrderUpdateRequest,
+  ) =>
+    request<OutboundUpdateResponse>(
+      `/vendor/outbound/order/${encodeURIComponent(transfer_order_no)}`,
+      { method: 'PUT', body: JSON.stringify(payload) },
+    ),
+
+  listMyOutboundOrders: () =>
+    request<OutboundOrderListResponse>('/vendor/outbound/orders'),
+
+  viewOutboundOrder: (transfer_order_no: string) =>
+    request<OutboundOrderRead>(
+      `/vendor/outbound/order/${encodeURIComponent(transfer_order_no)}`,
+    ),
+
+  attachOutboundContainer: (
+    transfer_order_no: string,
+    payload: OutboundContainerAttachRequest,
+  ) =>
+    request<OutboundContainerAttachResponse>(
+      `/vendor/outbound/order/${encodeURIComponent(transfer_order_no)}/container`,
+      { method: 'POST', body: JSON.stringify(payload) },
+    ),
+
+  outboundInventory: () =>
+    request<InventoryResponse>('/vendor/outbound/inventory'),
 }
 
 // ─── Scan-sheet types (mirror backend Pydantic schemas) ───────────────
@@ -545,6 +581,148 @@ export interface AuditSheetListResponse {
 export interface AuditSheetDetailResponse {
   header: ScanSheetHeader
   rows: ScanSheetRow[]
+}
+
+// ─── Outbound types (mirror backend schemas/outbound.py) ──────────────
+
+export interface OutboundLineInput {
+  line_no: number
+  sku: string
+  description?: string | null
+  order_qty: number
+  unit?: string
+  serial_specific: boolean
+  serials?: string[] | null
+  notes?: string | null
+}
+
+export interface OutboundOrderSubmission {
+  transfer_order_no: string
+  customer: string
+  order_date?: string | null
+  priority?: string
+  memo?: string | null
+  ship_from_name?: string | null
+  ship_from_address?: string | null
+  ship_to_name?: string | null
+  ship_to_address?: string | null
+  lines: OutboundLineInput[]
+  notes?: string | null
+}
+
+export interface OutboundOrderUpdateRequest {
+  customer: string
+  order_date?: string | null
+  priority?: string
+  memo?: string | null
+  ship_from_name?: string | null
+  ship_from_address?: string | null
+  ship_to_name?: string | null
+  ship_to_address?: string | null
+  lines: OutboundLineInput[]
+  notes?: string | null
+}
+
+export interface OutboundIntakeResponse {
+  order_id: number
+  transfer_order_no: string
+  status: string
+  submitted_at: string
+}
+
+export interface OutboundUpdateResponse {
+  order_id: number
+  transfer_order_no: string
+  status: string
+}
+
+export interface OutboundLineRead {
+  id: number
+  line_no: number
+  sku: string
+  description: string | null
+  order_qty: number
+  picked_qty: number
+  unit: string
+  serial_specific: boolean
+  serials_requested: string[]
+}
+
+export interface OutboundContainerRead {
+  id: number
+  container_no: string
+  container_type: string
+  status: string
+  driver_name: string | null
+  driver_license: string | null
+  driver_phone: string | null
+  truck_license_plate: string | null
+  carrier: string | null
+  insurance: string | null
+  bol_number: string | null
+  started_at: string | null
+  sealed_at: string | null
+}
+
+export interface OutboundOrderRead {
+  id: number
+  transfer_order_no: string
+  customer_name: string
+  order_date: string | null
+  priority: string
+  memo: string | null
+  ship_from_name: string | null
+  ship_from_address: string | null
+  ship_to_name: string | null
+  ship_to_address: string | null
+  status: string
+  submitted_at: string
+  submitted_by: string | null
+  notes: string | null
+  lines: OutboundLineRead[]
+  containers: OutboundContainerRead[]
+}
+
+export interface OutboundOrderListItem {
+  id: number
+  transfer_order_no: string
+  customer_name: string
+  order_date: string | null
+  priority: string
+  status: string
+  line_count: number
+  submitted_at: string
+}
+
+export interface OutboundOrderListResponse {
+  orders: OutboundOrderListItem[]
+}
+
+export interface OutboundContainerAttachRequest {
+  container_no: string
+  container_type?: 'bic' | 'truck'
+  driver_name?: string | null
+  driver_license?: string | null
+  driver_phone?: string | null
+  truck_license_plate?: string | null
+  insurance?: string | null
+  carrier?: string | null
+  bol_number?: string | null
+}
+
+export interface OutboundContainerAttachResponse {
+  container_id: number
+  container_no: string
+  status: string
+}
+
+export interface InventoryItem {
+  sku: string
+  available_qty: number
+}
+
+export interface InventoryResponse {
+  items: InventoryItem[]
 }
 
 export { ApiError }

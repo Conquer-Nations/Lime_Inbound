@@ -8,6 +8,13 @@ import { ContainerDocumentUploads } from '../components/ContainerDocumentUploads
 import type { VendorContainerSubmission, VendorLineItem, WHPOIntakeResponse } from '../types/api'
 import BrandMark from '../components/BrandMark'
 import { isAuditor } from './AuditPage'
+import {
+  OutboundModeChooser,
+  OutboundNewOrderForm,
+  OutboundDriverInfoForm,
+  OutboundUpdateOrderForm,
+  OutboundViewOrderForm,
+} from './OutboundComponents'
 
 const CUSTOMERS = ['Lime Mobility', 'Boviet Solar', 'Pan American Wire MFG', 'National Plastic']
 
@@ -177,12 +184,18 @@ function groupByWHPO(lines: ParsedLine[]): WHPOGroup[] {
 
 type Mode =
   | 'direction'       // top-level INBOUND vs OUTBOUND tile picker
-  | 'outbound_soon'   // outbound coming-soon placeholder
-  | 'choose'          // inbound 4-card workflow picker (existing)
+  | 'outbound_soon'   // (legacy) outbound coming-soon placeholder
+  | 'choose'          // inbound 4-card workflow picker
   | 'new'
   | 'driver'
   | 'update'
   | 'view'
+  // Outbound (Phase 2)
+  | 'out_choose'
+  | 'out_new'
+  | 'out_driver'
+  | 'out_update'
+  | 'out_view'
 
 export default function VendorIntakePage() {
   const { isLoggedIn, user: vendorUser, signOut: vendorSignOut } = useVendorAuth()
@@ -225,6 +238,27 @@ export default function VendorIntakePage() {
   }
   if (mode === 'view') {
     return <ViewShipmentForm onBack={() => setMode('choose')} />
+  }
+  // ── Outbound (Phase 2) ───────────────────────────────────────────
+  if (mode === 'out_choose') {
+    return (
+      <OutboundModeChooser
+        onChoose={setMode}
+        onBack={() => setMode('direction')}
+      />
+    )
+  }
+  if (mode === 'out_new') {
+    return <OutboundNewOrderForm onBack={() => setMode('out_choose')} />
+  }
+  if (mode === 'out_driver') {
+    return <OutboundDriverInfoForm onBack={() => setMode('out_choose')} />
+  }
+  if (mode === 'out_update') {
+    return <OutboundUpdateOrderForm onBack={() => setMode('out_choose')} />
+  }
+  if (mode === 'out_view') {
+    return <OutboundViewOrderForm onBack={() => setMode('out_choose')} />
   }
   // mode === 'new' falls through to the existing form below
 
@@ -1244,10 +1278,9 @@ function DirectionChooser({
           <DirectionTile
             label="OUTBOUND"
             tagline="Orders leaving the warehouse"
-            description="Place an outbound order against stock already on the floor. Coming soon — wiring up the matching engine + scan-out flow."
-            onClick={() => onChoose('outbound_soon')}
+            description="Place a Transfer Order, attach driver / truck info, update an existing order, or look up one already on file."
+            onClick={() => onChoose('out_choose')}
             accent="navy"
-            comingSoon
           />
         </div>
       </div>
