@@ -354,7 +354,7 @@ async def update_outbound_order(
             rows = outbound_sheet_sync.rows_from_order(
                 refreshed,
                 customer_name,
-                last_updated_iso=datetime.now(timezone.utc).isoformat(),
+                last_updated_at=datetime.now(timezone.utc),
             )
             await outbound_sheet_sync.append_outbound_rows(rows)
 
@@ -564,7 +564,7 @@ async def attach_outbound_container(
             rows = outbound_sheet_sync.rows_from_order(
                 refreshed,
                 customer_name,
-                last_updated_iso=datetime.now(timezone.utc).isoformat(),
+                last_updated_at=datetime.now(timezone.utc),
             )
             await outbound_sheet_sync.append_outbound_rows(rows)
 

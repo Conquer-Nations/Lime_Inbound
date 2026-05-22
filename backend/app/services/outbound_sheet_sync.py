@@ -17,13 +17,34 @@ from __future__ import annotations
 
 import json
 import logging
+from datetime import datetime, timezone
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import httpx
 
 from app.config import settings
 
 logger = logging.getLogger(__name__)
+
+# Conquer Nation HQ is in Vernon, CA, so we render every OutboundTable
+# timestamp in Pacific time. Excel still picks the value up as a real
+# datetime — Tiana (or anyone) can apply different cell formatting later.
+_LA_TZ = ZoneInfo("America/Los_Angeles")
+
+
+def _fmt_dt(dt: datetime | None) -> str:
+    """Render a datetime as 'MM/DD/YYYY h:MM AM/PM' in LA time. Returns
+    empty string for None. Excel auto-detects this format as a datetime
+    cell."""
+    if dt is None:
+        return ""
+    if dt.tzinfo is None:
+        # Naive datetime — assume UTC defensively.
+        dt = dt.replace(tzinfo=timezone.utc)
+    local = dt.astimezone(_LA_TZ)
+    # %-I / %-m strip leading zeros (Linux only — App Service is Linux).
+    return local.strftime("%-m/%-d/%Y %-I:%M %p")
 
 
 # Column order MUST match the OutboundTable headers in Excel and the
@@ -176,7 +197,6 @@ def _container_block(container) -> dict[str, Any]:
             "bol_number": "",
             "scheduled_arrival_at": "",
         }
-    sched = getattr(container, "scheduled_arrival_at", None)
     return {
         "container_no": container.container_no or "",
         "container_type": container.container_type or "",
@@ -187,14 +207,24 @@ def _container_block(container) -> dict[str, Any]:
         "carrier": container.carrier or "",
         "insurance": container.insurance or "",
         "bol_number": container.bol_number or "",
-        "scheduled_arrival_at": sched.isoformat() if sched else "",
+        "scheduled_arrival_at": _fmt_dt(
+            getattr(container, "scheduled_arrival_at", None)
+        ),
     }
 
 
-def rows_from_order(order, customer_name: str, last_updated_iso: str | None = None) -> list[dict[str, Any]]:
+def rows_from_order(
+    order,
+    customer_name: str,
+    last_updated_at: datetime | None = None,
+) -> list[dict[str, Any]]:
     """Materialise an OutboundOrder + its lines into Excel rows. Pure
     function — no DB access. Caller passes customer_name (already resolved)
     to avoid lazy-loading inside an async session.
+
+    All datetime fields are rendered as `MM/DD/YYYY h:MM AM/PM` in LA time
+    (Excel auto-detects as a real datetime cell). `order_date` stays
+    `MM/DD/YYYY` since it doesn't carry a time component.
 
     Layout:
       - If the order has N containers, emit N × M rows (one per container
@@ -207,7 +237,9 @@ def rows_from_order(order, customer_name: str, last_updated_iso: str | None = No
         "transfer_order_no": order.transfer_order_no,
         "po_number": order.po_number or "",
         "customer": customer_name,
-        "order_date": order.order_date.isoformat() if order.order_date else "",
+        "order_date": (
+            order.order_date.strftime("%-m/%-d/%Y") if order.order_date else ""
+        ),
         "priority": order.priority or "normal",
         "memo": order.memo or "",
         "ship_from_name": order.ship_from_name or "",
@@ -216,9 +248,9 @@ def rows_from_order(order, customer_name: str, last_updated_iso: str | None = No
         "ship_to_address": order.ship_to_address or "",
         "status": order.status or "open",
         "submitter_email": order.submitted_by or "",
-        "submitted_at": order.submitted_at.isoformat() if order.submitted_at else "",
+        "submitted_at": _fmt_dt(order.submitted_at),
         "notes": order.notes or "",
-        "last_updated_at": last_updated_iso or "",
+        "last_updated_at": _fmt_dt(last_updated_at),
     }
 
     # Containers list: real OutboundContainer rows OR a single None
