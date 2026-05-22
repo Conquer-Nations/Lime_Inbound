@@ -119,7 +119,10 @@ _DIGIT_TO_LETTER = {
 
 def _snap_to_bic(window: str) -> str | None:
     """Snap an 11-char A-Z0-9 window to (4 letters + 7 digits). Recovers from
-    OCR letter↔digit confusions (B↔8, O↔0, S↔5, Z↔2, etc.)."""
+    OCR letter→digit confusions in the trailing digit positions (B→8, O→0,
+    S→5, Z→2, etc.). The first 4 positions MUST already be letters in the
+    source text — we don't snap digits to letters because that creates many
+    spurious matches by sliding the window across the alphanumeric blob."""
     if len(window) != 11:
         return None
     out = ""
@@ -127,8 +130,6 @@ def _snap_to_bic(window: str) -> str | None:
         if i < 4:
             if ch.isalpha():
                 out += ch
-            elif ch in _DIGIT_TO_LETTER:
-                out += _DIGIT_TO_LETTER[ch]
             else:
                 return None
         else:
@@ -199,8 +200,16 @@ def extract_container_numbers(text: str) -> list[dict]:
                     }
                 )
 
-    # Prefer valid candidates first
-    out.sort(key=lambda x: (not x["check_digit_valid"], x["value"]))
+    # Rank: (1) check-digit-valid first, (2) direct OCR matches before
+    # fuzzy-corrected ones, (3) alphabetical as a stable tiebreaker.
+    _source_rank = {"ocr": 0, "ocr_check_digit_corrected": 1}
+    out.sort(
+        key=lambda x: (
+            not x["check_digit_valid"],
+            _source_rank.get(x["source"], 99),
+            x["value"],
+        )
+    )
     return out
 
 
