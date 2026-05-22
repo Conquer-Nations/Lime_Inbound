@@ -175,7 +175,14 @@ function groupByWHPO(lines: ParsedLine[]): WHPOGroup[] {
 
 // ─── Page ──────────────────────────────────────────────────────────────
 
-type Mode = 'choose' | 'new' | 'driver' | 'update' | 'view'
+type Mode =
+  | 'direction'       // top-level INBOUND vs OUTBOUND tile picker
+  | 'outbound_soon'   // outbound coming-soon placeholder
+  | 'choose'          // inbound 4-card workflow picker (existing)
+  | 'new'
+  | 'driver'
+  | 'update'
+  | 'view'
 
 export default function VendorIntakePage() {
   const { isLoggedIn, user: vendorUser, signOut: vendorSignOut } = useVendorAuth()
@@ -184,7 +191,7 @@ export default function VendorIntakePage() {
     vendorSignOut()
     nav('/vendor', { replace: true })
   }
-  const [mode, setMode] = useState<Mode>('choose')
+  const [mode, setMode] = useState<Mode>('direction')
   const [form, setForm] = useState<FormState>(EMPTY_FORM)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -201,8 +208,14 @@ export default function VendorIntakePage() {
     return <Navigate to="/vendor" replace />
   }
 
+  if (mode === 'direction') {
+    return <DirectionChooser onChoose={setMode} />
+  }
+  if (mode === 'outbound_soon') {
+    return <OutboundComingSoon onBack={() => setMode('direction')} />
+  }
   if (mode === 'choose') {
-    return <ModeChooser onChoose={setMode} />
+    return <ModeChooser onChoose={setMode} onBack={() => setMode('direction')} />
   }
   if (mode === 'driver') {
     return <DriverInfoForm onBack={() => setMode('choose')} />
@@ -793,8 +806,10 @@ function Select({
 
 function ModeChooser({
   onChoose,
+  onBack,
 }: {
   onChoose: (m: 'new' | 'driver' | 'update' | 'view') => void
+  onBack?: () => void
 }) {
   const { user, signOut } = useVendorAuth()
   const nav = useNavigate()
@@ -901,13 +916,23 @@ function ModeChooser({
         <ol className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3 flex items-center gap-2 text-sm text-slate-500">
           <li className="flex items-center gap-2">
             <LayoutDashboardIcon className="w-4 h-4 text-[#0093D0]" />
-            <span>Vendor Portal</span>
+            {onBack ? (
+              <button
+                type="button"
+                onClick={onBack}
+                className="hover:text-[#1B4676] hover:underline"
+              >
+                Vendor Portal
+              </button>
+            ) : (
+              <span>Vendor Portal</span>
+            )}
           </li>
           <li aria-hidden>
             <ChevronRightIcon className="w-4 h-4 text-slate-300" />
           </li>
           <li aria-current="page" className="text-[#1B4676] font-semibold">
-            Select intake type
+            Inbound — select workflow
           </li>
         </ol>
       </nav>
@@ -919,14 +944,14 @@ function ModeChooser({
           <div className="max-w-3xl">
             <div className="inline-flex items-center gap-2 px-2.5 py-1 rounded-full bg-[#0093D0]/10 border border-[#0093D0]/25 text-[#1B4676] text-[11px] font-semibold tracking-[0.14em] uppercase mb-5">
               <span className="w-1.5 h-1.5 rounded-full bg-[#0093D0]" aria-hidden />
-              Vendor intake
+              Inbound
             </div>
             <h1 className="text-3xl sm:text-4xl lg:text-[2.75rem] font-bold tracking-tight text-[#1B4676] leading-[1.1]">
               What are you submitting today?
             </h1>
             <p className="mt-4 text-base sm:text-lg text-slate-600 max-w-2xl leading-relaxed">
-              Pick the workflow that matches your delivery. Conquer Nation operations
-              is notified the moment your information lands in our system.
+              Pick the inbound workflow that matches your delivery. Conquer Nation
+              operations is notified the moment your information lands in our system.
             </p>
             <p className="mt-3 text-[11px] uppercase tracking-[0.22em] text-slate-400 font-semibold">
               Logistics Simplified.
@@ -1075,6 +1100,249 @@ function ModeChooser({
         </div>
       </footer>
     </div>
+  )
+}
+
+// ─── Direction chooser (INBOUND vs OUTBOUND) ──────────────────────────
+
+function VendorPortalShell({
+  breadcrumb,
+  children,
+  onBack,
+}: {
+  breadcrumb: string
+  children: React.ReactNode
+  onBack?: () => void
+}) {
+  const { user, signOut } = useVendorAuth()
+  const nav = useNavigate()
+  const handleSignOut = () => {
+    signOut()
+    nav('/vendor', { replace: true })
+  }
+  const initial = user?.full_name?.[0]?.toUpperCase() ?? '?'
+  return (
+    <div className="min-h-screen bg-slate-50 text-slate-800 antialiased relative overflow-hidden">
+      <div
+        aria-hidden
+        className="fixed inset-0 pointer-events-none"
+        style={{
+          backgroundImage:
+            'linear-gradient(rgba(27,70,118,0.05) 1px, transparent 1px), linear-gradient(90deg, rgba(27,70,118,0.05) 1px, transparent 1px)',
+          backgroundSize: '56px 56px',
+          maskImage: 'radial-gradient(ellipse at top, black 35%, transparent 80%)',
+          WebkitMaskImage: 'radial-gradient(ellipse at top, black 35%, transparent 80%)',
+        }}
+      />
+      <header
+        className="relative z-20 text-white"
+        style={{ background: 'linear-gradient(180deg, #0B1828 0%, #14233A 100%)' }}
+      >
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <BrandMark className="h-12 text-white" />
+            <div className="leading-tight">
+              <div className="text-base font-extrabold tracking-[0.16em]">CONQUER NATION</div>
+              <div className="text-[10px] uppercase tracking-[0.28em] text-[#0093D0]">
+                Vendor Portal
+              </div>
+            </div>
+          </div>
+          <div className="flex items-center gap-3 sm:gap-4">
+            {user && (
+              <div className="hidden md:flex items-center gap-2 text-sm text-white/95">
+                <span className="w-8 h-8 rounded-full bg-white/10 ring-1 ring-white/20 flex items-center justify-center text-xs font-bold uppercase">
+                  {initial}
+                </span>
+                <div className="leading-tight">
+                  <div className="text-sm font-semibold">{user.full_name}</div>
+                  <div className="text-[10.5px] uppercase tracking-wider text-white/60">
+                    {user.company}
+                  </div>
+                </div>
+              </div>
+            )}
+            <button
+              type="button"
+              onClick={handleSignOut}
+              className="inline-flex items-center gap-2 rounded-full bg-white/8 hover:bg-white/15 border border-white/15 hover:border-white/30 px-4 py-1.5 text-sm font-semibold transition focus:outline-none focus-visible:ring-2 focus-visible:ring-[#0093D0] focus-visible:ring-offset-2 focus-visible:ring-offset-[#0B1828]"
+            >
+              <LogOutIcon className="w-4 h-4" />
+              <span>Sign out</span>
+            </button>
+          </div>
+        </div>
+      </header>
+      <div
+        className="h-px"
+        style={{
+          background:
+            'linear-gradient(90deg, transparent, rgba(0,147,208,0.65) 30%, rgba(0,147,208,0.65) 70%, transparent)',
+        }}
+        aria-hidden
+      />
+      <nav aria-label="Breadcrumb" className="relative z-10 border-b border-slate-200 bg-white">
+        <ol className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3 flex items-center gap-2 text-sm text-slate-500">
+          <li className="flex items-center gap-2">
+            <LayoutDashboardIcon className="w-4 h-4 text-[#0093D0]" />
+            {onBack ? (
+              <button
+                type="button"
+                onClick={onBack}
+                className="hover:text-[#1B4676] hover:underline"
+              >
+                Vendor Portal
+              </button>
+            ) : (
+              <span>Vendor Portal</span>
+            )}
+          </li>
+          <li aria-hidden>
+            <ChevronRightIcon className="w-4 h-4 text-slate-300" />
+          </li>
+          <li aria-current="page" className="text-[#1B4676] font-semibold">
+            {breadcrumb}
+          </li>
+        </ol>
+      </nav>
+      <main className="relative z-10">{children}</main>
+    </div>
+  )
+}
+
+function DirectionChooser({
+  onChoose,
+}: {
+  onChoose: (m: Mode) => void
+}) {
+  return (
+    <VendorPortalShell breadcrumb="Choose direction">
+      <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-12 sm:py-16">
+        <div className="max-w-3xl">
+          <div className="inline-flex items-center gap-2 px-2.5 py-1 rounded-full bg-[#0093D0]/10 border border-[#0093D0]/25 text-[#1B4676] text-[11px] font-semibold tracking-[0.14em] uppercase mb-5">
+            <span className="w-1.5 h-1.5 rounded-full bg-[#0093D0]" aria-hidden />
+            Vendor Portal
+          </div>
+          <h1 className="text-3xl sm:text-4xl lg:text-[2.75rem] font-bold tracking-tight text-[#1B4676] leading-[1.1]">
+            What are you doing today?
+          </h1>
+          <p className="mt-4 text-base sm:text-lg text-slate-600 max-w-2xl leading-relaxed">
+            Pick the direction of your shipment. Inbound means a shipment is
+            arriving at Conquer Nation. Outbound means we ship items from the
+            warehouse to your customer.
+          </p>
+        </div>
+
+        <div className="mt-12 grid grid-cols-1 sm:grid-cols-2 gap-6">
+          <DirectionTile
+            label="INBOUND"
+            tagline="Shipments arriving at our dock"
+            description="Submit a new shipment, add driver / truck details, update an existing shipment, or look up a WHPO already on file."
+            onClick={() => onChoose('choose')}
+            accent="cyan"
+          />
+          <DirectionTile
+            label="OUTBOUND"
+            tagline="Orders leaving the warehouse"
+            description="Place an outbound order against stock already on the floor. Coming soon — wiring up the matching engine + scan-out flow."
+            onClick={() => onChoose('outbound_soon')}
+            accent="navy"
+            comingSoon
+          />
+        </div>
+      </div>
+    </VendorPortalShell>
+  )
+}
+
+function DirectionTile({
+  label,
+  tagline,
+  description,
+  onClick,
+  accent,
+  comingSoon,
+}: {
+  label: string
+  tagline: string
+  description: string
+  onClick: () => void
+  accent: 'cyan' | 'navy'
+  comingSoon?: boolean
+}) {
+  const accentColor = accent === 'cyan' ? '#0093D0' : '#1B4676'
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="group relative text-left bg-white rounded-2xl border border-slate-200 hover:border-[color:var(--accent)] hover:shadow-[0_24px_60px_-20px_rgba(15,23,42,0.18)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#0093D0] focus-visible:ring-offset-2 transition-all duration-200"
+      style={{
+        ['--accent' as any]: accentColor,
+        boxShadow:
+          '0 1px 2px 0 rgba(15,23,42,0.04), 0 12px 32px -10px rgba(15,23,42,0.10)',
+      }}
+    >
+      <div className="p-7 sm:p-9">
+        <div
+          className="text-[10.5px] uppercase tracking-[0.18em] font-bold mb-3"
+          style={{ color: accentColor }}
+        >
+          {tagline}
+        </div>
+        <div className="flex items-center gap-3 mb-4">
+          <h2
+            className="text-4xl sm:text-5xl font-extrabold tracking-tight"
+            style={{ color: accentColor }}
+          >
+            {label}
+          </h2>
+          {comingSoon && (
+            <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 text-[10px] font-bold uppercase tracking-wider">
+              Coming soon
+            </span>
+          )}
+        </div>
+        <p className="text-sm sm:text-base text-slate-600 leading-relaxed">
+          {description}
+        </p>
+        <div
+          className="mt-6 inline-flex items-center gap-2 text-sm font-semibold transition-transform group-hover:translate-x-1"
+          style={{ color: accentColor }}
+        >
+          <span>Continue</span>
+          <ChevronRightIcon className="w-4 h-4" />
+        </div>
+      </div>
+    </button>
+  )
+}
+
+function OutboundComingSoon({ onBack }: { onBack: () => void }) {
+  return (
+    <VendorPortalShell breadcrumb="Outbound — coming soon" onBack={onBack}>
+      <div className="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 py-16 text-center">
+        <div className="inline-flex items-center gap-2 px-2.5 py-1 rounded-full bg-amber-100 border border-amber-200 text-amber-800 text-[11px] font-semibold tracking-[0.14em] uppercase mb-6">
+          <span className="w-1.5 h-1.5 rounded-full bg-amber-500" aria-hidden />
+          Coming Soon
+        </div>
+        <h1 className="text-3xl sm:text-4xl font-bold tracking-tight text-[#1B4676] mb-5">
+          Outbound orders are on the way
+        </h1>
+        <p className="text-base sm:text-lg text-slate-600 leading-relaxed mb-8">
+          The same 4-step flow you use for inbound — New order, Driver & truck
+          info, Update order, View order — will be available here once the
+          matching engine and scan-out flow are wired. For now, use the
+          INBOUND side to submit and track shipments arriving at the dock.
+        </p>
+        <button
+          type="button"
+          onClick={onBack}
+          className="inline-flex items-center gap-2 rounded-full bg-[#1B4676] hover:bg-[#224E72] text-white font-bold px-6 py-3 text-sm transition shadow-[0_8px_24px_-4px_rgba(27,70,118,0.45)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#0093D0] focus-visible:ring-offset-2"
+        >
+          ← Back to direction picker
+        </button>
+      </div>
+    </VendorPortalShell>
   )
 }
 
