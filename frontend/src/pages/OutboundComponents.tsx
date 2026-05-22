@@ -3,6 +3,7 @@ import {
   api,
   ApiError,
   type DriverDocsExtraction,
+  type OutboundContainerRead,
   type OutboundLineInput,
   type OutboundOrderRead,
   type OutboundOrderListItem,
@@ -1352,6 +1353,23 @@ export function OutboundUpdateOrderForm({ onBack }: { onBack: () => void }) {
   const [shipToName, setShipToName] = useState('')
   const [shipToAddress, setShipToAddress] = useState('')
   const [notes, setNotes] = useState('')
+
+  // Picking-ticket re-upload (refreshes editable order fields)
+  const pickingFileRef = useRef<HTMLInputElement | null>(null)
+  const [pickingBusy, setPickingBusy] = useState(false)
+  const [pickingError, setPickingError] = useState<string | null>(null)
+  const [pickingExtract, setPickingExtract] = useState<PickingTicketExtraction | null>(
+    null,
+  )
+
+  // Inline container management — which container is being added/edited
+  // by container.id, or 'new' for the add-flow, or null.
+  const [editingContainerId, setEditingContainerId] = useState<number | 'new' | null>(
+    null,
+  )
+  // Bumped after a successful container save → triggers a re-fetch of
+  // `original` so the editable list reflects backend state.
+  const [containersRefreshTick, setContainersRefreshTick] = useState(0)
   const [lines, setLines] = useState<LineDraft[]>([])
 
   const [busy, setBusy] = useState(false)
@@ -1428,6 +1446,71 @@ export function OutboundUpdateOrderForm({ onBack }: { onBack: () => void }) {
   ) {
     setLines((prev) => prev.map((l) => (l.id === id ? { ...l, [k]: v } : l)))
   }
+
+  // Picking-ticket re-upload (Update flow) — same auto-fill behaviour
+  // as the New order form: never overwrites a value the vendor has
+  // already typed in the form.
+  async function handlePickingTicketReupload(file: File) {
+    setPickingError(null)
+    setPickingExtract(null)
+    setPickingBusy(true)
+    try {
+      const result = await api.extractPickingTicket(file)
+      setPickingExtract(result)
+      if (result.ship_to_name && !shipToName.trim()) setShipToName(result.ship_to_name)
+      if (result.ship_to_address && !shipToAddress.trim())
+        setShipToAddress(result.ship_to_address)
+      if (result.ship_from_name && !shipFromName.trim())
+        setShipFromName(result.ship_from_name)
+      if (result.ship_from_address && !shipFromAddress.trim())
+        setShipFromAddress(result.ship_from_address)
+      if (result.order_date && !orderDate) setOrderDate(result.order_date)
+      if (result.memo && !memo.trim()) setMemo(result.memo)
+      if (result.priority === 'urgent' || result.priority === 'normal') {
+        setPriority(result.priority)
+      }
+      // Lines auto-populate only when the form has no real lines yet.
+      const formIsEmpty =
+        lines.length === 0 ||
+        (lines.length === 1 && !lines[0].sku.trim() && !lines[0].order_qty.trim())
+      if (result.lines.length > 0 && formIsEmpty) {
+        setLines(
+          result.lines.map((l, i) => ({
+            id: crypto.randomUUID(),
+            line_no: i + 1,
+            sku: l.sku,
+            description: l.description || '',
+            order_qty: String(l.order_qty),
+            unit: l.unit || 'EA',
+            serial_specific: false,
+            serials: '',
+          })),
+        )
+      }
+    } catch (e) {
+      setPickingError(e instanceof ApiError ? e.detail : String(e))
+    } finally {
+      setPickingBusy(false)
+    }
+  }
+
+  // Re-fetch the order after a container save so the inline list updates.
+  useEffect(() => {
+    if (!original || containersRefreshTick === 0) return
+    let cancelled = false
+    ;(async () => {
+      try {
+        const fresh = await api.viewOutboundOrder(original.transfer_order_no)
+        if (!cancelled) setOriginal(fresh)
+      } catch {
+        /* leave the cached original — error already surfaced inline */
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [containersRefreshTick])
 
   async function submit(e: React.FormEvent) {
     e.preventDefault()
@@ -1681,39 +1764,74 @@ export function OutboundUpdateOrderForm({ onBack }: { onBack: () => void }) {
           )}
         </div>
 
-        {/* Read-only containers list */}
-        {hasContainers && (
-          <Section title="Attached containers (read-only)">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="text-left text-[10.5px] uppercase tracking-wider text-slate-500 border-b border-slate-200">
-                  <th className="py-1.5 pr-3 font-semibold">Container #</th>
-                  <th className="py-1.5 pr-3 font-semibold">Type</th>
-                  <th className="py-1.5 pr-3 font-semibold">Carrier</th>
-                  <th className="py-1.5 pr-3 font-semibold">Driver</th>
-                  <th className="py-1.5 pr-3 font-semibold">Status</th>
-                </tr>
-              </thead>
-              <tbody>
-                {original!.containers.map((c) => (
-                  <tr key={c.id} className="border-b border-slate-100 last:border-0">
-                    <td className="py-1.5 pr-3 font-mono text-[#1B4676]">{c.container_no}</td>
-                    <td className="py-1.5 pr-3 uppercase text-xs text-slate-600">{c.container_type}</td>
-                    <td className="py-1.5 pr-3 text-slate-700">{c.carrier || '—'}</td>
-                    <td className="py-1.5 pr-3 text-slate-700">{c.driver_name || '—'}</td>
-                    <td className="py-1.5 pr-3 text-xs uppercase tracking-wider text-slate-600">
-                      {c.status}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            <p className="mt-2 text-xs text-slate-500 italic">
-              Driver / truck info changes go through{' '}
-              <span className="font-semibold">Driver & truck info</span> on the
-              outbound menu, not here.
-            </p>
-          </Section>
+        {/* Picking-ticket re-upload — same pattern as New order. Auto-fills
+            the editable fields below from a fresh copy of the picking ticket. */}
+        <input
+          ref={pickingFileRef}
+          type="file"
+          accept="application/pdf,image/*"
+          className="hidden"
+          onChange={(e) => {
+            const f = e.target.files?.[0]
+            if (f) handlePickingTicketReupload(f)
+            if (pickingFileRef.current) pickingFileRef.current.value = ''
+          }}
+        />
+        <button
+          type="button"
+          onClick={() => pickingFileRef.current?.click()}
+          disabled={pickingBusy || locked}
+          className={`w-full rounded-2xl border-2 border-dashed transition p-5 text-left ${
+            pickingExtract && !pickingError
+              ? 'border-emerald-300 bg-emerald-50/40 hover:bg-emerald-50'
+              : 'border-[#1B4676]/30 bg-[#1B4676]/[0.03] hover:bg-[#1B4676]/[0.06]'
+          } disabled:opacity-60 disabled:cursor-not-allowed`}
+        >
+          <div className="flex items-start gap-4">
+            <div
+              className={`shrink-0 w-11 h-11 rounded-full grid place-items-center font-bold text-lg ${
+                pickingExtract && !pickingError
+                  ? 'bg-emerald-100 text-emerald-700'
+                  : 'bg-[#FED641] text-[#1B4676]'
+              }`}
+              aria-hidden
+            >
+              {pickingExtract && !pickingError ? '✓' : '↥'}
+            </div>
+            <div className="flex-1 min-w-0">
+              {pickingBusy ? (
+                <div className="flex items-center gap-2 text-[#1B4676] font-semibold">
+                  <Spinner size={16} className="text-[#1B4676]" />
+                  <span>Reading the picking ticket…</span>
+                </div>
+              ) : pickingExtract ? (
+                <>
+                  <div className="font-semibold text-emerald-900">
+                    Updated picking ticket read
+                  </div>
+                  <div className="mt-0.5 text-sm text-emerald-800">
+                    Anything you'd already changed below was preserved. Review and
+                    save when ready.
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="font-semibold text-[#1B4676]">
+                    Re-upload the picking ticket (PDF or image)
+                  </div>
+                  <div className="mt-0.5 text-sm text-slate-600">
+                    Optional — if the customer sent a corrected ticket, drop it
+                    here and we'll refresh the fields below.
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        </button>
+        {pickingError && (
+          <div role="alert" className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-md px-3 py-2.5">
+            Couldn't read the picking ticket: {pickingError}
+          </div>
         )}
 
         {/* Header */}
@@ -1881,6 +1999,61 @@ export function OutboundUpdateOrderForm({ onBack }: { onBack: () => void }) {
 
         <Section title="Notes (optional)">
           <Textarea value={notes} onChange={setNotes} rows={3} />
+        </Section>
+
+        {/* Editable containers section */}
+        <Section
+          title="Containers & driver info"
+          right={
+            !locked && editingContainerId !== 'new' && (
+              <button
+                type="button"
+                onClick={() => setEditingContainerId('new')}
+                className="inline-flex items-center gap-1.5 rounded-md bg-[#1B4676] hover:bg-[#224E72] text-white text-xs font-semibold px-3 py-1.5 transition"
+              >
+                + Add container
+              </button>
+            )
+          }
+        >
+          {original!.containers.length === 0 && editingContainerId !== 'new' && (
+            <p className="text-sm text-slate-500 italic">
+              No containers attached yet. Click <span className="font-semibold">+ Add container</span> to attach a BIC container or truck and its driver info.
+            </p>
+          )}
+
+          <div className="space-y-3">
+            {original!.containers.map((c) => (
+              <ContainerEditCard
+                key={c.id}
+                tno={original!.transfer_order_no}
+                container={c}
+                editing={editingContainerId === c.id}
+                locked={locked}
+                onStartEdit={() => setEditingContainerId(c.id)}
+                onCancel={() => setEditingContainerId(null)}
+                onSaved={() => {
+                  setEditingContainerId(null)
+                  setContainersRefreshTick((n) => n + 1)
+                }}
+              />
+            ))}
+
+            {editingContainerId === 'new' && (
+              <ContainerEditCard
+                tno={original!.transfer_order_no}
+                container={null}
+                editing
+                locked={locked}
+                onStartEdit={() => {}}
+                onCancel={() => setEditingContainerId(null)}
+                onSaved={() => {
+                  setEditingContainerId(null)
+                  setContainersRefreshTick((n) => n + 1)
+                }}
+              />
+            )}
+          </div>
         </Section>
 
         {error && (
@@ -2200,6 +2373,276 @@ function Stat({ k, v }: { k: string; v: string }) {
     <div>
       <dt className="text-[10px] uppercase tracking-wider font-semibold text-slate-500">{k}</dt>
       <dd className="mt-0.5 text-sm text-slate-800">{v}</dd>
+    </div>
+  )
+}
+
+// ─── Container edit card (used inside OutboundUpdateOrderForm) ─────────
+// One self-contained card per container — supports both "edit existing"
+// and "add new" modes through the same component. Each card has its own
+// driver-docs upload + save (calls api.attachOutboundContainer which is
+// upsert by container_no). On success the parent reloads `original`.
+
+function ContainerEditCard({
+  tno,
+  container,
+  editing,
+  locked,
+  onStartEdit,
+  onCancel,
+  onSaved,
+}: {
+  tno: string
+  container: OutboundContainerRead | null
+  editing: boolean
+  locked: boolean
+  onStartEdit: () => void
+  onCancel: () => void
+  onSaved: () => void
+}) {
+  const isNew = container === null
+  const [containerNo, setContainerNo] = useState(container?.container_no ?? '')
+  const [containerType, setContainerType] = useState<'bic' | 'truck'>(
+    (container?.container_type as 'bic' | 'truck') || 'bic',
+  )
+  const [driverName, setDriverName] = useState(container?.driver_name ?? '')
+  const [driverLicense, setDriverLicense] = useState(container?.driver_license ?? '')
+  const [driverPhone, setDriverPhone] = useState(container?.driver_phone ?? '')
+  const [truckPlate, setTruckPlate] = useState(container?.truck_license_plate ?? '')
+  const [carrier, setCarrier] = useState(container?.carrier ?? '')
+  const [insurance, setInsurance] = useState(container?.insurance ?? '')
+  const [bol, setBol] = useState(container?.bol_number ?? '')
+
+  const [docsBusy, setDocsBusy] = useState(false)
+  const [docsError, setDocsError] = useState<string | null>(null)
+  const [docsExtract, setDocsExtract] = useState<DriverDocsExtraction | null>(null)
+  const [docsCount, setDocsCount] = useState(0)
+  const docsFileRef = useRef<HTMLInputElement | null>(null)
+
+  const [saving, setSaving] = useState(false)
+  const [saveError, setSaveError] = useState<string | null>(null)
+
+  async function handleDocsUpload(files: File[]) {
+    if (!files.length) return
+    setDocsError(null)
+    setDocsCount(files.length)
+    setDocsBusy(true)
+    try {
+      const result = await api.extractDriverDocs(files)
+      setDocsExtract(result)
+      if (result.container_no && !containerNo.trim()) setContainerNo(result.container_no)
+      if (result.container_type && result.container_type !== containerType)
+        setContainerType(result.container_type)
+      if (result.driver_name && !driverName.trim()) setDriverName(result.driver_name)
+      if (result.driver_license && !driverLicense.trim())
+        setDriverLicense(result.driver_license)
+      if (result.driver_phone && !driverPhone.trim())
+        setDriverPhone(result.driver_phone)
+      if (result.truck_license_plate && !truckPlate.trim())
+        setTruckPlate(result.truck_license_plate)
+      if (result.carrier && !carrier.trim()) setCarrier(result.carrier)
+      if (result.insurance && !insurance.trim()) setInsurance(result.insurance)
+      if (result.bol_number && !bol.trim()) setBol(result.bol_number)
+    } catch (e) {
+      setDocsError(e instanceof ApiError ? e.detail : String(e))
+    } finally {
+      setDocsBusy(false)
+    }
+  }
+
+  async function save() {
+    setSaveError(null)
+    if (!containerNo.trim()) {
+      setSaveError('Container # is required.')
+      return
+    }
+    setSaving(true)
+    try {
+      await api.attachOutboundContainer(tno, {
+        container_no: containerNo.trim().toUpperCase(),
+        container_type: containerType,
+        driver_name: driverName.trim() || null,
+        driver_license: driverLicense.trim() || null,
+        driver_phone: driverPhone.trim() || null,
+        truck_license_plate: truckPlate.trim() || null,
+        carrier: carrier.trim() || null,
+        insurance: insurance.trim() || null,
+        bol_number: bol.trim() || null,
+      })
+      onSaved()
+    } catch (e) {
+      setSaveError(e instanceof ApiError ? e.detail : String(e))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  // Collapsed (read-only) summary mode for existing containers
+  if (!editing && container) {
+    return (
+      <div className="rounded-lg border border-slate-200 bg-white px-4 py-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
+        <div className="font-mono font-bold text-[#1B4676]">{container.container_no}</div>
+        <span className="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">
+          {container.container_type}
+        </span>
+        <span className="text-slate-600">·</span>
+        <span className="text-slate-700">{container.driver_name || 'no driver'}</span>
+        <span className="text-slate-600">·</span>
+        <span className="text-slate-700">{container.carrier || 'no carrier'}</span>
+        <span className="text-slate-600">·</span>
+        <span className="text-slate-500">BOL {container.bol_number || '—'}</span>
+        {!locked && (
+          <button
+            type="button"
+            onClick={onStartEdit}
+            className="ml-auto text-xs font-bold text-[#1B4676] hover:underline"
+          >
+            Edit driver info
+          </button>
+        )}
+      </div>
+    )
+  }
+
+  // Expanded edit mode (also used for "new" container)
+  return (
+    <div className="rounded-lg border-2 border-[#1B4676]/30 bg-[#1B4676]/[0.02] p-4 space-y-4">
+      <div className="flex items-center justify-between gap-3">
+        <div className="text-xs uppercase tracking-wider font-bold text-[#1B4676]">
+          {isNew ? 'New container' : `Editing ${container?.container_no}`}
+        </div>
+        <button
+          type="button"
+          onClick={onCancel}
+          className="text-xs text-slate-500 hover:text-slate-800 font-semibold"
+        >
+          Cancel
+        </button>
+      </div>
+
+      {/* Driver-docs upload */}
+      <input
+        ref={docsFileRef}
+        type="file"
+        accept="application/pdf,image/*"
+        multiple
+        className="hidden"
+        onChange={(e) => {
+          const list = e.target.files
+          if (list && list.length > 0) handleDocsUpload(Array.from(list))
+          if (docsFileRef.current) docsFileRef.current.value = ''
+        }}
+      />
+      <button
+        type="button"
+        onClick={() => docsFileRef.current?.click()}
+        disabled={docsBusy}
+        className={`w-full rounded-lg border-2 border-dashed transition px-4 py-3 text-left text-sm ${
+          docsExtract
+            ? 'border-emerald-300 bg-emerald-50/40 hover:bg-emerald-50'
+            : 'border-slate-300 bg-white hover:bg-slate-50'
+        } disabled:opacity-60`}
+      >
+        {docsBusy ? (
+          <span className="inline-flex items-center gap-2 text-[#1B4676] font-semibold">
+            <Spinner size={14} className="text-[#1B4676]" />
+            Reading {docsCount} document{docsCount === 1 ? '' : 's'}…
+          </span>
+        ) : docsExtract ? (
+          <span className="text-emerald-800">
+            <span className="font-semibold">✓ Documents read</span> ({docsCount} file{docsCount === 1 ? '' : 's'}) — fields prefilled below. Click to upload more.
+          </span>
+        ) : (
+          <span className="text-[#1B4676]">
+            <span className="font-semibold">↥ Upload driver photos</span>
+            <span className="text-slate-600"> — license / insurance / plate / BOL. Auto-fills the fields below.</span>
+          </span>
+        )}
+      </button>
+      {docsError && (
+        <div className="text-xs text-red-700 bg-red-50 border border-red-200 rounded-md px-3 py-2">
+          {docsError}
+        </div>
+      )}
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <CompactField label="Container type">
+          <select
+            value={containerType}
+            onChange={(e) => setContainerType(e.target.value as 'bic' | 'truck')}
+            className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm focus:border-[#0093D0] focus:ring-2 focus:ring-[#0093D0]/20 focus:outline-none"
+            disabled={!isNew}
+          >
+            <option value="bic">BIC container (ISO 6346)</option>
+            <option value="truck">Truck / trailer (license plate)</option>
+          </select>
+        </CompactField>
+        <CompactField
+          label={containerType === 'bic' ? 'Container #' : 'Truck plate'}
+          required
+        >
+          <Input
+            value={containerNo}
+            onChange={setContainerNo}
+            placeholder={containerType === 'bic' ? 'JZPU8021688' : '1ABC234'}
+          />
+        </CompactField>
+        <CompactField label="Driver name">
+          <Input value={driverName} onChange={setDriverName} />
+        </CompactField>
+        <CompactField label="Driver license #">
+          <Input value={driverLicense} onChange={setDriverLicense} />
+        </CompactField>
+        <CompactField label="Driver phone">
+          <Input value={driverPhone} onChange={setDriverPhone} />
+        </CompactField>
+        <CompactField label="Truck license plate">
+          <Input value={truckPlate} onChange={setTruckPlate} />
+        </CompactField>
+        <CompactField label="Carrier">
+          <Input value={carrier} onChange={setCarrier} />
+        </CompactField>
+        <CompactField label="Insurance">
+          <Input value={insurance} onChange={setInsurance} />
+        </CompactField>
+        <div className="sm:col-span-2">
+          <CompactField label="BOL # / Tracking #">
+            <Input value={bol} onChange={setBol} />
+          </CompactField>
+        </div>
+      </div>
+
+      {saveError && (
+        <div className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-md px-3 py-2">
+          {saveError}
+        </div>
+      )}
+
+      <div className="flex items-center justify-end gap-3">
+        <button
+          type="button"
+          onClick={onCancel}
+          disabled={saving}
+          className="inline-flex items-center gap-2 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-800 font-semibold px-4 py-2 text-sm transition disabled:opacity-50"
+        >
+          Cancel
+        </button>
+        <button
+          type="button"
+          onClick={save}
+          disabled={saving || locked}
+          className="inline-flex items-center gap-2 rounded-full bg-[#1B4676] hover:bg-[#224E72] disabled:bg-slate-300 text-white font-bold px-5 py-2 text-sm transition"
+        >
+          {saving ? (
+            <>
+              <Spinner size={14} className="text-white" />
+              <span>Saving…</span>
+            </>
+          ) : (
+            <span>{isNew ? 'Attach container' : 'Save driver info'}</span>
+          )}
+        </button>
+      </div>
     </div>
   )
 }
