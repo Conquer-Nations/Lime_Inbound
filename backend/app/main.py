@@ -10,6 +10,7 @@ from app.routers import audit as audit_router
 from app.routers import manager as manager_router
 from app.routers import ocr as ocr_router
 from app.routers import operator as operator_router
+from app.routers import outbound as outbound_router
 from app.routers import scan_sheet as scan_sheet_router
 from app.routers import vendor as vendor_router
 from app.routers import vendor_auth as vendor_auth_router
@@ -40,6 +41,8 @@ app.include_router(ocr_router.router)
 # Scan-sheet feature — endpoints respond 503 until SCAN_SHEETS_ENABLED=true.
 app.include_router(scan_sheet_router.router)
 app.include_router(audit_router.router)
+# Outbound (Phase 2) — vendor-facing /vendor/outbound endpoints
+app.include_router(outbound_router.router)
 
 
 @app.get("/health")
