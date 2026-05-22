@@ -359,6 +359,168 @@ class ActivityLog(Base):
     payload: Mapped[dict | None] = mapped_column(JSONB)
 
 
+# ─── Outbound (Phase 2) ─────────────────────────────────────────────────
+
+
+class OutboundOrder(Base):
+    """A customer Transfer Order / Picking Ticket. One per outbound shipment."""
+
+    __tablename__ = "outbound_orders"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    transfer_order_no: Mapped[str] = mapped_column(String(80), unique=True, index=True)
+    customer_id: Mapped[int] = mapped_column(ForeignKey("customers.id"), index=True)
+    order_date: Mapped[date | None] = mapped_column(Date)
+    priority: Mapped[str] = mapped_column(String(32), default="normal")  # urgent / normal
+    memo: Mapped[str | None] = mapped_column(Text)
+    ship_from_name: Mapped[str | None] = mapped_column(String(120))
+    ship_from_address: Mapped[str | None] = mapped_column(Text)
+    ship_to_name: Mapped[str | None] = mapped_column(String(255))
+    ship_to_address: Mapped[str | None] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(32), default="open", index=True)
+    # open → picking → shipped → cancelled
+    submitted_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    submitted_by: Mapped[str | None] = mapped_column(String(255))
+    notes: Mapped[str | None] = mapped_column(Text)
+
+    customer: Mapped[Customer] = relationship()
+    lines: Mapped[list[OutboundLine]] = relationship(
+        back_populates="order", cascade="all, delete-orphan"
+    )
+    containers: Mapped[list[OutboundContainer]] = relationship(
+        back_populates="order", cascade="all, delete-orphan"
+    )
+
+
+class OutboundLine(Base):
+    """One line on a Transfer Order — SKU + qty."""
+
+    __tablename__ = "outbound_lines"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    outbound_order_id: Mapped[int] = mapped_column(
+        ForeignKey("outbound_orders.id"), index=True
+    )
+    line_no: Mapped[int] = mapped_column(Integer, default=1)
+    sku_id: Mapped[int | None] = mapped_column(ForeignKey("skus.id"), index=True)
+    sku_raw: Mapped[str] = mapped_column(String(120))
+    description: Mapped[str | None] = mapped_column(Text)
+    order_qty: Mapped[int] = mapped_column(Integer)
+    unit: Mapped[str] = mapped_column(String(16), default="EA")
+    # When true, customer specified exact serials (see OutboundLineSerial).
+    # When false, operator picks any matching SKU from inventory (FIFO).
+    serial_specific: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    order: Mapped[OutboundOrder] = relationship(back_populates="lines")
+    sku: Mapped[SKU | None] = relationship()
+    serials: Mapped[list[OutboundLineSerial]] = relationship(
+        back_populates="line", cascade="all, delete-orphan"
+    )
+
+
+class OutboundLineSerial(Base):
+    """An exact serial the customer requested on an outbound line.
+    Only populated when OutboundLine.serial_specific is true."""
+
+    __tablename__ = "outbound_line_serials"
+    __table_args__ = (
+        UniqueConstraint(
+            "outbound_line_id", "serial_number", name="uq_outbound_line_serial"
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    outbound_line_id: Mapped[int] = mapped_column(
+        ForeignKey("outbound_lines.id"), index=True
+    )
+    serial_number: Mapped[str] = mapped_column(String(120), index=True)
+    status: Mapped[str] = mapped_column(String(16), default="requested")
+    # requested → picked → shipped → not_found
+
+    line: Mapped[OutboundLine] = relationship(back_populates="serials")
+
+
+class OutboundContainer(Base):
+    """A truck or BIC container being loaded for outbound shipment."""
+
+    __tablename__ = "outbound_containers"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    outbound_order_id: Mapped[int] = mapped_column(
+        ForeignKey("outbound_orders.id"), index=True
+    )
+    container_no: Mapped[str] = mapped_column(String(40), unique=True, index=True)
+    # type='bic' → ISO 6346 11-char code. type='truck' → license plate / trailer #.
+    container_type: Mapped[str] = mapped_column(String(16), default="bic")
+    status: Mapped[str] = mapped_column(String(32), default="open", index=True)
+    # open → loading → sealed → shipped
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    started_by: Mapped[str | None] = mapped_column(String(80))
+    sealed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    sealed_by: Mapped[str | None] = mapped_column(String(80))
+
+    # Driver / truck (parallel to inbound Container's driver fields)
+    driver_name: Mapped[str | None] = mapped_column(String(120))
+    driver_license: Mapped[str | None] = mapped_column(String(60))
+    driver_phone: Mapped[str | None] = mapped_column(String(40))
+    truck_license_plate: Mapped[str | None] = mapped_column(String(20))
+    insurance: Mapped[str | None] = mapped_column(Text)
+    carrier: Mapped[str | None] = mapped_column(String(120))
+    bol_number: Mapped[str | None] = mapped_column(String(80))
+
+    order: Mapped[OutboundOrder] = relationship(back_populates="containers")
+    scans: Mapped[list[OutboundScan]] = relationship(
+        back_populates="container", cascade="all, delete-orphan"
+    )
+
+
+class OutboundScan(Base):
+    """One item scanned OUT into an outbound container.
+    Holds a reference back to the inbound Scan for full traceability —
+    that's how we know which specific unit (and which inbound container)
+    each outbound item came from, and how the inventory query computes
+    'available stock' = inbound scans minus outbound scans."""
+
+    __tablename__ = "outbound_scans"
+    __table_args__ = (
+        UniqueConstraint(
+            "outbound_container_id",
+            "serial_number",
+            name="uq_outbound_container_serial",
+        ),
+        # A single inbound scan can only be shipped out once.
+        UniqueConstraint(
+            "inbound_scan_id", name="uq_outbound_scan_per_inbound"
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    outbound_container_id: Mapped[int] = mapped_column(
+        ForeignKey("outbound_containers.id"), index=True
+    )
+    outbound_line_id: Mapped[int | None] = mapped_column(
+        ForeignKey("outbound_lines.id"), index=True
+    )
+    inbound_scan_id: Mapped[int | None] = mapped_column(
+        ForeignKey("scans.id"), index=True
+    )
+    sku_id: Mapped[int | None] = mapped_column(ForeignKey("skus.id"))
+    serial_number: Mapped[str] = mapped_column(String(120), index=True)
+    imei: Mapped[str | None] = mapped_column(String(40))
+    picked_location: Mapped[str | None] = mapped_column(String(120))
+    scanned_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    scanned_by: Mapped[str] = mapped_column(String(80))
+    notes: Mapped[str | None] = mapped_column(Text)
+
+    container: Mapped[OutboundContainer] = relationship(back_populates="scans")
+    line: Mapped[OutboundLine | None] = relationship()
+    inbound_scan: Mapped[Scan | None] = relationship()
+
+
 __all__ = [
     "Customer",
     "SKU",
@@ -375,4 +537,10 @@ __all__ = [
     "Scan",
     "ExceptionRecord",
     "ActivityLog",
+    # Outbound (Phase 2)
+    "OutboundOrder",
+    "OutboundLine",
+    "OutboundLineSerial",
+    "OutboundContainer",
+    "OutboundScan",
 ]
