@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { Fragment, useEffect, useRef, useState, type ReactNode } from 'react'
 import {
   api,
   ApiError,
@@ -295,7 +295,6 @@ function emptyLine(line_no: number): LineDraft {
 
 export function OutboundNewOrderForm({ onBack }: { onBack: () => void }) {
   const company = useVendorCompany()
-  const [paste, setPaste] = useState('')
   const [tno, setTno] = useState('')
   const [orderDate, setOrderDate] = useState('')
   const [priority, setPriority] = useState<'normal' | 'urgent'>('normal')
@@ -311,9 +310,6 @@ export function OutboundNewOrderForm({ onBack }: { onBack: () => void }) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [done, setDone] = useState<{ tno: string; lines: number } | null>(null)
-
-  const parsed = paste.trim() ? parseOutboundPaste(paste) : { lines: [], orders: [] }
-  const parseErrors = parsed.lines.filter((l) => l.error)
 
   // Picking-ticket upload state
   const pickingFileRef = useRef<HTMLInputElement | null>(null)
@@ -369,28 +365,6 @@ export function OutboundNewOrderForm({ onBack }: { onBack: () => void }) {
     } finally {
       setPickingBusy(false)
     }
-  }
-
-  function applyOrder(order: ParsedOutboundOrder) {
-    setTno(order.transfer_order_no)
-    setShipToName(order.destination)
-    setLines(
-      order.lines.map((l, i) => ({
-        id: crypto.randomUUID(),
-        line_no: i + 1,
-        sku: l.sku,
-        description: l.product_type,
-        order_qty: String(l.qty),
-        unit: 'EA',
-        serial_specific: false,
-        serials: '',
-      })),
-    )
-    setError(null)
-    // Scroll to the order header so the user sees the prefilled fields
-    requestAnimationFrame(() => {
-      window.scrollTo({ top: 220, behavior: 'smooth' })
-    })
   }
 
   function addLine() {
@@ -501,360 +475,295 @@ export function OutboundNewOrderForm({ onBack }: { onBack: () => void }) {
     )
   }
 
+  const haveExtract = !!pickingExtract && !pickingError
+  const filledFields = haveExtract
+    ? [
+        pickingExtract?.transfer_order_no && 'TO#',
+        pickingExtract?.order_date && 'Date',
+        pickingExtract?.ship_to_name && 'Ship-to',
+        pickingExtract && pickingExtract.lines.length > 0 && `${pickingExtract.lines.length} line${pickingExtract.lines.length === 1 ? '' : 's'}`,
+      ].filter(Boolean)
+    : []
+
   return (
     <OutboundShell breadcrumb="Outbound — new order" onBack={onBack}>
-      <form onSubmit={submit} className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-10 space-y-6">
-        <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-[#1B4676]">
-          New outbound order
-        </h1>
-        <p className="text-sm text-slate-600">
-          Submitting on behalf of <span className="font-semibold">{company || '(no company)'}</span>.
-        </p>
+      <form onSubmit={submit} className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-10 space-y-6">
+        <div>
+          <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-[#1B4676]">
+            New outbound order
+          </h1>
+          <p className="mt-1 text-sm text-slate-600">
+            Submitting on behalf of{' '}
+            <span className="font-semibold">{company || '(no company)'}</span>.
+            Upload the picking ticket and we'll fill in the rest.
+          </p>
+        </div>
 
-        {/* Paste from email */}
-        <Section title="Paste from email">
-          <div>
-            <label className="block text-xs font-semibold text-[#1B4676] mb-1.5">
-              Paste one line per (Transfer Order × SKU)
-            </label>
-            <p className="text-xs text-slate-500 mb-2">
-              Format:&nbsp;
-              <code className="bg-slate-100 text-[#1B4676] px-1.5 py-0.5 rounded font-mono">
-                TO# - SKU - Product Type - Qty - Destination
-              </code>
-              &nbsp;— dash-separated, any spacing. Same TO# on multiple lines = one order.
-            </p>
-            <textarea
-              className="w-full border border-slate-300 rounded-md px-3 py-2 font-mono text-sm text-slate-800 placeholder:text-slate-400 focus:border-[#0093D0] focus:ring-2 focus:ring-[#0093D0]/20 focus:outline-none transition h-44"
-              placeholder={`TO21787 - LPN-001769 - Scooters - 3 units - Long Island City
-TO21788 - LPN-001770 - Batteries - 50 units - LA Hub
-TO21787 - LPN-001771 - Helmets - 25 units - Long Island City`}
-              value={paste}
-              onChange={(e) => setPaste(e.target.value)}
-              spellCheck={false}
-            />
+        {/* Hidden file input shared by the upload card + re-upload links */}
+        <input
+          ref={pickingFileRef}
+          type="file"
+          accept="application/pdf,image/*"
+          className="hidden"
+          onChange={(e) => {
+            const f = e.target.files?.[0]
+            if (f) handlePickingTicketUpload(f)
+            if (pickingFileRef.current) pickingFileRef.current.value = ''
+          }}
+        />
 
-            {(parsed.orders.length > 0 || parseErrors.length > 0) && (
-              <div className="mt-4 space-y-3">
-                {parseErrors.length > 0 && (
-                  <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2.5 text-sm">
-                    <div className="text-red-800 font-semibold mb-1">
-                      {parseErrors.length} line{parseErrors.length === 1 ? '' : 's'} couldn't be parsed:
-                    </div>
-                    <ul className="list-disc list-inside text-red-700 space-y-0.5">
-                      {parseErrors.slice(0, 5).map((l) => (
-                        <li key={l.line_idx}>
-                          Line {l.line_idx}: {l.error}
-                        </li>
-                      ))}
-                      {parseErrors.length > 5 && (
-                        <li className="text-red-600 italic">
-                          …and {parseErrors.length - 5} more
-                        </li>
-                      )}
-                    </ul>
-                  </div>
-                )}
-
-                {parsed.orders.map((o) => (
-                  <div
-                    key={o.transfer_order_no}
-                    className="rounded-lg border border-[#1B4676]/20 bg-[#1B4676]/[0.03] p-4"
-                  >
-                    <div className="flex items-start justify-between gap-3">
-                      <div>
-                        <div className="text-[11px] uppercase tracking-[0.14em] font-bold text-[#1B4676]">
-                          Transfer Order
-                        </div>
-                        <div className="font-mono font-bold text-[#1B4676] text-lg">
-                          {o.transfer_order_no}
-                        </div>
-                        <div className="text-sm text-slate-700 mt-0.5">
-                          → {o.destination}
-                        </div>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => applyOrder(o)}
-                        className="shrink-0 inline-flex items-center gap-1.5 rounded-md bg-[#FED641] hover:bg-[#E6C200] text-[#1B4676] text-xs font-bold px-3 py-1.5 transition"
-                      >
-                        Use this order
-                      </button>
-                    </div>
-                    {o.warning && (
-                      <div className="mt-2 text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded px-2 py-1">
-                        ⚠ {o.warning}
-                      </div>
-                    )}
-                    <table className="mt-3 w-full text-sm">
-                      <thead>
-                        <tr className="text-left text-[10.5px] uppercase tracking-wider text-slate-500 border-b border-slate-200">
-                          <th className="py-1.5 pr-3 font-semibold">Line</th>
-                          <th className="py-1.5 pr-3 font-semibold">SKU</th>
-                          <th className="py-1.5 pr-3 font-semibold">Product type</th>
-                          <th className="py-1.5 pr-3 font-semibold text-right">Qty</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {o.lines.map((l, i) => (
-                          <tr key={i} className="border-b border-slate-100 last:border-0">
-                            <td className="py-1.5 pr-3 text-slate-500">{i + 1}</td>
-                            <td className="py-1.5 pr-3 font-mono text-[#1B4676]">{l.sku}</td>
-                            <td className="py-1.5 pr-3 text-slate-700">{l.product_type}</td>
-                            <td className="py-1.5 pr-3 text-right font-semibold text-slate-800">
-                              {l.qty}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                ))}
-
-                {parsed.orders.length > 1 && (
-                  <p className="text-xs text-slate-500 italic">
-                    Multiple Transfer Orders detected. Click <span className="font-semibold">Use this order</span> on
-                    the one you want to submit first — submit it, then come back and submit the next.
-                  </p>
-                )}
-              </div>
-            )}
-          </div>
-        </Section>
-
-        {/* Header */}
-        <Section title="Order header">
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <Field label="Transfer Order #" required>
-              <Input value={tno} onChange={setTno} placeholder="TO21787" />
-            </Field>
-            <Field label="Order date">
-              <Input type="date" value={orderDate} onChange={setOrderDate} />
-            </Field>
-            <Field label="Priority">
-              <select
-                value={priority}
-                onChange={(e) => setPriority(e.target.value as 'normal' | 'urgent')}
-                className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm focus:border-[#0093D0] focus:ring-2 focus:ring-[#0093D0]/20 focus:outline-none"
-              >
-                <option value="normal">Normal</option>
-                <option value="urgent">Urgent</option>
-              </select>
-            </Field>
-            <Field label="Memo">
-              <Input value={memo} onChange={setMemo} placeholder="e.g., OD: Strategic Deployment" />
-            </Field>
-          </div>
-        </Section>
-
-        <Section title="Ship from">
-          <div className="grid grid-cols-1 gap-3">
-            <Field label="Name">
-              <Input value={shipFromName} onChange={setShipFromName} />
-            </Field>
-            <Field label="Address">
-              <Textarea value={shipFromAddress} onChange={setShipFromAddress} rows={3} />
-            </Field>
-          </div>
-        </Section>
-
-        <Section
-          title="Ship to"
-          right={
-            <div className="flex items-center gap-2">
-              <input
-                ref={pickingFileRef}
-                type="file"
-                accept="application/pdf,image/*"
-                className="hidden"
-                onChange={(e) => {
-                  const f = e.target.files?.[0]
-                  if (f) handlePickingTicketUpload(f)
-                  // Reset the input so the same file can be re-uploaded
-                  if (pickingFileRef.current) pickingFileRef.current.value = ''
-                }}
-              />
-              <button
-                type="button"
-                onClick={() => pickingFileRef.current?.click()}
-                disabled={pickingBusy}
-                className="inline-flex items-center gap-1.5 rounded-md bg-[#FED641] hover:bg-[#E6C200] disabled:bg-slate-200 disabled:text-slate-400 text-[#1B4676] text-xs font-bold px-3 py-1.5 transition"
-                title="Upload picking ticket (PDF or image) — fills Ship-to from the document"
-              >
-                {pickingBusy ? (
-                  <>
-                    <Spinner size={14} className="text-[#1B4676]" />
-                    <span>Reading…</span>
-                  </>
-                ) : (
-                  <span>↥ Upload picking ticket</span>
-                )}
-              </button>
-            </div>
-          }
+        {/* Picking-ticket upload card */}
+        <button
+          type="button"
+          onClick={() => pickingFileRef.current?.click()}
+          disabled={pickingBusy}
+          className={`w-full rounded-2xl border-2 border-dashed transition p-6 sm:p-8 text-left ${
+            haveExtract
+              ? 'border-emerald-300 bg-emerald-50/40 hover:bg-emerald-50'
+              : 'border-[#1B4676]/30 bg-[#1B4676]/[0.03] hover:bg-[#1B4676]/[0.06]'
+          } disabled:opacity-60 disabled:cursor-wait`}
         >
-          <div className="grid grid-cols-1 gap-3">
-            <Field label="Destination name" required>
-              <Input
-                value={shipToName}
-                onChange={setShipToName}
-                placeholder="OPS - US - NEW YORK - Long Island City"
-              />
-            </Field>
-            <Field label="Address" required>
-              <Textarea
-                value={shipToAddress}
-                onChange={setShipToAddress}
-                rows={3}
-                placeholder="48-29 31st Place&#10;Long Island City NY 11101&#10;United States"
-              />
-            </Field>
-
-            {/* Picking-ticket extraction status */}
-            {pickingError && (
-              <div role="alert" className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-md px-3 py-2.5">
-                Couldn't read{pickingFilename ? ` ${pickingFilename}` : ' the file'}: {pickingError}
-              </div>
-            )}
-            {pickingExtract && !pickingError && (
-              <div className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2.5 text-sm text-emerald-900">
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <div className="font-semibold">
-                      Picking ticket read{pickingFilename ? `: ${pickingFilename}` : ''}
-                    </div>
-                    <ul className="mt-1 text-xs text-emerald-800 space-y-0.5">
-                      {pickingExtract.transfer_order_no && (
-                        <li>· TO# <span className="font-mono">{pickingExtract.transfer_order_no}</span></li>
-                      )}
-                      {pickingExtract.ship_to_name && (
-                        <li>· Ship to: {pickingExtract.ship_to_name}</li>
-                      )}
-                      {pickingExtract.lines.length > 0 && (
-                        <li>
-                          · {pickingExtract.lines.length} line item
-                          {pickingExtract.lines.length === 1 ? '' : 's'} detected
-                        </li>
-                      )}
-                    </ul>
-                    <p className="mt-1.5 text-[11px] text-emerald-700 italic">
-                      Fields you'd already typed were preserved. Review and edit anything below before submitting.
-                    </p>
-                  </div>
+          <div className="flex items-start gap-4">
+            <div
+              className={`shrink-0 w-12 h-12 rounded-full grid place-items-center font-bold text-xl ${
+                haveExtract ? 'bg-emerald-100 text-emerald-700' : 'bg-[#FED641] text-[#1B4676]'
+              }`}
+              aria-hidden
+            >
+              {haveExtract ? '✓' : '↥'}
+            </div>
+            <div className="flex-1 min-w-0">
+              {pickingBusy ? (
+                <div className="flex items-center gap-2 text-[#1B4676] font-semibold">
+                  <Spinner size={16} className="text-[#1B4676]" />
+                  <span>Reading picking ticket…</span>
                 </div>
+              ) : haveExtract ? (
+                <>
+                  <div className="font-semibold text-emerald-900">
+                    Picking ticket read{pickingFilename ? `: ${pickingFilename}` : ''}
+                  </div>
+                  <div className="mt-0.5 text-sm text-emerald-800">
+                    {filledFields.length > 0
+                      ? `Filled: ${filledFields.join(' · ')}. Review below.`
+                      : 'No fields were extracted — fill in manually below.'}
+                  </div>
+                  <div className="mt-1 text-xs text-emerald-700 underline">
+                    Upload a different file
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="font-semibold text-[#1B4676]">
+                    Upload picking ticket (PDF or image)
+                  </div>
+                  <div className="mt-0.5 text-sm text-slate-600">
+                    We'll extract the TO#, ship-to address, and all line items.
+                    You can correct anything afterward.
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        </button>
+
+        {pickingError && (
+          <div role="alert" className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-md px-3 py-2.5">
+            Couldn't read{pickingFilename ? ` ${pickingFilename}` : ' the file'}: {pickingError}
+          </div>
+        )}
+
+        {/* Compact review/edit panel — every field is editable but visually
+            calm. Fields the extractor missed get an amber dot indicator. */}
+        <div className="rounded-xl border border-slate-200 bg-white p-5 sm:p-6 space-y-5">
+          <div className="grid grid-cols-1 sm:grid-cols-12 gap-4">
+            <div className="sm:col-span-4">
+              <CompactField label="Transfer Order #" required missing={haveExtract && !tno}>
+                <Input value={tno} onChange={setTno} placeholder="TO21787" />
+              </CompactField>
+            </div>
+            <div className="sm:col-span-4">
+              <CompactField label="Order date">
+                <Input type="date" value={orderDate} onChange={setOrderDate} />
+              </CompactField>
+            </div>
+            <div className="sm:col-span-4">
+              <CompactField label="Priority">
+                <select
+                  value={priority}
+                  onChange={(e) => setPriority(e.target.value as 'normal' | 'urgent')}
+                  className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm focus:border-[#0093D0] focus:ring-2 focus:ring-[#0093D0]/20 focus:outline-none"
+                >
+                  <option value="normal">Normal</option>
+                  <option value="urgent">Urgent</option>
+                </select>
+              </CompactField>
+            </div>
+            {(memo || haveExtract) && (
+              <div className="sm:col-span-12">
+                <CompactField label="Memo">
+                  <Input value={memo} onChange={setMemo} placeholder="e.g., OD: Strategic Deployment" />
+                </CompactField>
               </div>
             )}
           </div>
-        </Section>
 
+          <div className="grid grid-cols-1 sm:grid-cols-12 gap-4 pt-1 border-t border-slate-100">
+            <div className="sm:col-span-5">
+              <CompactField label="Ship to" required missing={haveExtract && !shipToName && !shipToAddress}>
+                <Input
+                  value={shipToName}
+                  onChange={setShipToName}
+                  placeholder="OPS - US - NEW YORK - Long Island City"
+                />
+              </CompactField>
+            </div>
+            <div className="sm:col-span-7">
+              <CompactField label="Address">
+                <Textarea
+                  value={shipToAddress}
+                  onChange={setShipToAddress}
+                  rows={2}
+                  placeholder="48-29 31st Place&#10;Long Island City NY 11101"
+                />
+              </CompactField>
+            </div>
+          </div>
+        </div>
+
+        {/* Line items — compact table */}
         <Section
-          title="Line items"
+          title="Lines"
           right={
             <button
               type="button"
               onClick={addLine}
-              className="inline-flex items-center gap-1.5 rounded-md bg-[#1B4676] hover:bg-[#224E72] text-white text-xs font-semibold px-3 py-1.5 transition"
+              className="inline-flex items-center gap-1 rounded-md bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold px-2.5 py-1 transition"
             >
-              + Add line
+              + Add
             </button>
           }
         >
-          <div className="space-y-4">
-            {lines.map((line) => (
-              <div
-                key={line.id}
-                className="rounded-lg border border-slate-200 bg-slate-50/40 p-4 space-y-3"
-              >
-                <div className="flex items-center justify-between">
-                  <div className="text-xs uppercase tracking-wider font-bold text-slate-500">
-                    Line {line.line_no}
-                  </div>
-                  {lines.length > 1 && (
-                    <button
-                      type="button"
-                      onClick={() => removeLine(line.id)}
-                      className="text-xs text-red-600 hover:text-red-800 font-semibold"
-                    >
-                      Remove
-                    </button>
-                  )}
-                </div>
-                <div className="grid grid-cols-1 sm:grid-cols-6 gap-3">
-                  <div className="sm:col-span-2">
-                    <Field label="SKU" required>
-                      <Input
-                        value={line.sku}
-                        onChange={(v) => update(line.id, 'sku', v)}
-                        placeholder="LPN-001769"
-                      />
-                    </Field>
-                  </div>
-                  <div className="sm:col-span-3">
-                    <Field label="Description">
-                      <Input
-                        value={line.description}
-                        onChange={(v) => update(line.id, 'description', v)}
-                        placeholder="Scooter Gen 4.1 US Version Without Battery"
-                      />
-                    </Field>
-                  </div>
-                  <div>
-                    <Field label="Qty" required>
-                      <Input
-                        type="number"
-                        value={line.order_qty}
-                        onChange={(v) => update(line.id, 'order_qty', v)}
-                        min={1}
-                      />
-                    </Field>
-                  </div>
-                  <div className="sm:col-span-1">
-                    <Field label="Unit">
-                      <Input
-                        value={line.unit}
-                        onChange={(v) => update(line.id, 'unit', v)}
-                        placeholder="EA"
-                      />
-                    </Field>
-                  </div>
-                  <div className="sm:col-span-5 flex items-center gap-2">
-                    <input
-                      type="checkbox"
-                      id={`ss-${line.id}`}
-                      checked={line.serial_specific}
-                      onChange={(e) =>
-                        update(line.id, 'serial_specific', e.target.checked)
-                      }
-                      className="w-4 h-4"
-                    />
-                    <label
-                      htmlFor={`ss-${line.id}`}
-                      className="text-sm text-slate-700"
-                    >
-                      Customer specified exact serials for this line
-                    </label>
-                  </div>
-                  {line.serial_specific && (
-                    <div className="sm:col-span-6">
-                      <Field label={`Serial numbers (${line.order_qty || 0} required, one per line or comma-separated)`}>
-                        <Textarea
-                          value={line.serials}
-                          onChange={(v) => update(line.id, 'serials', v)}
-                          rows={Math.min(8, Math.max(2, parseInt(line.order_qty || '1', 10)))}
-                          placeholder="ELHE5XD162603251598&#10;ELHE5XD162603251481&#10;..."
+          <div className="overflow-x-auto -mx-2 sm:mx-0">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-left text-[10.5px] uppercase tracking-wider text-slate-500 border-b border-slate-200">
+                  <th className="py-2 pl-2 pr-2 font-semibold w-10">#</th>
+                  <th className="py-2 pr-2 font-semibold">SKU</th>
+                  <th className="py-2 pr-2 font-semibold">Description</th>
+                  <th className="py-2 pr-2 font-semibold w-20 text-right">Qty</th>
+                  <th className="py-2 pr-2 font-semibold w-16">Unit</th>
+                  <th className="py-2 pr-2 font-semibold w-10" aria-label="actions" />
+                </tr>
+              </thead>
+              <tbody>
+                {lines.map((line) => (
+                  <Fragment key={line.id}>
+                    <tr className="border-b border-slate-100 align-top">
+                      <td className="py-2 pl-2 pr-2 text-slate-500 font-mono pt-3">{line.line_no}</td>
+                      <td className="py-2 pr-2">
+                        <Input
+                          value={line.sku}
+                          onChange={(v) => update(line.id, 'sku', v)}
+                          placeholder="LPN-001769"
                         />
-                      </Field>
-                    </div>
-                  )}
-                </div>
-              </div>
-            ))}
+                      </td>
+                      <td className="py-2 pr-2">
+                        <Input
+                          value={line.description}
+                          onChange={(v) => update(line.id, 'description', v)}
+                          placeholder="Scooter Gen 4.1"
+                        />
+                      </td>
+                      <td className="py-2 pr-2">
+                        <Input
+                          type="number"
+                          value={line.order_qty}
+                          onChange={(v) => update(line.id, 'order_qty', v)}
+                          min={1}
+                        />
+                      </td>
+                      <td className="py-2 pr-2">
+                        <Input
+                          value={line.unit}
+                          onChange={(v) => update(line.id, 'unit', v)}
+                          placeholder="EA"
+                        />
+                      </td>
+                      <td className="py-2 pr-2 pt-3">
+                        {lines.length > 1 && (
+                          <button
+                            type="button"
+                            onClick={() => removeLine(line.id)}
+                            className="text-red-600 hover:text-red-800 text-lg leading-none"
+                            aria-label={`Remove line ${line.line_no}`}
+                            title="Remove line"
+                          >
+                            ×
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                    <tr className="border-b border-slate-100">
+                      <td />
+                      <td colSpan={5} className="pb-3 pr-2">
+                        <label className="inline-flex items-center gap-2 text-xs text-slate-600">
+                          <input
+                            type="checkbox"
+                            checked={line.serial_specific}
+                            onChange={(e) =>
+                              update(line.id, 'serial_specific', e.target.checked)
+                            }
+                            className="w-3.5 h-3.5"
+                          />
+                          Customer specified exact serials
+                        </label>
+                        {line.serial_specific && (
+                          <Textarea
+                            value={line.serials}
+                            onChange={(v) => update(line.id, 'serials', v)}
+                            rows={Math.min(6, Math.max(2, parseInt(line.order_qty || '1', 10)))}
+                            placeholder={`${line.order_qty || '0'} serial${line.order_qty === '1' ? '' : 's'}, one per line`}
+                          />
+                        )}
+                      </td>
+                    </tr>
+                  </Fragment>
+                ))}
+              </tbody>
+            </table>
           </div>
         </Section>
 
+        {/* Notes — the one truly manual field */}
         <Section title="Notes (optional)">
-          <Textarea value={notes} onChange={setNotes} rows={3} placeholder="Anything else for ops..." />
+          <Textarea
+            value={notes}
+            onChange={setNotes}
+            rows={2}
+            placeholder="Anything else for ops…"
+          />
         </Section>
+
+        {/* Advanced: ship-from override (hidden behind disclosure — almost
+            always defaults to Conquer Nation HQ or auto-extracts). */}
+        <details className="text-sm">
+          <summary className="cursor-pointer text-slate-500 hover:text-[#1B4676] text-xs font-semibold uppercase tracking-wider">
+            Advanced: override ship-from
+          </summary>
+          <div className="mt-3 grid grid-cols-1 sm:grid-cols-12 gap-4">
+            <div className="sm:col-span-5">
+              <CompactField label="Ship-from name">
+                <Input value={shipFromName} onChange={setShipFromName} />
+              </CompactField>
+            </div>
+            <div className="sm:col-span-7">
+              <CompactField label="Ship-from address">
+                <Textarea value={shipFromAddress} onChange={setShipFromAddress} rows={2} />
+              </CompactField>
+            </div>
+          </div>
+        </details>
 
         {error && (
           <div role="alert" className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-md px-3 py-2.5">
@@ -888,6 +797,38 @@ TO21787 - LPN-001771 - Helmets - 25 units - Long Island City`}
         </div>
       </form>
     </OutboundShell>
+  )
+}
+
+function CompactField({
+  label,
+  required,
+  missing,
+  children,
+}: {
+  label: string
+  required?: boolean
+  missing?: boolean
+  children: ReactNode
+}) {
+  return (
+    <div>
+      <div className="flex items-center gap-1.5 mb-1">
+        <label className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+          {label}
+          {required && <span className="text-[#E6C200] ml-0.5">*</span>}
+        </label>
+        {missing && (
+          <span
+            className="text-[10px] font-bold uppercase tracking-wider text-amber-700 bg-amber-100 px-1.5 py-0.5 rounded"
+            title="The picking ticket didn't have this field — please fill it in."
+          >
+            needs you
+          </span>
+        )}
+      </div>
+      {children}
+    </div>
   )
 }
 
