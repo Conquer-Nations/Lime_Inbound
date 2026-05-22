@@ -19,7 +19,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models import (
     Container,
     ContainerLine,
+    Customer,
     DO,
+    OutboundLine,
     OutboundOrder,
     OutboundScan,
     SKU,
@@ -143,3 +145,104 @@ async def find_inbound_scan_fifo(
         .limit(1)
     )
     return await session.scalar(stmt)
+
+
+# ─── Per-container inventory dashboard ─────────────────────────────────
+
+
+async def list_container_inventory_for_company(
+    session: AsyncSession, company_name: str
+) -> list[dict]:
+    """Build the per-(container, sku) inventory summary for a company.
+
+    For each inbound container line we have:
+      inbound_qty  — ContainerLine.qty (manifest qty)
+      outbound_qty — sum of OutboundLine.order_qty across outbound lines
+                     whose source_container_no matches AND whose order
+                     is not cancelled
+      pending_qty  = inbound_qty - outbound_qty
+
+    Returns dicts ready for ContainerInventoryItem; order is most-recent
+    container first.
+    """
+    norm_co = company_name.strip().lower() if company_name else ""
+    if not norm_co:
+        return []
+
+    # 1. Inbound rows from the manifest. One row per (container, sku).
+    inbound_stmt = (
+        select(
+            Container.container_no,
+            ContainerLine.sku_raw,
+            ContainerLine.product_type,
+            func.sum(ContainerLine.qty),
+            func.max(DO.expected_arrival_date),
+        )
+        .join(DO, Container.do_id == DO.id)
+        .join(WHPO, DO.whpo_id == WHPO.id)
+        .join(Customer, WHPO.customer_id == Customer.id)
+        .join(ContainerLine, ContainerLine.container_id == Container.id)
+        .where(func.lower(Customer.name) == norm_co)
+        .group_by(
+            Container.container_no,
+            ContainerLine.sku_raw,
+            ContainerLine.product_type,
+        )
+        .order_by(func.max(DO.expected_arrival_date).desc().nullslast())
+    )
+    inbound_rows = (await session.execute(inbound_stmt)).all()
+
+    # 2. Outbound allocations from outbound_lines.source_container_no.
+    outbound_stmt = (
+        select(
+            OutboundLine.source_container_no,
+            OutboundLine.sku_raw,
+            func.sum(OutboundLine.order_qty),
+        )
+        .join(OutboundOrder, OutboundLine.outbound_order_id == OutboundOrder.id)
+        .join(Customer, OutboundOrder.customer_id == Customer.id)
+        .where(func.lower(Customer.name) == norm_co)
+        .where(OutboundLine.source_container_no.isnot(None))
+        .where(OutboundOrder.status != "cancelled")
+        .group_by(OutboundLine.source_container_no, OutboundLine.sku_raw)
+    )
+    outbound_rows = (await session.execute(outbound_stmt)).all()
+    outbound_map = {
+        (r[0], r[1]): int(r[2] or 0) for r in outbound_rows
+    }
+
+    # 3. Which TO #s have drawn from each container (informational).
+    allocations_stmt = (
+        select(
+            OutboundLine.source_container_no,
+            OutboundOrder.transfer_order_no,
+        )
+        .join(OutboundOrder, OutboundLine.outbound_order_id == OutboundOrder.id)
+        .join(Customer, OutboundOrder.customer_id == Customer.id)
+        .where(func.lower(Customer.name) == norm_co)
+        .where(OutboundLine.source_container_no.isnot(None))
+        .where(OutboundOrder.status != "cancelled")
+        .distinct()
+    )
+    allocations_rows = (await session.execute(allocations_stmt)).all()
+    allocations_map: dict[str, list[str]] = {}
+    for source_no, tno in allocations_rows:
+        allocations_map.setdefault(source_no, []).append(tno)
+
+    out: list[dict] = []
+    for container_no, sku_raw, ptype, qty, received in inbound_rows:
+        inbound_qty = int(qty or 0)
+        outbound_qty = outbound_map.get((container_no, sku_raw), 0)
+        out.append(
+            {
+                "container_no": container_no,
+                "sku": sku_raw or "",
+                "description": ptype or None,
+                "inbound_qty": inbound_qty,
+                "outbound_qty": outbound_qty,
+                "pending_qty": inbound_qty - outbound_qty,
+                "received_date": received,
+                "allocated_to": allocations_map.get(container_no, []),
+            }
+        )
+    return out

@@ -26,6 +26,8 @@ from app.models import (
     OutboundScan,
 )
 from app.schemas.outbound import (
+    ContainerInventoryItem,
+    ContainerInventoryResponse,
     InventoryItem,
     InventoryResponse,
     OutboundContainerAttachRequest,
@@ -88,6 +90,37 @@ async def _ensure_customer(session: AsyncSession, name: str) -> Customer:
     return customer
 
 
+def order_company_name(order: OutboundOrder) -> str:
+    """Best-effort customer name lookup that doesn't lazy-load. Returns
+    empty string if the customer relationship isn't already populated."""
+    try:
+        if order.customer is not None:
+            return order.customer.name or ""
+    except Exception:
+        pass
+    return ""
+
+
+async def _refresh_inventory_snapshot(
+    session: AsyncSession, company_name: str
+) -> None:
+    """Recompute the per-container inventory summary for a company and
+    push it to the ContainerInventory worksheet in OneDrive. Best-effort:
+    any failure is logged and swallowed so vendor flows never break."""
+    if not company_name:
+        return
+    try:
+        items = await outbound_service.list_container_inventory_for_company(
+            session, company_name
+        )
+        rows = outbound_sheet_sync.inventory_rows_from_items(company_name, items)
+        await outbound_sheet_sync.replace_container_inventory_for_company(
+            company_name, rows
+        )
+    except Exception as e:
+        logger.warning("Inventory snapshot refresh failed: %s", e)
+
+
 async def _load_order_for_vendor(
     session: AsyncSession, transfer_order_no: str, vendor: dict
 ) -> OutboundOrder:
@@ -123,6 +156,7 @@ def _line_to_read(line: OutboundLine, picked_qty: int = 0) -> OutboundLineRead:
         unit=line.unit,
         serial_specific=line.serial_specific,
         serials_requested=[s.serial_number for s in (line.serials or [])],
+        source_container_no=line.source_container_no,
     )
 
 
@@ -207,6 +241,7 @@ async def submit_outbound_order(
             order_qty=line_in.order_qty,
             unit=line_in.unit,
             serial_specific=line_in.serial_specific,
+            source_container_no=(line_in.source_container_no or None),
         )
         session.add(line)
         await session.flush()
@@ -252,6 +287,8 @@ async def submit_outbound_order(
     if refreshed is not None and outbound_sheet_sync.is_configured():
         rows = outbound_sheet_sync.rows_from_order(refreshed, customer.name)
         await outbound_sheet_sync.append_outbound_rows(rows)
+
+    await _refresh_inventory_snapshot(session, customer.name)
 
     return OutboundIntakeResponse(
         order_id=order.id,
@@ -307,6 +344,7 @@ async def update_outbound_order(
             order_qty=line_in.order_qty,
             unit=line_in.unit,
             serial_specific=line_in.serial_specific,
+            source_container_no=(line_in.source_container_no or None),
         )
         session.add(line)
         await session.flush()
@@ -357,6 +395,7 @@ async def update_outbound_order(
                 last_updated_at=datetime.now(timezone.utc),
             )
             await outbound_sheet_sync.append_outbound_rows(rows)
+        await _refresh_inventory_snapshot(session, order_company_name(order))
 
     return OutboundUpdateResponse(
         order_id=order.id,
@@ -567,6 +606,7 @@ async def attach_outbound_container(
                 last_updated_at=datetime.now(timezone.utc),
             )
             await outbound_sheet_sync.append_outbound_rows(rows)
+        await _refresh_inventory_snapshot(session, order_company_name(order))
 
     return OutboundContainerAttachResponse(
         container_id=c.id, container_no=c.container_no, status=c.status
@@ -591,4 +631,35 @@ async def list_inventory(
     )
     return InventoryResponse(
         items=[InventoryItem(sku=sku, available_qty=qty) for sku, qty in rows]
+    )
+
+
+@router.get(
+    "/container-inventory", response_model=ContainerInventoryResponse
+)
+async def container_inventory(
+    session: AsyncSession = Depends(get_session),
+    vendor: dict = Depends(current_vendor_required),
+):
+    """Per-(container, sku) inventory dashboard for the vendor's company.
+    Each row shows inbound (manifest) qty, outbound qty already allocated
+    to Transfer Orders, and pending (remaining) qty. Used by the New
+    outbound order form's source-container picker and the dashboard tile."""
+    company = (vendor.get("company") or "").strip()
+    if not company:
+        return ContainerInventoryResponse(
+            containers=[],
+            total_inbound=0,
+            total_outbound=0,
+            total_pending=0,
+        )
+    rows = await outbound_service.list_container_inventory_for_company(
+        session, company
+    )
+    items = [ContainerInventoryItem(**r) for r in rows]
+    return ContainerInventoryResponse(
+        containers=items,
+        total_inbound=sum(i.inbound_qty for i in items),
+        total_outbound=sum(i.outbound_qty for i in items),
+        total_pending=sum(i.pending_qty for i in items),
     )

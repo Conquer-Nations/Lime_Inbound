@@ -27,6 +27,8 @@ class OutboundLineInput(BaseModel):
     serial_specific: bool = False
     # Only used when serial_specific = True. Caller validates length matches qty.
     serials: list[str] | None = None
+    # Optional — vendor picks which inbound container this line draws from.
+    source_container_no: str | None = Field(default=None, max_length=40)
     notes: str | None = Field(default=None, max_length=400)
 
 
@@ -90,6 +92,7 @@ class OutboundLineRead(BaseModel):
     unit: str
     serial_specific: bool
     serials_requested: list[str] = []
+    source_container_no: str | None = None
 
 
 class OutboundContainerRead(BaseModel):
@@ -189,3 +192,30 @@ class InventoryItem(BaseModel):
 
 class InventoryResponse(BaseModel):
     items: list[InventoryItem]
+
+
+# ─── Per-container inventory dashboard ─────────────────────────────────
+
+
+class ContainerInventoryItem(BaseModel):
+    """One row of the vendor's inventory dashboard. Aggregates per-
+    (container, sku) so a multi-SKU container shows multiple rows."""
+
+    container_no: str
+    sku: str
+    description: str | None = None
+    inbound_qty: int
+    outbound_qty: int  # sum of OutboundLine.order_qty allocated to this container
+    pending_qty: int  # inbound_qty - outbound_qty
+    received_date: date | None = None
+    # TOs that have already drawn from this container — shown as a small
+    # list so the vendor can trace outbound allocations.
+    allocated_to: list[str] = []  # transfer_order_no values
+
+
+class ContainerInventoryResponse(BaseModel):
+    containers: list[ContainerInventoryItem]
+    # Top-level totals for the dashboard header.
+    total_inbound: int
+    total_outbound: int
+    total_pending: int

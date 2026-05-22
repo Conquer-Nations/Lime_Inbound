@@ -415,6 +415,11 @@ class OutboundLine(Base):
     # When true, customer specified exact serials (see OutboundLineSerial).
     # When false, operator picks any matching SKU from inventory (FIFO).
     serial_specific: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Which inbound container the vendor wants this line drawn from.
+    # Free-text string — references containers.container_no but no FK so
+    # outbound stays decoupled from physical container lifecycle. Used
+    # to compute per-container pending totals on the inventory dashboard.
+    source_container_no: Mapped[str | None] = mapped_column(String(40), index=True)
 
     order: Mapped[OutboundOrder] = relationship(back_populates="lines")
     sku: Mapped[SKU | None] = relationship()

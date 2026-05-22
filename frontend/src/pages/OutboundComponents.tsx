@@ -2,6 +2,8 @@ import { Fragment, useEffect, useRef, useState, type ReactNode } from 'react'
 import {
   api,
   ApiError,
+  type ContainerInventoryItem,
+  type ContainerInventoryResponse,
   type DriverDocsExtraction,
   type OutboundContainerRead,
   type OutboundLineInput,
@@ -27,7 +29,9 @@ export function OutboundModeChooser({
   onChoose,
   onBack,
 }: {
-  onChoose: (m: 'out_new' | 'out_driver' | 'out_update' | 'out_view') => void
+  onChoose: (
+    m: 'out_new' | 'out_driver' | 'out_update' | 'out_view' | 'out_inventory',
+  ) => void
   onBack: () => void
 }) {
   return (
@@ -53,12 +57,12 @@ export function OutboundModeChooser({
           </div>
 
           {/* Cards */}
-          <div className="mt-10 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5 items-stretch">
+          <div className="mt-10 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-5 items-stretch">
             <OutboundIntakeCard
               icon={<OutPackageIcon className="w-6 h-6" />}
               eyebrow="Order"
               title="New outbound order"
-              description="Submit a Transfer Order / Picking Ticket — destination, SKU lines, optional specific serials. Internal PO# is auto-issued."
+              description="Submit a Transfer Order / Picking Ticket. Pick the source container for each line; internal PO# is auto-issued."
               metaLeft={{ icon: <OutClockIcon className="w-3.5 h-3.5" />, label: '~2 min' }}
               metaRight={{ icon: <OutHashIcon className="w-3.5 h-3.5" />, label: 'TO #' }}
               ctaLabel="Start new order"
@@ -68,9 +72,9 @@ export function OutboundModeChooser({
               icon={<OutTruckIcon className="w-6 h-6" />}
               eyebrow="Driver"
               title="Driver & truck info"
-              description="Attach an outbound container (BIC or truck) and driver / carrier / insurance / BOL. Upload photos to auto-fill."
+              description="Attach a truck and the driver / carrier / insurance / BOL info to a TO. Upload photos to auto-fill."
               metaLeft={{ icon: <OutClockIcon className="w-3.5 h-3.5" />, label: '~1 min' }}
-              metaRight={{ icon: <OutContainerIcon className="w-3.5 h-3.5" />, label: 'Container #' }}
+              metaRight={{ icon: <OutContainerIcon className="w-3.5 h-3.5" />, label: 'Truck plate' }}
               ctaLabel="Add driver details"
               onClick={() => onChoose('out_driver')}
             />
@@ -93,6 +97,16 @@ export function OutboundModeChooser({
               metaRight={{ icon: <OutHashIcon className="w-3.5 h-3.5" />, label: 'TO #' }}
               ctaLabel="View order"
               onClick={() => onChoose('out_view')}
+            />
+            <OutboundIntakeCard
+              icon={<OutGridIcon className="w-6 h-6" />}
+              eyebrow="Inventory"
+              title="Container inventory"
+              description="See per-container inbound, outbound, and pending units across every TO you've placed. Live snapshot."
+              metaLeft={{ icon: <OutClockIcon className="w-3.5 h-3.5" />, label: 'Live' }}
+              metaRight={{ icon: <OutContainerIcon className="w-3.5 h-3.5" />, label: 'Per container' }}
+              ctaLabel="Open dashboard"
+              onClick={() => onChoose('out_inventory')}
             />
           </div>
 
@@ -330,6 +344,16 @@ function OutMailIcon({ className }: { className?: string }) {
     </OutIcon>
   )
 }
+function OutGridIcon({ className }: { className?: string }) {
+  return (
+    <OutIcon className={className}>
+      <rect width="7" height="7" x="3" y="3" rx="1" />
+      <rect width="7" height="7" x="14" y="3" rx="1" />
+      <rect width="7" height="7" x="14" y="14" rx="1" />
+      <rect width="7" height="7" x="3" y="14" rx="1" />
+    </OutIcon>
+  )
+}
 
 // ─── Shell + breadcrumb ────────────────────────────────────────────────
 
@@ -493,6 +517,7 @@ interface LineDraft {
   unit: string
   serial_specific: boolean
   serials: string
+  source_container_no: string
 }
 
 function emptyLine(line_no: number): LineDraft {
@@ -505,6 +530,7 @@ function emptyLine(line_no: number): LineDraft {
     unit: 'EA',
     serial_specific: false,
     serials: '',
+    source_container_no: '',
   }
 }
 
@@ -512,6 +538,21 @@ function emptyLine(line_no: number): LineDraft {
 
 export function OutboundNewOrderForm({ onBack }: { onBack: () => void }) {
   const company = useVendorCompany()
+  const [inventory, setInventory] = useState<ContainerInventoryItem[]>([])
+  useEffect(() => {
+    let cancelled = false
+    api
+      .outboundContainerInventory()
+      .then((r) => {
+        if (!cancelled) setInventory(r.containers)
+      })
+      .catch(() => {
+        /* dashboard data is best-effort here */
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
   const [tno, setTno] = useState('')
   const [orderDate, setOrderDate] = useState('')
   const [priority, setPriority] = useState<'normal' | 'urgent'>('normal')
@@ -574,6 +615,7 @@ export function OutboundNewOrderForm({ onBack }: { onBack: () => void }) {
             unit: l.unit || 'EA',
             serial_specific: false,
             serials: '',
+            source_container_no: '',
           })),
         )
       }
@@ -636,6 +678,7 @@ export function OutboundNewOrderForm({ onBack }: { onBack: () => void }) {
         unit: l.unit.trim() || 'EA',
         serial_specific: l.serial_specific,
         serials: l.serial_specific ? serials : null,
+        source_container_no: l.source_container_no.trim() || null,
       })
     }
 
@@ -932,7 +975,13 @@ export function OutboundNewOrderForm({ onBack }: { onBack: () => void }) {
                     </tr>
                     <tr className="border-b border-slate-100">
                       <td />
-                      <td colSpan={5} className="pb-3 pr-2">
+                      <td colSpan={5} className="pb-3 pr-2 space-y-2">
+                        <SourceContainerPicker
+                          inventory={inventory}
+                          sku={line.sku}
+                          value={line.source_container_no}
+                          onChange={(v) => update(line.id, 'source_container_no', v)}
+                        />
                         <label className="inline-flex items-center gap-2 text-xs text-slate-600">
                           <input
                             type="checkbox"
@@ -1341,6 +1390,19 @@ export function OutboundUpdateOrderForm({ onBack }: { onBack: () => void }) {
   const [lookupBusy, setLookupBusy] = useState(false)
   const [lookupError, setLookupError] = useState<string | null>(null)
   const [original, setOriginal] = useState<OutboundOrderRead | null>(null)
+  const [inventory, setInventory] = useState<ContainerInventoryItem[]>([])
+  useEffect(() => {
+    let cancelled = false
+    api
+      .outboundContainerInventory()
+      .then((r) => {
+        if (!cancelled) setInventory(r.containers)
+      })
+      .catch(() => {})
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   // Editable form state — populated when an order loads
   const [orderDate, setOrderDate] = useState('')
@@ -1411,6 +1473,7 @@ export function OutboundUpdateOrderForm({ onBack }: { onBack: () => void }) {
           unit: l.unit || 'EA',
           serial_specific: l.serial_specific,
           serials: (l.serials_requested || []).join('\n'),
+          source_container_no: l.source_container_no || '',
         })),
       )
       setStage('edit')
@@ -1482,6 +1545,7 @@ export function OutboundUpdateOrderForm({ onBack }: { onBack: () => void }) {
             unit: l.unit || 'EA',
             serial_specific: false,
             serials: '',
+            source_container_no: '',
           })),
         )
       }
@@ -1544,6 +1608,7 @@ export function OutboundUpdateOrderForm({ onBack }: { onBack: () => void }) {
         unit: l.unit.trim() || 'EA',
         serial_specific: l.serial_specific,
         serials: l.serial_specific ? serials : null,
+        source_container_no: l.source_container_no.trim() || null,
       })
     }
 
@@ -1957,6 +2022,14 @@ export function OutboundUpdateOrderForm({ onBack }: { onBack: () => void }) {
                           onChange={(v) => update(line.id, 'unit', v)}
                         />
                       </Field>
+                    </div>
+                    <div className="sm:col-span-6">
+                      <SourceContainerPicker
+                        inventory={inventory}
+                        sku={line.sku}
+                        value={line.source_container_no}
+                        onChange={(v) => update(line.id, 'source_container_no', v)}
+                      />
                     </div>
                     <div className="sm:col-span-5 flex items-center gap-2">
                       <input
@@ -2648,6 +2721,237 @@ function ContainerEditCard({
           )}
         </button>
       </div>
+    </div>
+  )
+}
+
+// ─── Source container picker ──────────────────────────────────────────
+// Dropdown of the vendor's inbound containers, filtered (best-effort) by
+// SKU. Shows "CONTAINER — SKU (N available)" so the vendor can pick.
+
+function SourceContainerPicker({
+  inventory,
+  sku,
+  value,
+  onChange,
+}: {
+  inventory: ContainerInventoryItem[]
+  sku: string
+  value: string
+  onChange: (v: string) => void
+}) {
+  const cleanSku = sku.trim().toUpperCase()
+  const matches = cleanSku
+    ? inventory.filter((c) => (c.sku || '').toUpperCase() === cleanSku)
+    : []
+  const fallback = inventory.filter((c) => c.pending_qty > 0)
+  // If we have SKU-matched containers, prefer those; otherwise show all
+  // containers with stock so the vendor can still pick something.
+  const options = matches.length > 0 ? matches : fallback
+  return (
+    <div>
+      <label className="block text-[11px] font-semibold uppercase tracking-wider text-slate-500 mb-1">
+        From inbound container
+      </label>
+      <select
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm focus:border-[#0093D0] focus:ring-2 focus:ring-[#0093D0]/20 focus:outline-none"
+      >
+        <option value="">— pick a container —</option>
+        {value && !options.some((c) => c.container_no === value) && (
+          /* keep currently-selected even if it no longer matches the filter */
+          <option value={value}>{value} (selected)</option>
+        )}
+        {options.map((c) => (
+          <option key={`${c.container_no}|${c.sku}`} value={c.container_no}>
+            {c.container_no} — {c.sku} ({c.pending_qty} pending / {c.inbound_qty} total)
+          </option>
+        ))}
+      </select>
+      {matches.length === 0 && cleanSku && (
+        <p className="mt-1 text-[11px] text-amber-700">
+          No inbound containers found for SKU {cleanSku}. Pick any container with stock or leave blank.
+        </p>
+      )}
+    </div>
+  )
+}
+
+// ─── Container inventory dashboard ────────────────────────────────────
+
+export function OutboundInventoryDashboard({ onBack }: { onBack: () => void }) {
+  const [busy, setBusy] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [data, setData] = useState<ContainerInventoryResponse | null>(null)
+  const [refreshTick, setRefreshTick] = useState(0)
+
+  useEffect(() => {
+    let cancelled = false
+    setBusy(true)
+    setError(null)
+    api
+      .outboundContainerInventory()
+      .then((r) => {
+        if (!cancelled) setData(r)
+      })
+      .catch((e) => {
+        if (!cancelled) {
+          setError(e instanceof ApiError ? e.detail : String(e))
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setBusy(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [refreshTick])
+
+  return (
+    <OutboundShell breadcrumb="Outbound — container inventory" onBack={onBack}>
+      <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-10 space-y-6">
+        <div className="flex flex-wrap items-end justify-between gap-3">
+          <div>
+            <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-[#1B4676]">
+              Container inventory
+            </h1>
+            <p className="mt-1 text-sm text-slate-600 max-w-2xl">
+              Per-container snapshot of what you have on hand, what's been
+              allocated to outbound Transfer Orders, and what's still pending.
+              <span className="font-semibold"> Pending = Inbound − Outbound.</span>
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setRefreshTick((n) => n + 1)}
+            disabled={busy}
+            className="inline-flex items-center gap-1.5 rounded-md bg-slate-100 hover:bg-slate-200 disabled:bg-slate-50 text-slate-800 text-xs font-semibold px-3 py-1.5 transition"
+          >
+            {busy ? 'Refreshing…' : '↻ Refresh'}
+          </button>
+        </div>
+
+        {/* Summary tiles */}
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          <SummaryTile
+            label="Inbound (total)"
+            value={data?.total_inbound ?? 0}
+            tone="slate"
+          />
+          <SummaryTile
+            label="Outbound (allocated)"
+            value={data?.total_outbound ?? 0}
+            tone="navy"
+          />
+          <SummaryTile
+            label="Pending"
+            value={data?.total_pending ?? 0}
+            tone="yellow"
+          />
+        </div>
+
+        {error && (
+          <div role="alert" className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-md px-3 py-2.5">
+            {error}
+          </div>
+        )}
+
+        {!busy && data && data.containers.length === 0 && (
+          <div className="rounded-xl border border-slate-200 bg-white p-8 text-center text-sm text-slate-500">
+            No inbound containers on file yet. Once your inbound shipments
+            land and are scanned, they'll appear here.
+          </div>
+        )}
+
+        {data && data.containers.length > 0 && (
+          <div className="rounded-xl border border-slate-200 bg-white overflow-hidden">
+            <table className="w-full text-sm">
+              <thead className="bg-[#0B1828] text-white text-[10.5px] uppercase tracking-wider">
+                <tr>
+                  <th className="text-left px-3 py-2 font-semibold">Container #</th>
+                  <th className="text-left px-3 py-2 font-semibold">SKU</th>
+                  <th className="text-left px-3 py-2 font-semibold">Description</th>
+                  <th className="text-right px-3 py-2 font-semibold">Inbound</th>
+                  <th className="text-right px-3 py-2 font-semibold">Outbound</th>
+                  <th className="text-right px-3 py-2 font-semibold">Pending</th>
+                  <th className="text-left px-3 py-2 font-semibold">Allocated to</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.containers.map((c, i) => (
+                  <tr
+                    key={`${c.container_no}|${c.sku}|${i}`}
+                    className="border-t border-slate-100 hover:bg-slate-50/50"
+                  >
+                    <td className="px-3 py-2 font-mono font-bold text-[#1B4676]">
+                      {c.container_no}
+                    </td>
+                    <td className="px-3 py-2 font-mono text-slate-700">{c.sku}</td>
+                    <td className="px-3 py-2 text-slate-600">
+                      {c.description || '—'}
+                    </td>
+                    <td className="px-3 py-2 text-right font-mono text-slate-800">
+                      {c.inbound_qty}
+                    </td>
+                    <td className="px-3 py-2 text-right font-mono text-slate-800">
+                      {c.outbound_qty}
+                    </td>
+                    <td
+                      className={`px-3 py-2 text-right font-mono font-bold ${
+                        c.pending_qty <= 0
+                          ? 'text-slate-400'
+                          : c.pending_qty < 5
+                          ? 'text-amber-700'
+                          : 'text-emerald-700'
+                      }`}
+                    >
+                      {c.pending_qty}
+                    </td>
+                    <td className="px-3 py-2 text-xs text-slate-600">
+                      {c.allocated_to.length === 0
+                        ? '—'
+                        : c.allocated_to.map((t) => (
+                            <span
+                              key={t}
+                              className="inline-block font-mono mr-1.5 px-1.5 py-0.5 rounded bg-[#1B4676]/10 text-[#1B4676]"
+                            >
+                              {t}
+                            </span>
+                          ))}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    </OutboundShell>
+  )
+}
+
+function SummaryTile({
+  label,
+  value,
+  tone,
+}: {
+  label: string
+  value: number
+  tone: 'slate' | 'navy' | 'yellow'
+}) {
+  const bg =
+    tone === 'navy'
+      ? 'bg-[#1B4676] text-white'
+      : tone === 'yellow'
+      ? 'bg-[#FED641] text-[#1B4676]'
+      : 'bg-slate-100 text-slate-800'
+  return (
+    <div className={`rounded-xl px-5 py-4 ${bg}`}>
+      <div className="text-[11px] uppercase tracking-wider font-semibold opacity-80">
+        {label}
+      </div>
+      <div className="mt-1 text-3xl font-bold font-mono">{value.toLocaleString()}</div>
     </div>
   )
 }

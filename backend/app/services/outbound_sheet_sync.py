@@ -94,6 +94,9 @@ HEADERS = [
     # dock. Appended at the end so existing column positions stay locked.
     # (col 31)
     "scheduled_arrival_at",
+    # Source inbound container the vendor is drawing this line from.
+    # (col 32)
+    "source_container_no",
 ]
 
 
@@ -276,7 +279,114 @@ def rows_from_order(
                     "unit": line.unit or "EA",
                     "serial_specific": "yes" if line.serial_specific else "no",
                     "serials_requested": serials_joined,
+                    "source_container_no": (
+                        getattr(line, "source_container_no", None) or ""
+                    ),
                     **cblock,
                 }
             )
     return rows
+
+
+# ─── ContainerInventory worksheet sync ─────────────────────────────────
+
+# Headers for the dedicated ContainerInventory worksheet in
+# Lime Outbound Data.xlsx. One row per (container, sku) — the dashboard
+# is a flat per-line snapshot, not append-only.
+INVENTORY_HEADERS = [
+    "customer",
+    "container_no",
+    "sku",
+    "description",
+    "inbound_qty",
+    "outbound_qty",
+    "pending_qty",
+    "received_date",
+    "allocated_to",  # semicolon-joined TO numbers
+    "last_refreshed_at",
+]
+
+
+def _serialize_inventory(row: dict[str, Any]) -> list[Any]:
+    return [row.get(h) if row.get(h) is not None else "" for h in INVENTORY_HEADERS]
+
+
+async def replace_container_inventory_for_company(
+    company_name: str, rows: list[dict[str, Any]]
+) -> dict:
+    """Snapshot-replace the ContainerInventory worksheet rows for a company.
+    Delegated to the OPS Logic App's `replace_inventory_rows` action — the
+    Office Script deletes every existing ContainerInventory row matching
+    the company, then writes the new ones in one Excel transaction (no
+    race window).
+    """
+    url = settings.onedrive_outbound_ops_url
+    if not url:
+        logger.info(
+            "outbound sheet sync: ONEDRIVE_OUTBOUND_OPS_URL not set, "
+            "skipping replace_container_inventory_for_company"
+        )
+        return {"deleted": 0, "added": 0}
+    body = {
+        "action": "replace_inventory_rows",
+        "payload": json.dumps(
+            {
+                "customer": company_name,
+                "rows": [_serialize_inventory(r) for r in rows],
+            }
+        ),
+    }
+    try:
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            r = await client.post(url, json=body)
+        if r.is_success:
+            try:
+                data = r.json()
+                return {
+                    "deleted": int(data.get("deleted", 0))
+                    if isinstance(data, dict)
+                    else 0,
+                    "added": int(data.get("added", 0))
+                    if isinstance(data, dict)
+                    else 0,
+                }
+            except (ValueError, TypeError):
+                return {"deleted": 0, "added": 0}
+        logger.warning(
+            "outbound sheet sync: inventory webhook returned %s: %s",
+            r.status_code,
+            r.text[:200],
+        )
+    except Exception as e:
+        logger.warning("outbound sheet sync: inventory replace failed: %s", e)
+    return {"deleted": 0, "added": 0}
+
+
+def inventory_rows_from_items(
+    company_name: str,
+    items: list[dict],
+    refreshed_at: datetime | None = None,
+) -> list[dict[str, Any]]:
+    """Convert ContainerInventory items (per the service layer) into the
+    flat dict shape append_outbound_rows / replace expects."""
+    ts = _fmt_dt(refreshed_at or datetime.now(timezone.utc))
+    out: list[dict[str, Any]] = []
+    for it in items:
+        received = it.get("received_date")
+        out.append(
+            {
+                "customer": company_name,
+                "container_no": it.get("container_no") or "",
+                "sku": it.get("sku") or "",
+                "description": it.get("description") or "",
+                "inbound_qty": it.get("inbound_qty") or 0,
+                "outbound_qty": it.get("outbound_qty") or 0,
+                "pending_qty": it.get("pending_qty") or 0,
+                "received_date": (
+                    received.strftime("%-m/%-d/%Y") if received else ""
+                ),
+                "allocated_to": "; ".join(it.get("allocated_to") or []),
+                "last_refreshed_at": ts,
+            }
+        )
+    return out

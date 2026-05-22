@@ -510,6 +510,9 @@ export const api = {
   outboundInventory: () =>
     request<InventoryResponse>('/vendor/outbound/inventory'),
 
+  outboundContainerInventory: () =>
+    request<ContainerInventoryResponse>('/vendor/outbound/container-inventory'),
+
   extractPickingTicket: (file: File) => {
     const fd = new FormData()
     fd.append('file', file)
@@ -649,6 +652,7 @@ export interface OutboundLineInput {
   unit?: string
   serial_specific: boolean
   serials?: string[] | null
+  source_container_no?: string | null
   notes?: string | null
 }
 
@@ -704,6 +708,25 @@ export interface OutboundLineRead {
   unit: string
   serial_specific: boolean
   serials_requested: string[]
+  source_container_no: string | null
+}
+
+export interface ContainerInventoryItem {
+  container_no: string
+  sku: string
+  description: string | null
+  inbound_qty: number
+  outbound_qty: number
+  pending_qty: number
+  received_date: string | null
+  allocated_to: string[]
+}
+
+export interface ContainerInventoryResponse {
+  containers: ContainerInventoryItem[]
+  total_inbound: number
+  total_outbound: number
+  total_pending: number
 }
 
 export interface OutboundContainerRead {

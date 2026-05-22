@@ -14,6 +14,7 @@ import {
   OutboundDriverInfoForm,
   OutboundUpdateOrderForm,
   OutboundViewOrderForm,
+  OutboundInventoryDashboard,
 } from './OutboundComponents'
 
 const CUSTOMERS = ['Lime Mobility', 'Boviet Solar', 'Pan American Wire MFG', 'National Plastic']
@@ -196,6 +197,7 @@ type Mode =
   | 'out_driver'
   | 'out_update'
   | 'out_view'
+  | 'out_inventory'
 
 export default function VendorIntakePage() {
   const { isLoggedIn, user: vendorUser, signOut: vendorSignOut } = useVendorAuth()
@@ -259,6 +261,9 @@ export default function VendorIntakePage() {
   }
   if (mode === 'out_view') {
     return <OutboundViewOrderForm onBack={() => setMode('out_choose')} />
+  }
+  if (mode === 'out_inventory') {
+    return <OutboundInventoryDashboard onBack={() => setMode('out_choose')} />
   }
   // mode === 'new' falls through to the existing form below
 

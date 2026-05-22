@@ -131,7 +131,8 @@ class Settings(BaseSettings):
     #     OutboundTable. Fired on every TO submit + update.
     #   - onedrive_outbound_ops_url: Logic App + Office Script dispatcher
     #     for delete-by-TO + clear-table operations (mirror of
-    #     onedrive_vendors_ops_url).
+    #     onedrive_vendors_ops_url). The same dispatcher also handles
+    #     the ContainerInventory worksheet's replace_inventory action.
     # Both optional. When unset, backend just skips the call with INFO log.
     onedrive_outbound_webhook_url: str = ""
     onedrive_outbound_ops_url: str = ""
