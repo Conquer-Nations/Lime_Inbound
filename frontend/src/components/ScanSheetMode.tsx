@@ -412,7 +412,10 @@ function ExcelStyleSheet({
   lastAccepted: number | null
   lastDupRowId: number | null
 }) {
-  const isScooter = h.requires_imei
+  // `isScooter` controls the Box # column + layout colspans. It's now
+  // sourced from the dedicated uses_box_numbers flag, not requires_imei —
+  // they were decoupled when IMEI flipped to eBikes/Gliders.
+  const isScooter = !!h.uses_box_numbers
   const colCount = isScooter ? 8 : 7
   // Column widths in px — match TEMPLATE.xlsx proportions
   const cols = isScooter

@@ -1083,3 +1083,82 @@ async def export_inbound_csv(session: AsyncSession = Depends(get_session)):
         media_type="text/csv",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+@router.post("/database/update-whpo-number")
+async def update_whpo_number(
+    payload: dict,
+    session: AsyncSession = Depends(get_session),
+):
+    """Rename a WHPO. Used to fix typos after submission.
+
+    Body: {"old_whpo_number": "36824324", "new_whpo_number": "36824322"}
+
+    Validates the old WHPO exists and the new one doesn't, updates the
+    Postgres row, then resyncs InboundTable in OneDrive (delete old rows
+    + re-append with the new WHPO #). Atomic on the Postgres side; Excel
+    resync is best-effort and logged on failure.
+    """
+    from app.services.intake import fetch_inbound_rows_for_do
+
+    old_no = str(payload.get("old_whpo_number") or "").strip()
+    new_no = str(payload.get("new_whpo_number") or "").strip()
+    if not old_no or not new_no:
+        raise HTTPException(
+            status_code=400,
+            detail="Both old_whpo_number and new_whpo_number are required.",
+        )
+    if old_no == new_no:
+        raise HTTPException(
+            status_code=400,
+            detail="old and new WHPO numbers are the same.",
+        )
+
+    whpo = await session.scalar(
+        select(WHPO).where(WHPO.whpo_number == old_no)
+    )
+    if whpo is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"WHPO {old_no} not found.",
+        )
+    clash = await session.scalar(
+        select(WHPO.id).where(WHPO.whpo_number == new_no)
+    )
+    if clash is not None:
+        raise HTTPException(
+            status_code=409,
+            detail=f"WHPO {new_no} already exists — pick a different number.",
+        )
+
+    whpo.whpo_number = new_no
+    await session.commit()
+
+    # Resync Excel: delete old rows, re-append under the new WHPO #.
+    excel_status = "skipped"
+    if sheet_sync.is_update_configured():
+        try:
+            await sheet_sync.delete_inbound_rows_for_whpo(old_no)
+            # Re-fetch this WHPO's DO + rows and re-append.
+            do = await session.scalar(
+                select(DO).where(DO.whpo_id == whpo.id)
+            )
+            if do is not None:
+                rows = await fetch_inbound_rows_for_do(session, do.id)
+                if rows:
+                    await sheet_sync.append_rows(rows)
+                excel_status = "resynced"
+            else:
+                excel_status = "no_do"
+        except Exception as e:
+            excel_status = f"error: {e}"
+            import logging as _log
+            _log.getLogger(__name__).warning(
+                "update_whpo_number: Excel resync failed: %s", e
+            )
+
+    return {
+        "old_whpo_number": old_no,
+        "new_whpo_number": new_no,
+        "excel": excel_status,
+    }

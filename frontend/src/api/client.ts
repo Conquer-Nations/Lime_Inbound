@@ -585,6 +585,7 @@ export interface ScanSheetHeader {
   location: string
   is_completed: boolean
   requires_imei: boolean
+  uses_box_numbers?: boolean
 }
 
 export interface ScanSheetRow {

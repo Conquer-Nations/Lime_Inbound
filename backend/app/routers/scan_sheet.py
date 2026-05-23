@@ -64,9 +64,21 @@ def _ensure_enabled() -> None:
 
 
 def _container_requires_imei(container: Container) -> bool:
-    """A container requires IMEI capture if any of its lines is a scooter.
-    Match is case-insensitive substring on `product_type`, so 'Scooter',
-    'Scooters', 'E-Scooter', etc. all qualify."""
+    """IMEI capture is required for eBikes and Gliders (NOT scooters).
+    Case-insensitive substring match on product_type: anything containing
+    'bike' or 'glider' qualifies; everything else (scooters, batteries,
+    helmets, solar panels, …) skips the IMEI input."""
+    for line in (container.lines or []):
+        pt = (line.product_type or "").lower()
+        if "bike" in pt or "glider" in pt:
+            return True
+    return False
+
+
+def _container_uses_box_numbers(container: Container) -> bool:
+    """Scooters are packed 10 per box at our dock — the scan-sheet shows
+    a 'Box #' column that auto-increments every 10 scans. Other product
+    types ship without box hierarchy."""
     for line in (container.lines or []):
         pt = (line.product_type or "").lower()
         if "scoot" in pt:
@@ -99,6 +111,7 @@ def _build_header(receipt: Receipt, container: Container, whpo: WHPO, do: DO) ->
         completed_timestamp=receipt.finished_at,
         is_completed=receipt.status == "completed",
         requires_imei=_container_requires_imei(container),
+        uses_box_numbers=_container_uses_box_numbers(container),
     )
 
 
@@ -672,7 +685,7 @@ async def open_sheet(
         if line.sku is not None:
             sku_by_id[line.sku_id] = line.sku.sku if line.sku else None  # noqa
     # Fallback if relationship not loaded — fetch SKUs lazily by id
-    is_scooter = _container_requires_imei(container)
+    is_scooter = _container_uses_box_numbers(container)
     sku_default = _container_sku(container)
     for idx, s in enumerate(existing.all()):
         box = _box_for_index(idx) if is_scooter else None
@@ -721,12 +734,12 @@ async def record_scan_row(
     serial = body.serial_number.strip()
     imei = (body.imei or "").strip() or None
 
-    # IMEI required for scooter containers — enforced server-side too so a
-    # rogue client can't bypass the rule.
+    # IMEI required for eBike / Glider containers — enforced server-side
+    # too so a rogue client can't bypass the rule.
     if _container_requires_imei(container) and not imei:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="IMEI is required for scooter SKUs.",
+            detail="IMEI is required for eBike and Glider SKUs.",
         )
 
     # Pre-check for in-receipt duplicate so we can return a helpful row id
@@ -776,7 +789,7 @@ async def record_scan_row(
 
     await session.commit()
     total = await _count_scans(session, receipt_id)
-    is_scooter = _container_requires_imei(container)
+    is_scooter = _container_uses_box_numbers(container)
     # This new scan is at zero-based index (total - 1)
     box = _box_for_index(total - 1) if is_scooter else None
     # Prefer the vendor-provided SKU from container_lines over body.sku
@@ -817,7 +830,7 @@ async def _push_live_to_onedrive(receipt_id: int) -> None:
                 .where(Scan.serial_number.isnot(None))
                 .order_by(Scan.scanned_at.asc())
             )
-            is_scooter = _container_requires_imei(c)
+            is_scooter = _container_uses_box_numbers(c)
             sku_default = _container_sku(c)
             rows = [
                 _scan_to_row(
@@ -882,7 +895,7 @@ async def finish_sheet(
             .order_by(Scan.scanned_at.asc())
         )
         receipt, container, whpo, do = await _load_receipt_context(session, receipt_id)
-        is_scooter_f = _container_requires_imei(container)
+        is_scooter_f = _container_uses_box_numbers(container)
         sku_default_f = _container_sku(container)
         rows = [
             _scan_to_row(
@@ -937,7 +950,7 @@ async def view_sheet(receipt_id: int, session: AsyncSession = Depends(get_sessio
         .where(Scan.serial_number.isnot(None))
         .order_by(Scan.scanned_at.asc())
     )
-    is_scooter_v = _container_requires_imei(container)
+    is_scooter_v = _container_uses_box_numbers(container)
     sku_default_v = _container_sku(container)
     rows = [
         _scan_to_row(

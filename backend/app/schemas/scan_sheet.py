@@ -30,7 +30,12 @@ class ScanSheetHeader(BaseModel):
     completed_timestamp: datetime | None = None
     location: str = "Conquer Nation, Vernon, CA."
     is_completed: bool = False
-    requires_imei: bool = False        # true when any container line is a scooter
+    # IMEI is mandatory for eBikes + Gliders (true here) and skipped for
+    # scooters / everything else.
+    requires_imei: bool = False
+    # Scooters are packed 10 per box at our dock — the scan sheet shows a
+    # "Box #" column when this is true. Decoupled from requires_imei.
+    uses_box_numbers: bool = False
     # 'inbound' (default) or 'outbound'. Frontend can ignore — same shape.
     kind: str = "inbound"
 
