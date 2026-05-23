@@ -1214,11 +1214,14 @@ async def wipe_except_container(
 
     # 2. Delete everything related to OTHER containers (child rows first,
     # then containers, DOs, WHPOs). IS DISTINCT FROM handles NULL safely.
+    # Order matters — every FK-referencing table must be cleared before
+    # its parent.
     for sql in (
         "DELETE FROM scans WHERE container_id IS DISTINCT FROM :cid",
         "DELETE FROM pallets WHERE container_id IS DISTINCT FROM :cid",
         "DELETE FROM receipts WHERE container_id IS DISTINCT FROM :cid",
         "DELETE FROM lot_assignments WHERE container_id IS DISTINCT FROM :cid",
+        "DELETE FROM container_documents WHERE container_id IS DISTINCT FROM :cid",
         "DELETE FROM container_lines WHERE container_id IS DISTINCT FROM :cid",
         "DELETE FROM containers WHERE id IS DISTINCT FROM :cid",
     ):
