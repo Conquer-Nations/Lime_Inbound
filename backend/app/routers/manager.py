@@ -1162,3 +1162,130 @@ async def update_whpo_number(
         "new_whpo_number": new_no,
         "excel": excel_status,
     }
+
+
+@router.post("/database/wipe-except-container")
+async def wipe_except_container(
+    payload: dict,
+    session: AsyncSession = Depends(get_session),
+):
+    """Destructive: wipe everything EXCEPT one inbound container and its
+    parent WHPO / DO / lines / receipts / scans. Outbound side is wiped
+    completely (orders, containers, scans). InboundTable in Excel is
+    cleared and re-appended with the kept container's rows.
+
+    Body: {"container_no": "TGBU6260274"}
+
+    Note: per-container worksheets in Lime Scan Data.xlsx are NOT touched
+    by this endpoint — delete unwanted ones manually in Excel if needed.
+    """
+    from sqlalchemy import text as _text
+    from app.services.intake import fetch_inbound_rows_for_do
+
+    container_no = str(payload.get("container_no") or "").strip().upper()
+    if not container_no:
+        raise HTTPException(
+            status_code=400, detail="container_no is required."
+        )
+
+    target = await session.scalar(
+        select(Container).where(Container.container_no == container_no)
+    )
+    if target is None:
+        raise HTTPException(
+            status_code=404, detail=f"Container {container_no} not found."
+        )
+    target_id = target.id
+    target_do_id = target.do_id
+    target_do = await session.scalar(select(DO).where(DO.id == target_do_id))
+    target_whpo_id = target_do.whpo_id if target_do else None
+
+    # 1. Nuke outbound entirely + exceptions + activity_log + non-seed SKUs.
+    await session.execute(
+        _text(
+            "TRUNCATE outbound_scans, outbound_line_serials, outbound_lines, "
+            "outbound_containers, outbound_orders, "
+            "exceptions, activity_log RESTART IDENTITY CASCADE"
+        )
+    )
+    await session.execute(
+        _text("DELETE FROM skus WHERE source IS DISTINCT FROM 'seed'")
+    )
+
+    # 2. Delete everything related to OTHER containers (child rows first,
+    # then containers, DOs, WHPOs). IS DISTINCT FROM handles NULL safely.
+    for sql in (
+        "DELETE FROM scans WHERE container_id IS DISTINCT FROM :cid",
+        "DELETE FROM pallets WHERE container_id IS DISTINCT FROM :cid",
+        "DELETE FROM receipts WHERE container_id IS DISTINCT FROM :cid",
+        "DELETE FROM lot_assignments WHERE container_id IS DISTINCT FROM :cid",
+        "DELETE FROM container_lines WHERE container_id IS DISTINCT FROM :cid",
+        "DELETE FROM containers WHERE id IS DISTINCT FROM :cid",
+    ):
+        await session.execute(_text(sql), {"cid": target_id})
+    if target_do_id:
+        await session.execute(
+            _text("DELETE FROM dos WHERE id IS DISTINCT FROM :did"),
+            {"did": target_do_id},
+        )
+    if target_whpo_id:
+        await session.execute(
+            _text("DELETE FROM whpos WHERE id IS DISTINCT FROM :wid"),
+            {"wid": target_whpo_id},
+        )
+
+    await session.commit()
+
+    # 3. Verify what's left.
+    counts: dict[str, int] = {}
+    for tbl in (
+        "whpos",
+        "dos",
+        "containers",
+        "container_lines",
+        "scans",
+        "outbound_orders",
+        "outbound_containers",
+        "outbound_scans",
+        "activity_log",
+        "exceptions",
+    ):
+        n = await session.scalar(_text(f"SELECT count(*) FROM {tbl}"))
+        counts[tbl] = int(n or 0)
+
+    # 4. OneDrive resync.
+    excel_status = "skipped"
+    if sheet_sync.is_update_configured():
+        try:
+            await sheet_sync.clear_inbound_table()
+            if target_do_id:
+                rows = await fetch_inbound_rows_for_do(session, target_do_id)
+                if rows:
+                    await sheet_sync.append_rows(rows)
+            excel_status = "resynced"
+        except Exception as e:
+            excel_status = f"inbound_error: {e}"
+
+    # Wipe everything outbound (no kept rows there).
+    try:
+        from app.services import (
+            outbound_sheet_sync as _out_sync,
+            outbound_scan_sheet_onedrive as _out_scan_od,
+        )
+        await _out_sync.clear_outbound_table()
+        await _out_sync.clear_container_inventory()
+        await _out_scan_od.clear_all_outbound_scan_worksheets()
+    except Exception as e:
+        excel_status += f"; outbound_error: {e}"
+
+    return {
+        "preserved_container_no": container_no,
+        "preserved_whpo_id": target_whpo_id,
+        "preserved_do_id": target_do_id,
+        "postgres_rows_remaining": counts,
+        "excel": excel_status,
+        "note": (
+            "Per-container worksheets in Lime Scan Data.xlsx were left "
+            "alone. Delete unwanted ones manually in Excel if needed."
+        ),
+    }
