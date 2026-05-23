@@ -332,6 +332,8 @@ class Scan(Base):
     result: Mapped[str] = mapped_column(String(32))
     error_reason: Mapped[str | None] = mapped_column(Text)
 
+    container: Mapped[Container | None] = relationship()
+
 
 # ─── Audit / exceptions ─────────────────────────────────────────────────────
 
