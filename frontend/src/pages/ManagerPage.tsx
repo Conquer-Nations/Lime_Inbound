@@ -5,6 +5,7 @@ import { api } from '../api/client'
 import DashboardTab from '../components/DashboardTab'
 import InboundView from '../components/InboundView'
 import ResolveExceptionModal from '../components/ResolveExceptionModal'
+import SkuAdmin from '../components/SkuAdmin'
 import WarehouseFloorPlan from '../components/WarehouseFloorPlan'
 import { CalendarView } from '../components/CalendarView'
 import type { DOListItem, ExceptionItem, LotMapItem } from '../types/api'
@@ -19,6 +20,7 @@ type Tab =
   | 'lots'
   | 'exceptions'
   | 'inbound'
+  | 'skus'
 
 const TABS: { key: Tab; label: string }[] = [
   { key: 'dashboard', label: 'Dashboard' },
@@ -28,6 +30,7 @@ const TABS: { key: Tab; label: string }[] = [
   { key: 'lots', label: 'Warehouse Map' },
   { key: 'exceptions', label: 'Exceptions' },
   { key: 'inbound', label: 'Inbound' },
+  { key: 'skus', label: 'SKUs' },
 ]
 
 export default function ManagerPage() {
@@ -100,6 +103,7 @@ export default function ManagerPage() {
         {tab === 'tos' && <TOsTab data={tos} />}
         {tab === 'lots' && <LotsTab data={lots} />}
         {tab === 'inbound' && <InboundView />}
+        {tab === 'skus' && <SkuAdmin />}
         {tab === 'exceptions' && (
           <ExceptionsTab
             data={exceptions}

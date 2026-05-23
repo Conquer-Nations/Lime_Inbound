@@ -549,6 +549,40 @@ export const api = {
     )
   },
 
+  // ─── SKU master admin ──────────────────────────────────────────────
+  listManagerCustomers: () =>
+    request<CustomerRead[]>('/manager/customers'),
+
+  createCustomer: (name: string) =>
+    request<CustomerRead>('/manager/customers', {
+      method: 'POST',
+      body: JSON.stringify({ name }),
+    }),
+
+  listSkus: (params?: { customer_id?: number; q?: string }) => {
+    const qs = new URLSearchParams()
+    if (params?.customer_id != null) qs.set('customer_id', String(params.customer_id))
+    if (params?.q) qs.set('q', params.q)
+    return request<SKURead[]>(
+      `/manager/skus${qs.toString() ? '?' + qs.toString() : ''}`,
+    )
+  },
+
+  createSku: (payload: SKUAdminCreate) =>
+    request<SKURead>('/manager/skus', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+
+  updateSku: (id: number, payload: SKUAdminUpdate) =>
+    request<SKURead>(`/manager/skus/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(payload),
+    }),
+
+  deleteSku: (id: number) =>
+    requestVoid(`/manager/skus/${id}`, { method: 'DELETE' }),
+
   // ─── Manager ERP drilldowns ────────────────────────────────────────
   getContainerDetail: (container_no: string) =>
     request<ContainerErpDetail>(
@@ -891,6 +925,56 @@ export interface InventoryItem {
 
 export interface InventoryResponse {
   items: InventoryItem[]
+}
+
+// ─── SKU admin types (mirror schemas/manager.py SKU* models) ──────────
+
+export interface CustomerRead {
+  id: number
+  name: string
+}
+
+export interface SKURead {
+  id: number
+  customer_id: number
+  customer_name: string
+  sku: string
+  description: string | null
+  product_type: string | null
+  sqft_per_unit: number | null
+  items_per_pallet: number | null
+  pallet_mode: string
+  stackable: boolean
+  max_stack_height: number | null
+  unit: string
+  source: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface SKUAdminCreate {
+  customer_id: number
+  sku: string
+  description?: string | null
+  product_type?: string | null
+  sqft_per_unit?: number | null
+  items_per_pallet?: number | null
+  pallet_mode?: string
+  stackable?: boolean
+  max_stack_height?: number | null
+  unit?: string
+}
+
+export interface SKUAdminUpdate {
+  sku?: string
+  description?: string | null
+  product_type?: string | null
+  sqft_per_unit?: number | null
+  items_per_pallet?: number | null
+  pallet_mode?: string
+  stackable?: boolean
+  max_stack_height?: number | null
+  unit?: string
 }
 
 // ─── Manager ERP types (mirror schemas/manager_erp.py) ────────────────

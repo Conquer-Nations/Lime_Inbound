@@ -63,13 +63,29 @@ def _ensure_enabled() -> None:
 # ─── Helpers ────────────────────────────────────────────────────────────
 
 
+def _line_product_type(line) -> str:
+    """Resolve product type for a single line. Line-level value wins; if
+    the vendor didn't fill it in, fall back to the SKU master's
+    product_type so the IMEI / box-number heuristics still fire."""
+    pt = (line.product_type or "").strip()
+    if pt:
+        return pt.lower()
+    if line.sku is not None and getattr(line.sku, "product_type", None):
+        return (line.sku.product_type or "").strip().lower()
+    return ""
+
+
 def _container_requires_imei(container: Container) -> bool:
     """IMEI capture is required for eBikes and Gliders (NOT scooters).
     Case-insensitive substring match on product_type: anything containing
     'bike' or 'glider' qualifies; everything else (scooters, batteries,
-    helmets, solar panels, …) skips the IMEI input."""
+    helmets, solar panels, …) skips the IMEI input.
+
+    Falls back to the SKU master's product_type when the line doesn't
+    declare one — so feeding master data via the manager admin UI is
+    enough to enable IMEI capture without re-submitting old WHPOs."""
     for line in (container.lines or []):
-        pt = (line.product_type or "").lower()
+        pt = _line_product_type(line)
         if "bike" in pt or "glider" in pt:
             return True
     return False
@@ -80,7 +96,7 @@ def _container_uses_box_numbers(container: Container) -> bool:
     a 'Box #' column that auto-increments every 10 scans. Other product
     types ship without box hierarchy."""
     for line in (container.lines or []):
-        pt = (line.product_type or "").lower()
+        pt = _line_product_type(line)
         if "scoot" in pt:
             return True
     return False

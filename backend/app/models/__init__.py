@@ -45,6 +45,12 @@ class SKU(Base):
     customer_id: Mapped[int] = mapped_column(ForeignKey("customers.id"), index=True)
     sku: Mapped[str] = mapped_column(String(120), index=True)
     description: Mapped[str | None] = mapped_column(Text)
+    # Canonical product category for this SKU (Scooters / eBikes / Gliders /
+    # Batteries / Helmets / Solar Panels / etc.). Drives IMEI + box-number
+    # logic on the scan sheet when the vendor doesn't set product_type at
+    # the line level. Free-text — the UI offers common picks but isn't
+    # restricted, so vendors can introduce new categories.
+    product_type: Mapped[str | None] = mapped_column(String(120), index=True)
     sqft_per_unit: Mapped[float | None] = mapped_column(Float)
     items_per_pallet: Mapped[int | None] = mapped_column(Integer)
     pallet_mode: Mapped[str] = mapped_column(String(16), default="logical")

@@ -158,6 +158,7 @@ class SKUCreatePayload(BaseModel):
     stackable: bool = False
     max_stack_height: int | None = None
     unit: str = "each"
+    product_type: str | None = None
 
 
 class SKUPatchPayload(BaseModel):
@@ -167,6 +168,7 @@ class SKUPatchPayload(BaseModel):
     pallet_mode: str | None = None
     stackable: bool | None = None
     max_stack_height: int | None = None
+    product_type: str | None = None
 
 
 class ResolveExceptionResponse(BaseModel):
@@ -207,6 +209,57 @@ class DashboardResponse(BaseModel):
     today: date
     kpis: DashboardKPIs
     activity: list[ActivityFeedItem]
+
+
+# ─── SKU master CRUD (manager admin UI) ─────────────────────────────────
+
+
+class SKURead(BaseModel):
+    id: int
+    customer_id: int
+    customer_name: str
+    sku: str
+    description: str | None
+    product_type: str | None
+    sqft_per_unit: float | None
+    items_per_pallet: int | None
+    pallet_mode: str
+    stackable: bool
+    max_stack_height: int | None
+    unit: str
+    source: str | None
+    created_at: datetime
+    updated_at: datetime
+
+
+class SKUAdminCreateRequest(BaseModel):
+    customer_id: int
+    sku: str = Field(min_length=1, max_length=120)
+    description: str | None = None
+    product_type: str | None = None
+    sqft_per_unit: float | None = None
+    items_per_pallet: int | None = None
+    pallet_mode: str = "logical"
+    stackable: bool = False
+    max_stack_height: int | None = None
+    unit: str = "each"
+
+
+class SKUAdminUpdateRequest(BaseModel):
+    sku: str | None = Field(default=None, min_length=1, max_length=120)
+    description: str | None = None
+    product_type: str | None = None
+    sqft_per_unit: float | None = None
+    items_per_pallet: int | None = None
+    pallet_mode: str | None = None
+    stackable: bool | None = None
+    max_stack_height: int | None = None
+    unit: str | None = None
+
+
+class CustomerRead(BaseModel):
+    id: int
+    name: str
 
 
 # Forward references

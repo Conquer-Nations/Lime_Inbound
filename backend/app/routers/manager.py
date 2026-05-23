@@ -26,6 +26,7 @@ from app.models import (
     WHPO,
 )
 from app.schemas.manager import (
+    CustomerRead,
     DODetail,
     DOListItem,
     DashboardResponse,
@@ -34,6 +35,9 @@ from app.schemas.manager import (
     LotMapItem,
     ResolveExceptionRequest,
     ResolveExceptionResponse,
+    SKUAdminCreateRequest,
+    SKUAdminUpdateRequest,
+    SKURead,
 )
 from app.services import sheet_sync
 from app.services.manager import (
@@ -1291,6 +1295,269 @@ async def wipe_except_container(
             "alone. Delete unwanted ones manually in Excel if needed."
         ),
     }
+
+
+# ─── SKU master CRUD (admin UI) ────────────────────────────────────────
+
+
+def _sku_to_read(s: SKU, customer_name: str) -> SKURead:
+    return SKURead(
+        id=s.id,
+        customer_id=s.customer_id,
+        customer_name=customer_name,
+        sku=s.sku,
+        description=s.description,
+        product_type=s.product_type,
+        sqft_per_unit=s.sqft_per_unit,
+        items_per_pallet=s.items_per_pallet,
+        pallet_mode=s.pallet_mode,
+        stackable=s.stackable,
+        max_stack_height=s.max_stack_height,
+        unit=s.unit,
+        source=s.source,
+        created_at=s.created_at,
+        updated_at=s.updated_at,
+    )
+
+
+@router.get("/customers", response_model=list[CustomerRead])
+async def list_customers(session: AsyncSession = Depends(get_session)):
+    """Customer dropdown for the SKU admin form."""
+    rows = (
+        await session.execute(select(Customer.id, Customer.name).order_by(Customer.name))
+    ).all()
+    return [CustomerRead(id=r[0], name=r[1]) for r in rows]
+
+
+@router.post("/customers", response_model=CustomerRead, status_code=201)
+async def create_customer(
+    payload: dict,
+    session: AsyncSession = Depends(get_session),
+):
+    """Create a new customer inline from the SKU admin UI. Idempotent —
+    returns the existing customer if the name (normalised) already exists."""
+    name = (payload.get("name") or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="name required")
+    existing = await session.scalar(
+        select(Customer).where(func.lower(Customer.name) == name.lower())
+    )
+    if existing is not None:
+        return CustomerRead(id=existing.id, name=existing.name)
+    c = Customer(name=name)
+    session.add(c)
+    await session.flush()
+    session.add(
+        ActivityLog(
+            actor="manager",
+            kind="customer_created",
+            ref_type="customer",
+            ref_id=c.id,
+            message=f"Customer '{name}' created via SKU admin",
+        )
+    )
+    await session.commit()
+    return CustomerRead(id=c.id, name=c.name)
+
+
+@router.get("/skus", response_model=list[SKURead])
+async def list_skus(
+    customer_id: int | None = None,
+    q: str | None = None,
+    limit: int = Query(500, ge=1, le=2000),
+    session: AsyncSession = Depends(get_session),
+):
+    """List SKUs for the admin table. Optional filters by customer or
+    free-text match against sku / description / product_type."""
+    stmt = (
+        select(SKU, Customer.name)
+        .join(Customer, Customer.id == SKU.customer_id)
+        .order_by(Customer.name, SKU.sku)
+        .limit(limit)
+    )
+    if customer_id is not None:
+        stmt = stmt.where(SKU.customer_id == customer_id)
+    if q:
+        pat = f"%{q.strip()}%"
+        stmt = stmt.where(
+            (SKU.sku.ilike(pat))
+            | (SKU.description.ilike(pat))
+            | (SKU.product_type.ilike(pat))
+        )
+    rows = (await session.execute(stmt)).all()
+    return [_sku_to_read(s, cn) for s, cn in rows]
+
+
+@router.post("/skus", response_model=SKURead, status_code=201)
+async def create_sku(
+    payload: SKUAdminCreateRequest,
+    session: AsyncSession = Depends(get_session),
+):
+    """Create a new SKU master row. Rejects duplicates within a customer
+    (the (customer_id, sku) unique constraint catches them anyway, but
+    we surface a friendly 409 here)."""
+    customer = await session.get(Customer, payload.customer_id)
+    if customer is None:
+        raise HTTPException(status_code=404, detail=f"Customer {payload.customer_id} not found")
+
+    existing = await session.scalar(
+        select(SKU).where(SKU.customer_id == payload.customer_id, SKU.sku == payload.sku)
+    )
+    if existing is not None:
+        raise HTTPException(
+            status_code=409,
+            detail=f"SKU '{payload.sku}' already exists for {customer.name}",
+        )
+
+    s = SKU(
+        customer_id=payload.customer_id,
+        sku=payload.sku.strip(),
+        description=payload.description,
+        product_type=(payload.product_type or "").strip() or None,
+        sqft_per_unit=payload.sqft_per_unit,
+        items_per_pallet=payload.items_per_pallet,
+        pallet_mode=payload.pallet_mode,
+        stackable=payload.stackable,
+        max_stack_height=payload.max_stack_height,
+        unit=payload.unit,
+        source="manager_admin",
+    )
+    session.add(s)
+    await session.flush()
+
+    # Backfill: attach this SKU to any container_lines that referenced it by
+    # raw string and were waiting for master data.
+    affected = await session.execute(
+        select(ContainerLine).where(
+            ContainerLine.sku_raw == s.sku,
+            ContainerLine.sku_id.is_(None),
+        )
+    )
+    backfilled = 0
+    for ln in affected.scalars():
+        # Confirm the line belongs to a container with the same customer.
+        # SKU master is customer-scoped; we don't want to cross-link.
+        from sqlalchemy import select as _sel
+
+        cust_id = await session.scalar(
+            _sel(Customer.id)
+            .join(WHPO, WHPO.customer_id == Customer.id)
+            .join(DO, DO.whpo_id == WHPO.id)
+            .join(Container, Container.do_id == DO.id)
+            .where(Container.id == ln.container_id)
+        )
+        if cust_id == s.customer_id:
+            ln.sku_id = s.id
+            backfilled += 1
+
+    session.add(
+        ActivityLog(
+            actor="manager",
+            kind="sku_created",
+            ref_type="sku",
+            ref_id=s.id,
+            message=(
+                f"SKU '{s.sku}' created for {customer.name}"
+                + (f" · backfilled {backfilled} line(s)" if backfilled else "")
+            ),
+            payload={"backfilled_lines": backfilled},
+        )
+    )
+    await session.commit()
+    return _sku_to_read(s, customer.name)
+
+
+@router.patch("/skus/{sku_id}", response_model=SKURead)
+async def update_sku(
+    sku_id: int,
+    payload: SKUAdminUpdateRequest,
+    session: AsyncSession = Depends(get_session),
+):
+    s = await session.get(SKU, sku_id)
+    if s is None:
+        raise HTTPException(status_code=404, detail=f"SKU {sku_id} not found")
+
+    data = payload.model_dump(exclude_unset=True)
+    if "sku" in data:
+        # Renaming — check for clash within the same customer.
+        new_sku = data["sku"].strip()
+        clash = await session.scalar(
+            select(SKU).where(
+                SKU.customer_id == s.customer_id,
+                SKU.sku == new_sku,
+                SKU.id != s.id,
+            )
+        )
+        if clash is not None:
+            raise HTTPException(status_code=409, detail=f"SKU '{new_sku}' already exists")
+        s.sku = new_sku
+        data.pop("sku")
+
+    for k, v in data.items():
+        if k == "product_type" and v is not None:
+            v = v.strip() or None
+        setattr(s, k, v)
+
+    customer = await session.get(Customer, s.customer_id)
+    session.add(
+        ActivityLog(
+            actor="manager",
+            kind="sku_updated",
+            ref_type="sku",
+            ref_id=s.id,
+            message=f"SKU '{s.sku}' updated",
+            payload={"fields": list(data.keys())},
+        )
+    )
+    await session.commit()
+    return _sku_to_read(s, customer.name if customer else "?")
+
+
+@router.delete("/skus/{sku_id}", status_code=204)
+async def delete_sku(
+    sku_id: int,
+    session: AsyncSession = Depends(get_session),
+):
+    """Delete a SKU master row. Blocked if any container_line or
+    lot_assignment still references it — operator would lose receiving
+    history. Disable the SKU by renaming or leaving it inactive instead."""
+    s = await session.get(SKU, sku_id)
+    if s is None:
+        raise HTTPException(status_code=404, detail=f"SKU {sku_id} not found")
+
+    in_use = await session.scalar(
+        select(func.count()).select_from(ContainerLine).where(ContainerLine.sku_id == sku_id)
+    )
+    if (in_use or 0) > 0:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"SKU is referenced by {in_use} container line(s) — cannot delete. "
+                "Edit it instead, or rename it and create a new one."
+            ),
+        )
+    in_use_la = await session.scalar(
+        select(func.count()).select_from(LotAssignment).where(LotAssignment.sku_id == sku_id)
+    )
+    if (in_use_la or 0) > 0:
+        raise HTTPException(
+            status_code=409,
+            detail=f"SKU is referenced by {in_use_la} lot assignment(s).",
+        )
+
+    sku_str = s.sku
+    customer_id = s.customer_id
+    await session.delete(s)
+    session.add(
+        ActivityLog(
+            actor="manager",
+            kind="sku_deleted",
+            ref_type="customer",
+            ref_id=customer_id,
+            message=f"SKU '{sku_str}' deleted",
+        )
+    )
+    await session.commit()
 
 
 @router.get("/calendar")
