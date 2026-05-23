@@ -266,6 +266,70 @@ class ContainerDocument(Base):
     container: Mapped[Container] = relationship(back_populates="documents")
 
 
+class TallySheet(Base):
+    """Manager-created POD record for an arriving container — billing-grade.
+
+    Workflow: driver arrives with the physical POD → manager uploads it
+    here → backend OCRs from/to + snapshots driver/truck/carrier off the
+    Container row → row is locked-in. Operator's scan-sheet open is gated
+    on this row existing (no tally = no scan). Vendors see the tally
+    status for tracking.
+
+    Snapshots are intentional — billing rows must not change when the
+    container's driver_name etc. is later edited. One tally per container
+    (UNIQUE on container_id)."""
+
+    __tablename__ = "tally_sheets"
+    __table_args__ = (
+        UniqueConstraint("container_id", name="uq_tally_container"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    container_id: Mapped[int] = mapped_column(
+        ForeignKey("containers.id", ondelete="CASCADE")
+    )
+
+    # POD file (same on-disk pattern as ContainerDocument)
+    pod_filename: Mapped[str] = mapped_column(String(255))
+    pod_content_type: Mapped[str] = mapped_column(String(120))
+    pod_file_size: Mapped[int] = mapped_column(Integer)
+    pod_storage_path: Mapped[str] = mapped_column(String(500))
+
+    # OCR results — nullable so manager can still file the tally when OCR
+    # fails or returns garbage. They can correct via PUT later.
+    ocr_from_location: Mapped[str | None] = mapped_column(String(500))
+    ocr_to_location: Mapped[str | None] = mapped_column(String(500))
+    ocr_extracted_json: Mapped[dict | None] = mapped_column(JSONB)
+    ocr_engine: Mapped[str | None] = mapped_column(String(32))
+
+    # Snapshot from Container at tally time
+    matched_container_no: Mapped[str] = mapped_column(String(20))
+    matched_driver_name: Mapped[str | None] = mapped_column(String(200))
+    matched_driver_license: Mapped[str | None] = mapped_column(String(120))
+    matched_driver_phone: Mapped[str | None] = mapped_column(String(40))
+    matched_carrier: Mapped[str | None] = mapped_column(String(200))
+    matched_truck_plate: Mapped[str | None] = mapped_column(String(60))
+
+    # Manager-entered overrides / additions not captured by Container.
+    manual_seal_no: Mapped[str | None] = mapped_column(String(120))
+    manual_chassis_no: Mapped[str | None] = mapped_column(String(120))
+
+    tallied_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    tallied_by: Mapped[str] = mapped_column(String(255))
+
+    billing_status: Mapped[str] = mapped_column(
+        String(20), server_default="pending", index=True
+    )
+    billing_notes: Mapped[str | None] = mapped_column(Text)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    container: Mapped[Container] = relationship()
+
+
 class ContainerLine(Base):
     __tablename__ = "container_lines"
 

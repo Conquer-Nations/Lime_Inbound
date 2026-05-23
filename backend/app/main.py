@@ -12,6 +12,7 @@ from app.routers import ocr as ocr_router
 from app.routers import operator as operator_router
 from app.routers import outbound as outbound_router
 from app.routers import scan_sheet as scan_sheet_router
+from app.routers import tally as tally_router
 from app.routers import vendor as vendor_router
 from app.routers import vendor_auth as vendor_auth_router
 
@@ -43,6 +44,11 @@ app.include_router(scan_sheet_router.router)
 app.include_router(audit_router.router)
 # Outbound (Phase 2) — vendor-facing /vendor/outbound endpoints
 app.include_router(outbound_router.router)
+# Tally sheets — POD-driven billing audit log (#13). Manager uploads
+# POD, operator scan-sheet open is gated on tally existing, vendor
+# sees status.
+app.include_router(tally_router.router)
+app.include_router(tally_router.vendor_router)
 
 
 @app.get("/health")

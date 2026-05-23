@@ -35,6 +35,7 @@ from app.models import (
     OutboundScan,
     Receipt,
     Scan,
+    TallySheet,
 )
 from app.schemas.scan_sheet import (
     AuditSheetDetail,
@@ -668,6 +669,25 @@ async def open_sheet(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Container {container_no} isn't on any open shipment yet.",
+        )
+
+    # Tally guard — POD must be on file before the operator can scan.
+    # Inbound only (outbound takes a different path above and was already
+    # returned). The manager files the tally via /manager/tally/.../pod.
+    tally_exists = await session.scalar(
+        select(TallySheet.id).where(TallySheet.container_id == container.id)
+    )
+    if tally_exists is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "message": (
+                    f"Container {container_no} has no tally on file. "
+                    "Manager must upload the POD before offloading can start."
+                ),
+                "tally_required": True,
+                "container_no": container_no,
+            },
         )
 
     # Reuse an in-progress receipt if one exists; otherwise create.
