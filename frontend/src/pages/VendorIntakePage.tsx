@@ -7,7 +7,7 @@ import VendorPortalChrome from '../components/VendorPortalChrome'
 import { ContainerDocumentUploads } from '../components/ContainerDocumentUploads'
 import { StatusTimeline } from '../components/StatusTimeline'
 import { CalendarView } from '../components/CalendarView'
-import type { VendorContainerSubmission, VendorLineItem, WHPOIntakeResponse } from '../types/api'
+import type { WHPOIntakeResponse } from '../types/api'
 import BrandMark from '../components/BrandMark'
 import { isAuditor } from './AuditPage'
 import {
@@ -18,6 +18,23 @@ import {
   OutboundViewOrderForm,
   OutboundInventoryDashboard,
 } from './OutboundComponents'
+import {
+  parseShipments,
+  groupByWHPO,
+  type ParseResult,
+  type WHPOGroup,
+} from '../lib/parseShipments'
+import StructuredShipmentsEditor, {
+  makeEmptyWHPO,
+  validateStructuredWHPO,
+  type StructuredWHPO,
+} from '../components/StructuredShipmentsEditor'
+import QuickImportModal from '../components/QuickImportModal'
+
+// TQL brokers on behalf of multiple brands. Only the Lime path uses the
+// structured per-container form; other brands fall back to paste.
+const TQL_COMPANY = 'TQL'
+const STRUCTURED_BRAND = 'Lime Mobility'
 
 const CUSTOMERS = ['Lime Mobility', 'Boviet Solar', 'Pan American Wire MFG', 'National Plastic']
 
@@ -41,147 +58,8 @@ const EMPTY_FORM: FormState = {
   damage_notes: '',
 }
 
-// ─── Parser ────────────────────────────────────────────────────────────
-
-interface ParsedLine {
-  raw: string
-  container_no: string
-  whpo: string
-  date: string  // ISO YYYY-MM-DD
-  time: string  // HH:MM (24h)
-  qty: number
-  product_type: string
-  sku: string
-}
-
-interface ParseError {
-  raw: string
-  message: string
-}
-
-interface ParseResult {
-  lines: ParsedLine[]
-  errors: ParseError[]
-}
-
-function todaysYear() {
-  return new Date().getFullYear()
-}
-
-function parseDate(token: string): string | null {
-  // Accept M/D, M/D/YY, M/D/YYYY, M-D, M-D-YY
-  const m = token.match(/^(\d{1,2})[/\-](\d{1,2})(?:[/\-](\d{2,4}))?$/)
-  if (!m) return null
-  const month = parseInt(m[1], 10)
-  const day = parseInt(m[2], 10)
-  let year = m[3] ? parseInt(m[3], 10) : todaysYear()
-  if (year < 100) year += 2000
-  if (month < 1 || month > 12 || day < 1 || day > 31) return null
-  return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`
-}
-
-function parseTime(token: string): string | null {
-  // Accept 8am, 8AM, 8:30am, 08:30, 14:00, 8 (assume 24h or am for ≤12)
-  const m = token.match(/^(\d{1,2})(?::(\d{2}))?\s*(am|pm|AM|PM)?$/)
-  if (!m) return null
-  let hour = parseInt(m[1], 10)
-  const minute = m[2] ? parseInt(m[2], 10) : 0
-  const ampm = m[3]?.toLowerCase()
-  if (ampm === 'pm' && hour < 12) hour += 12
-  if (ampm === 'am' && hour === 12) hour = 0
-  if (hour < 0 || hour > 23 || minute < 0 || minute > 59) return null
-  return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`
-}
-
-function parseShipmentLine(raw: string): ParsedLine | ParseError {
-  const tokens = raw.trim().split(/\s+/)
-  if (tokens.length < 7) {
-    return { raw, message: `Expected 7+ tokens: container WHPO/Load No date time qty type SKU` }
-  }
-  const [container_no, whpo, dateTok, timeTok, qtyTok, ...rest] = tokens
-  if (!/^[A-Z]{4}\d{7}$/.test(container_no)) {
-    return { raw, message: `Container "${container_no}" — expected ISO 6346 (4 letters + 7 digits)` }
-  }
-  if (!/^\d{8}$/.test(whpo)) {
-    return { raw, message: `WHPO/Load No "${whpo}" — must be 8 digits` }
-  }
-  const date = parseDate(dateTok)
-  if (!date) return { raw, message: `Date "${dateTok}" — expected M/D or M/D/YYYY` }
-  const time = parseTime(timeTok)
-  if (!time) return { raw, message: `Time "${timeTok}" — expected 8am, 8:30am, or 14:30` }
-  const qty = parseInt(qtyTok, 10)
-  if (!Number.isFinite(qty) || qty <= 0) {
-    return { raw, message: `Qty "${qtyTok}" — must be a positive integer` }
-  }
-  // Last token = SKU, everything in between = product type
-  const sku = rest[rest.length - 1]
-  if (!sku || !/^[\w\-./]+$/.test(sku)) {
-    return { raw, message: `SKU "${sku}" — letters/digits/dashes only` }
-  }
-  const product_type = rest.slice(0, -1).join(' ').trim() || ''
-  if (!product_type) {
-    return { raw, message: `Missing product type between qty and SKU` }
-  }
-
-  return { raw, container_no, whpo, date, time, qty, product_type, sku }
-}
-
-function parseShipments(text: string): ParseResult {
-  const out: ParseResult = { lines: [], errors: [] }
-  for (const rawLine of text.split(/\r?\n/)) {
-    const trimmed = rawLine.trim()
-    if (!trimmed) continue
-    const parsed = parseShipmentLine(trimmed)
-    if ('message' in parsed) {
-      out.errors.push(parsed)
-    } else {
-      out.lines.push(parsed)
-    }
-  }
-  return out
-}
-
-// Group parsed lines into one submission per WHPO
-interface WHPOGroup {
-  whpo: string
-  expected_arrival_date: string  // earliest among containers, used as DO date
-  containers: VendorContainerSubmission[]
-}
-
-function groupByWHPO(lines: ParsedLine[]): WHPOGroup[] {
-  const byWhpo = new Map<string, ParsedLine[]>()
-  for (const line of lines) {
-    if (!byWhpo.has(line.whpo)) byWhpo.set(line.whpo, [])
-    byWhpo.get(line.whpo)!.push(line)
-  }
-
-  const groups: WHPOGroup[] = []
-  for (const [whpo, whpoLines] of byWhpo.entries()) {
-    // Within each WHPO, group by container
-    const byContainer = new Map<string, ParsedLine[]>()
-    for (const line of whpoLines) {
-      if (!byContainer.has(line.container_no)) byContainer.set(line.container_no, [])
-      byContainer.get(line.container_no)!.push(line)
-    }
-    const containers: VendorContainerSubmission[] = []
-    for (const [containerNo, containerLines] of byContainer.entries()) {
-      const lineItems: VendorLineItem[] = containerLines.map((l) => ({
-        sku: l.sku,
-        qty: l.qty,
-        product_type: l.product_type || null,
-      }))
-      containers.push({
-        container_no: containerNo,
-        expected_arrival_date: containerLines[0].date,
-        expected_arrival_time: containerLines[0].time + ':00',
-        lines: lineItems,
-      })
-    }
-    const earliestDate = whpoLines.map((l) => l.date).sort()[0]
-    groups.push({ whpo, expected_arrival_date: earliestDate, containers })
-  }
-  return groups
-}
+// Parser extracted to lib/parseShipments — also used by QuickImportModal
+// on the TQL → Lime structured path.
 
 // ─── Page ──────────────────────────────────────────────────────────────
 
@@ -214,9 +92,22 @@ export default function VendorIntakePage() {
   const [error, setError] = useState<string | null>(null)
   const [results, setResults] = useState<WHPOIntakeResponse[] | null>(null)
 
+  // TQL is a broker submitting on behalf of multiple brands. They pick a
+  // brand per submission; only the Lime path swaps the paste textarea for
+  // the structured form. Initialised once when the vendor logs in.
+  const isTQL = vendorUser?.company === TQL_COMPANY
+  const [brandForTQL, setBrandForTQL] = useState<string>('')
+  const useStructuredForm = isTQL && brandForTQL === STRUCTURED_BRAND
+  const [structuredWHPO, setStructuredWHPO] = useState<StructuredWHPO>(() => makeEmptyWHPO())
+  const [quickImportOpen, setQuickImportOpen] = useState(false)
+
   // Live parse for preview — must run on every render (React Rules of Hooks).
   const parsed = useMemo(() => parseShipments(form.shipments), [form.shipments])
   const groups = useMemo(() => groupByWHPO(parsed.lines), [parsed.lines])
+  const structuredErrors = useMemo(
+    () => (useStructuredForm ? validateStructuredWHPO(structuredWHPO) : []),
+    [useStructuredForm, structuredWHPO]
+  )
 
   // Gate: page reload wipes the in-memory session, which would land an
   // unauthenticated vendor on the chooser screen. Force them through login.
@@ -277,12 +168,26 @@ export default function VendorIntakePage() {
     e.preventDefault()
     setError(null)
 
-    if (parsed.errors.length > 0) {
-      setError(`Fix the ${parsed.errors.length} parse error(s) before submitting.`)
-      return
+    // Gate by the active input mode.
+    if (useStructuredForm) {
+      if (structuredErrors.length > 0) {
+        setError(`Fix ${structuredErrors.length} field error(s) before submitting.`)
+        return
+      }
+    } else {
+      if (parsed.errors.length > 0) {
+        setError(`Fix the ${parsed.errors.length} parse error(s) before submitting.`)
+        return
+      }
+      if (groups.length === 0) {
+        setError('Add at least one shipment line.')
+        return
+      }
     }
-    if (groups.length === 0) {
-      setError('Add at least one shipment line.')
+    // TQL must pick a brand even on the paste path (their session's
+    // company "TQL" isn't a valid customer for the warehouse).
+    if (isTQL && !brandForTQL) {
+      setError('Select which company this shipment is for.')
       return
     }
 
@@ -299,23 +204,44 @@ export default function VendorIntakePage() {
       // operations team derives footprint from SKU master data + qty.
       const packaging = null
 
-      // When logged in: customer/name/email come from the vendor session.
-      // Legacy path (no login): fall back to form fields the user filled in.
-      const customer = isLoggedIn && vendorUser ? vendorUser.company : form.customer
+      // TQL submits ON BEHALF OF a brand they picked. Other logged-in
+      // vendors submit for their own company. Anonymous fallback uses the
+      // form field.
+      const customer = isTQL
+        ? brandForTQL
+        : isLoggedIn && vendorUser
+        ? vendorUser.company
+        : form.customer
       const submitterName =
         isLoggedIn && vendorUser ? vendorUser.full_name : form.submitter_name
       const submitterEmail =
         isLoggedIn && vendorUser ? vendorUser.email : form.submitter_email
 
+      // Build the submission list. Structured-form path = single WHPO from
+      // the editor. Paste path = one submission per parsed WHPO group.
+      const submissions = useStructuredForm
+        ? [
+            {
+              whpo_number: structuredWHPO.whpo_number,
+              expected_arrival_date: structuredWHPO.expected_arrival_date,
+              containers: structuredWHPO.containers,
+            },
+          ]
+        : groups.map((g) => ({
+            whpo_number: g.whpo,
+            expected_arrival_date: g.expected_arrival_date,
+            containers: g.containers,
+          }))
+
       const allResults: WHPOIntakeResponse[] = []
-      for (const group of groups) {
+      for (const s of submissions) {
         const result = await api.submitWHPO({
           customer,
-          whpo_number: group.whpo,
+          whpo_number: s.whpo_number,
           submitter_name: submitterName,
           submitter_email: submitterEmail,
-          expected_arrival_date: group.expected_arrival_date,
-          containers: group.containers,
+          expected_arrival_date: s.expected_arrival_date,
+          containers: s.containers,
           packaging,
           notes: fullNotes || null,
         })
@@ -331,8 +257,11 @@ export default function VendorIntakePage() {
 
   function startAnother() {
     setForm(EMPTY_FORM)
+    setStructuredWHPO(makeEmptyWHPO())
     setResults(null)
     setError(null)
+    // Keep brandForTQL so a TQL user can submit several Lime WHPOs in a row
+    // without re-picking the brand each time.
   }
 
   if (results) {
@@ -418,6 +347,23 @@ export default function VendorIntakePage() {
                     Sign out
                   </button>
                 </div>
+                {isTQL && (
+                  <div className="mt-3 pt-3 border-t border-[#0093D0]/20">
+                    <Select
+                      label="Submitting on behalf of"
+                      required
+                      value={brandForTQL}
+                      onChange={setBrandForTQL}
+                      options={CUSTOMERS}
+                    />
+                    {brandForTQL === STRUCTURED_BRAND && (
+                      <p className="text-[11px] text-slate-500 mt-1">
+                        Lime shipments use the structured form below. Use{' '}
+                        <em>Quick import</em> if you have a pasteable line block.
+                      </p>
+                    )}
+                  </div>
+                )}
               </div>
             ) : (
               <>
@@ -456,32 +402,42 @@ export default function VendorIntakePage() {
           </Section>
 
           <Section title="Shipments">
-            <div>
-              <label className="block text-xs font-semibold text-[#1B4676] mb-1.5">
-                Paste one line per (container × SKU){' '}
-                <span className="text-[#0093D0]">*</span>
-              </label>
-              <p className="text-xs text-slate-500 mb-2">
-                Format:&nbsp;
-                <code className="bg-slate-100 text-[#1B4676] px-1.5 py-0.5 rounded font-mono">
-                  CONTAINER WHPO/LOAD NO DATE TIME QTY TYPE SKU
-                </code>
-                &nbsp;— whitespace-separated, any spacing.
-              </p>
-              <textarea
-                className="w-full border border-slate-300 rounded-md px-3 py-2 font-mono text-sm text-slate-800 placeholder:text-slate-400 focus:border-[#0093D0] focus:ring-2 focus:ring-[#0093D0]/20 focus:outline-none transition h-44"
-                placeholder={`HPCU4492096   36648912   5/15   8am   320   Scooters       LPN-003743
+            {useStructuredForm ? (
+              <StructuredShipmentsEditor
+                whpo={structuredWHPO}
+                onChange={setStructuredWHPO}
+                onQuickImport={() => setQuickImportOpen(true)}
+              />
+            ) : (
+              <>
+                <div>
+                  <label className="block text-xs font-semibold text-[#1B4676] mb-1.5">
+                    Paste one line per (container × SKU){' '}
+                    <span className="text-[#0093D0]">*</span>
+                  </label>
+                  <p className="text-xs text-slate-500 mb-2">
+                    Format:&nbsp;
+                    <code className="bg-slate-100 text-[#1B4676] px-1.5 py-0.5 rounded font-mono">
+                      CONTAINER WHPO/LOAD NO DATE TIME QTY TYPE SKU
+                    </code>
+                    &nbsp;— whitespace-separated, any spacing.
+                  </p>
+                  <textarea
+                    className="w-full border border-slate-300 rounded-md px-3 py-2 font-mono text-sm text-slate-800 placeholder:text-slate-400 focus:border-[#0093D0] focus:ring-2 focus:ring-[#0093D0]/20 focus:outline-none transition h-44"
+                    placeholder={`HPCU4492096   36648912   5/15   8am   320   Scooters       LPN-003743
 ABCU1234567   36648912   5/15   9am   500   Bikes          LPN-001234
 HPCU9999999   36648913   5/16   10am  100   Solar Panels   LPN-002222`}
-                value={form.shipments}
-                onChange={(e) => update('shipments', e.target.value)}
-                required
-                spellCheck={false}
-              />
-            </div>
+                    value={form.shipments}
+                    onChange={(e) => update('shipments', e.target.value)}
+                    required
+                    spellCheck={false}
+                  />
+                </div>
 
-            {(parsed.lines.length > 0 || parsed.errors.length > 0) && (
-              <ParsePreview parsed={parsed} groups={groups} />
+                {(parsed.lines.length > 0 || parsed.errors.length > 0) && (
+                  <ParsePreview parsed={parsed} groups={groups} />
+                )}
+              </>
             )}
           </Section>
 
@@ -510,7 +466,12 @@ HPCU9999999   36648913   5/16   10am  100   Solar Panels   LPN-002222`}
 
           <button
             type="submit"
-            disabled={submitting || parsed.errors.length > 0 || groups.length === 0}
+            disabled={
+              submitting ||
+              (useStructuredForm
+                ? structuredErrors.length > 0
+                : parsed.errors.length > 0 || groups.length === 0)
+            }
             className={`w-full bg-[#0093D0] hover:bg-[#00A8E8] text-white font-bold rounded-full py-3.5 text-base transition flex items-center justify-center gap-2 shadow-[0_8px_24px_-4px_rgba(0,147,208,0.45)] hover:shadow-[0_8px_28px_-2px_rgba(0,147,208,0.6)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#0093D0] focus-visible:ring-offset-2 ${
               submitting
                 ? 'opacity-90 cursor-wait'
@@ -525,7 +486,9 @@ HPCU9999999   36648913   5/16   10am  100   Solar Panels   LPN-002222`}
             ) : (
               <>
                 <span>
-                  {groups.length <= 1
+                  {useStructuredForm
+                    ? 'Submit shipment'
+                    : groups.length <= 1
                     ? 'Submit shipment'
                     : `Submit ${groups.length} shipments`}
                 </span>
@@ -534,6 +497,12 @@ HPCU9999999   36648913   5/16   10am  100   Solar Panels   LPN-002222`}
             )}
           </button>
         </form>
+
+        <QuickImportModal
+          open={quickImportOpen}
+          onClose={() => setQuickImportOpen(false)}
+          onApply={setStructuredWHPO}
+        />
       </div>
     </VendorPortalChrome>
   )
