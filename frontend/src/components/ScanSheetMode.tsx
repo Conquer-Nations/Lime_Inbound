@@ -107,8 +107,11 @@ export default function ScanSheetMode({ sheet, operator, onFinished }: Props) {
       submitOrAdvance()
     }, 250)
     return () => clearTimeout(t)
+    // Depend on `busy` too so that when an in-flight submit completes,
+    // any serial that arrived during it gets picked up automatically
+    // (without requiring the operator to retype/re-scan).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [serial])
+  }, [serial, busy])
 
   useEffect(() => {
     if (!sheet.header.requires_imei) return
@@ -119,7 +122,7 @@ export default function ScanSheetMode({ sheet, operator, onFinished }: Props) {
     }, 250)
     return () => clearTimeout(t)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [imei])
+  }, [imei, busy])
 
   /** Robustly move focus to the next input. Uses requestAnimationFrame so
    * React has rendered before we move focus — otherwise focus calls during
@@ -167,6 +170,16 @@ export default function ScanSheetMode({ sheet, operator, onFinished }: Props) {
       return
     }
     setError(null)
+    // Clear input BEFORE the API call so the next scan can land in an
+    // empty field while this one is still in-flight. Without this, a
+    // fast scanner concatenates the next serial onto the previous one.
+    setSerial('')
+    setImei('')
+    if (serialInputRef.current) serialInputRef.current.value = ''
+    if (imeiInputRef.current) imeiInputRef.current.value = ''
+    // Refocus immediately — don't wait for the API. The input is never
+    // disabled (only readOnly on completion), so refocus is reliable.
+    focusNext('serial')
     setBusy(true)
     try {
       const res = await api.recordScanRow(sheet.header.receipt_id, operator, {
@@ -177,12 +190,7 @@ export default function ScanSheetMode({ sheet, operator, onFinished }: Props) {
       if (res.accepted && res.row) {
         setRows((prev) => [...prev, res.row!])
         setLastAccepted(res.row.id)
-        setSerial('')
-        setImei('')
         setNotes('')
-        // Clear DOM values too in case state hasn't applied yet.
-        if (serialInputRef.current) serialInputRef.current.value = ''
-        if (imeiInputRef.current) imeiInputRef.current.value = ''
       } else {
         setLastDupRowId(res.duplicate_of_row_id ?? null)
         setError(res.error ?? 'Scan rejected.')
@@ -191,7 +199,6 @@ export default function ScanSheetMode({ sheet, operator, onFinished }: Props) {
       setError(e instanceof ApiError ? e.detail : String(e))
     } finally {
       setBusy(false)
-      focusNext('serial')
     }
   }
 
@@ -275,8 +282,8 @@ export default function ScanSheetMode({ sheet, operator, onFinished }: Props) {
             autoComplete="off"
             autoCorrect="off"
             autoCapitalize="off"
-            className="font-mono w-full border border-slate-300 rounded-md px-4 py-4 text-xl tracking-wider text-[#1B4676] placeholder:text-slate-400 focus:border-[#0093D0] focus:ring-2 focus:ring-[#0093D0]/20 focus:outline-none transition"
-            disabled={busy || h.is_completed}
+            className="font-mono w-full border border-slate-300 rounded-md px-4 py-4 text-xl tracking-wider text-[#1B4676] placeholder:text-slate-400 focus:border-[#0093D0] focus:ring-2 focus:ring-[#0093D0]/20 focus:outline-none transition disabled:bg-slate-50"
+            disabled={h.is_completed}
           />
           {h.requires_imei && (
             <input
