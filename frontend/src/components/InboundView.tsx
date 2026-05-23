@@ -1,4 +1,5 @@
 import { useEffect, useState, type ReactNode } from 'react'
+import { Link } from 'react-router-dom'
 import { API_BASE } from '../api/client'
 
 interface InboundRow {
@@ -341,6 +342,15 @@ export default function InboundView() {
                       >
                         {c.key === 'last_updated_at'
                           ? formatLastUpdatedCell(row.last_updated_at)
+                          : c.key === 'container_no' && row.container_no
+                          ? (
+                            <Link
+                              to={`/manager/containers/${encodeURIComponent(row.container_no)}`}
+                              className="text-[#1B4676] hover:text-[#0093D0] font-bold underline decoration-dotted"
+                            >
+                              {row.container_no}
+                            </Link>
+                          )
                           : formatCell(row[c.key])}
                       </td>
                     ))}

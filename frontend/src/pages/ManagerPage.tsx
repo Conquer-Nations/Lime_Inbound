@@ -8,14 +8,23 @@ import ResolveExceptionModal from '../components/ResolveExceptionModal'
 import WarehouseFloorPlan from '../components/WarehouseFloorPlan'
 import { CalendarView } from '../components/CalendarView'
 import type { DOListItem, ExceptionItem, LotMapItem } from '../types/api'
+import type { OutboundOrderListRow } from '../api/client'
 import BrandMark from '../components/BrandMark'
 
-type Tab = 'dashboard' | 'calendar' | 'dos' | 'lots' | 'exceptions' | 'inbound'
+type Tab =
+  | 'dashboard'
+  | 'calendar'
+  | 'dos'
+  | 'tos'
+  | 'lots'
+  | 'exceptions'
+  | 'inbound'
 
 const TABS: { key: Tab; label: string }[] = [
   { key: 'dashboard', label: 'Dashboard' },
   { key: 'calendar', label: 'Calendar' },
   { key: 'dos', label: 'Delivery Orders' },
+  { key: 'tos', label: 'Transfer Orders' },
   { key: 'lots', label: 'Warehouse Map' },
   { key: 'exceptions', label: 'Exceptions' },
   { key: 'inbound', label: 'Inbound' },
@@ -25,6 +34,7 @@ export default function ManagerPage() {
   const { user } = useAuth()
   const [tab, setTab] = useState<Tab>('dashboard')
   const [dos, setDos] = useState<DOListItem[] | null>(null)
+  const [tos, setTos] = useState<OutboundOrderListRow[] | null>(null)
   const [lots, setLots] = useState<LotMapItem[] | null>(null)
   const [exceptions, setExceptions] = useState<ExceptionItem[] | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -32,6 +42,8 @@ export default function ManagerPage() {
   function refresh(t: Tab = tab) {
     setError(null)
     if (t === 'dos') api.listDOs().then(setDos).catch((e) => setError(String(e)))
+    if (t === 'tos')
+      api.listAllOutboundOrders().then(setTos).catch((e) => setError(String(e)))
     if (t === 'lots') api.listLots().then(setLots).catch((e) => setError(String(e)))
     if (t === 'exceptions')
       api.listExceptions().then(setExceptions).catch((e) => setError(String(e)))
@@ -39,9 +51,10 @@ export default function ManagerPage() {
 
   useEffect(() => {
     if (tab === 'dos' && dos === null) refresh('dos')
+    else if (tab === 'tos' && tos === null) refresh('tos')
     else if (tab === 'lots' && lots === null) refresh('lots')
     else if (tab === 'exceptions' && exceptions === null) refresh('exceptions')
-  }, [tab, dos, lots, exceptions])
+  }, [tab, dos, tos, lots, exceptions])
 
   return (
     <ManagerChrome activeTab={tab} onTabChange={setTab}>
@@ -78,11 +91,13 @@ export default function ManagerPage() {
               fetcher={(d) => api.managerCalendar(d)}
               defaultDays={14}
               showWindowSelector
+              drilldown
               emptyHint="No inbound or outbound activity in this window."
             />
           </div>
         )}
         {tab === 'dos' && <DOsTab data={dos} />}
+        {tab === 'tos' && <TOsTab data={tos} />}
         {tab === 'lots' && <LotsTab data={lots} />}
         {tab === 'inbound' && <InboundView />}
         {tab === 'exceptions' && (
@@ -278,6 +293,86 @@ function DOsTab({ data }: { data: DOListItem[] | null }) {
               </td>
               <td className="px-4 py-2 text-slate-600 font-mono">
                 {d.expected_arrival_date ?? '—'}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+// ─── Outbound Transfer Orders tab ──────────────────────────────────────
+
+function TOsTab({ data }: { data: OutboundOrderListRow[] | null }) {
+  if (data === null) return <LoadingHint />
+  if (data.length === 0)
+    return (
+      <EmptyHint
+        title="No Transfer Orders yet"
+        body="Outbound shipments will appear here as soon as customers submit a TO via the vendor portal."
+      />
+    )
+  return (
+    <div
+      className="bg-white rounded-xl border border-slate-200 overflow-hidden"
+      style={{
+        boxShadow:
+          '0 1px 2px 0 rgba(15,23,42,0.04), 0 8px 24px -8px rgba(15,23,42,0.08)',
+      }}
+    >
+      <div className="bg-slate-50 border-b border-slate-200 px-4 py-2.5">
+        <h3 className="text-[11px] font-bold uppercase tracking-[0.18em] text-[#1B4676]">
+          Outbound Transfer Orders
+        </h3>
+      </div>
+      <table className="w-full text-sm">
+        <thead className="bg-white text-[10.5px] uppercase text-slate-500 border-b border-slate-200">
+          <tr>
+            <th className="text-left px-4 py-2 font-semibold tracking-wider">TO #</th>
+            <th className="text-left px-4 py-2 font-semibold tracking-wider">PO #</th>
+            <th className="text-left px-4 py-2 font-semibold tracking-wider">Customer</th>
+            <th className="text-left px-4 py-2 font-semibold tracking-wider">Status</th>
+            <th className="text-left px-4 py-2 font-semibold tracking-wider">Priority</th>
+            <th className="text-right px-4 py-2 font-semibold tracking-wider">Lines</th>
+            <th className="text-right px-4 py-2 font-semibold tracking-wider">Trucks</th>
+            <th className="text-right px-4 py-2 font-semibold tracking-wider">Picked</th>
+            <th className="text-left px-4 py-2 font-semibold tracking-wider">Order date</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-slate-100">
+          {data.map((t) => (
+            <tr
+              key={t.order_id}
+              className="hover:bg-[#1B4676]/5 transition cursor-pointer"
+            >
+              <td className="px-4 py-2 font-mono font-bold">
+                <Link
+                  to={`/manager/outbound-orders/${encodeURIComponent(t.transfer_order_no)}`}
+                  className="text-[#1B4676] hover:text-[#0093D0]"
+                >
+                  {t.transfer_order_no}
+                </Link>
+              </td>
+              <td className="px-4 py-2 font-mono text-slate-600">
+                {t.po_number ?? '—'}
+              </td>
+              <td className="px-4 py-2 text-slate-700">{t.customer_name}</td>
+              <td className="px-4 py-2">
+                <StatusPill status={t.status} />
+              </td>
+              <td className="px-4 py-2 text-slate-700 capitalize">{t.priority}</td>
+              <td className="px-4 py-2 text-right text-slate-700 font-mono">
+                {t.line_count}
+              </td>
+              <td className="px-4 py-2 text-right text-slate-700 font-mono">
+                {t.truck_count}
+              </td>
+              <td className="px-4 py-2 text-right text-slate-700 font-mono">
+                {t.picked_qty}
+              </td>
+              <td className="px-4 py-2 text-slate-600 font-mono">
+                {t.order_date ?? '—'}
               </td>
             </tr>
           ))}

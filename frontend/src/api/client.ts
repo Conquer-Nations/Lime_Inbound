@@ -548,6 +548,20 @@ export const api = {
       fd,
     )
   },
+
+  // ─── Manager ERP drilldowns ────────────────────────────────────────
+  getContainerDetail: (container_no: string) =>
+    request<ContainerErpDetail>(
+      `/manager/containers/${encodeURIComponent(container_no)}`,
+    ),
+
+  listAllOutboundOrders: () =>
+    request<OutboundOrderListRow[]>('/manager/outbound-orders'),
+
+  getOutboundOrderDetail: (transfer_order_no: string) =>
+    request<OutboundOrderErpDetail>(
+      `/manager/outbound-orders/${encodeURIComponent(transfer_order_no)}`,
+    ),
 }
 
 // ─── Driver-docs OCR extraction ───────────────────────────────────────
@@ -877,6 +891,220 @@ export interface InventoryItem {
 
 export interface InventoryResponse {
   items: InventoryItem[]
+}
+
+// ─── Manager ERP types (mirror schemas/manager_erp.py) ────────────────
+
+export interface ErpStageEvent {
+  stage: string
+  label: string
+  at: string | null
+}
+
+export interface ContainerErpDocument {
+  kind: string
+  label: string
+  filename: string
+  content_type: string
+  file_size: number
+  uploaded_at: string
+  uploaded_by: string | null
+  url: string
+}
+
+export interface ContainerErpLine {
+  line_id: number
+  sku: string
+  sku_raw: string
+  qty: number
+  product_type: string | null
+  sku_resolved: boolean
+  description: string | null
+}
+
+export interface ContainerErpLotAssignment {
+  assignment_order: number
+  lot_code: string
+  floor_name: string
+  sku: string
+  planned_pallets: number
+  actual_pallets: number
+  status: string
+}
+
+export interface ContainerErpScanRow {
+  id: number
+  serial_number: string | null
+  imei: string | null
+  sku: string | null
+  box_number: number | null
+  scanned_by: string
+  scanned_at: string
+  notes: string | null
+  result: string | null
+}
+
+export interface ContainerErpOutboundLink {
+  outbound_order_id: number
+  transfer_order_no: string
+  po_number: string | null
+  customer_name: string
+  order_status: string
+  line_id: number
+  line_no: number
+  sku: string
+  order_qty: number
+  picked_qty: number
+  order_date: string | null
+}
+
+export interface ContainerErpException {
+  exception_id: number
+  kind: string
+  status: string
+  opened_at: string
+  opened_by: string | null
+  resolved_at: string | null
+  resolved_by: string | null
+  payload: Record<string, unknown> | null
+}
+
+export interface ContainerErpActivity {
+  id: number
+  t: string
+  actor: string | null
+  kind: string
+  message: string | null
+}
+
+export interface ContainerErpDetail {
+  container_id: number
+  container_no: string
+  status: string
+  customer_name: string
+  whpo_id: number
+  whpo_number: string
+  do_id: number
+  do_number: string
+  bol_number: string | null
+
+  expected_arrival_date: string | null
+  expected_arrival_time: string | null
+  actual_arrival_date: string | null
+  actual_arrival_time: string | null
+  started_at: string | null
+  finished_at: string | null
+  started_by: string | null
+  finished_by: string | null
+
+  driver_name: string | null
+  driver_license: string | null
+  driver_phone: string | null
+  truck_license_plate: string | null
+  carrier: string | null
+  insurance: string | null
+  driver_info_received_at: string | null
+
+  on_pallet: boolean | null
+  pallet_length_in: number | null
+  pallet_width_in: number | null
+  item_length_in: number | null
+  item_width_in: number | null
+  item_height_in: number | null
+  total_sqft_needed: number
+  lots_equivalent: number
+
+  total_expected_qty: number
+  total_received_qty: number
+  lines: ContainerErpLine[]
+  lot_assignments: ContainerErpLotAssignment[]
+
+  receipt_id: number | null
+  receipt_status: string | null
+  total_scanned: number
+  last_scan_at: string | null
+  recent_scans: ContainerErpScanRow[]
+
+  documents: ContainerErpDocument[]
+  outbound_links: ContainerErpOutboundLink[]
+  exceptions: ContainerErpException[]
+  open_exceptions: number
+  activity: ContainerErpActivity[]
+
+  timeline: ErpStageEvent[]
+  current_stage: string
+}
+
+export interface OutboundOrderListRow {
+  order_id: number
+  transfer_order_no: string
+  po_number: string | null
+  customer_name: string
+  status: string
+  order_date: string | null
+  priority: string
+  submitted_at: string | null
+  line_count: number
+  truck_count: number
+  picked_qty: number
+}
+
+export interface OutboundOrderErpLine {
+  line_id: number
+  line_no: number
+  sku: string
+  description: string | null
+  order_qty: number
+  picked_qty: number
+  unit: string
+  serial_specific: boolean
+  serials_requested: string[]
+  source_container_no: string | null
+}
+
+export interface OutboundOrderErpContainer {
+  container_id: number
+  container_no: string
+  container_type: string
+  status: string
+  driver_name: string | null
+  driver_license: string | null
+  driver_phone: string | null
+  truck_license_plate: string | null
+  carrier: string | null
+  bol_number: string | null
+  scheduled_arrival_at: string | null
+  started_at: string | null
+  sealed_at: string | null
+  total_scanned: number
+  receipt_id: number | null
+  receipt_status: string | null
+}
+
+export interface OutboundOrderErpDetail {
+  order_id: number
+  transfer_order_no: string
+  po_number: string | null
+  customer_name: string
+  status: string
+  order_date: string | null
+  priority: string
+  memo: string | null
+  ship_from_name: string | null
+  ship_from_address: string | null
+  ship_to_name: string | null
+  ship_to_address: string | null
+  submitted_at: string
+  submitted_by: string | null
+  notes: string | null
+  lines: OutboundOrderErpLine[]
+  total_order_qty: number
+  total_picked_qty: number
+  containers: OutboundOrderErpContainer[]
+  linked_inbound_containers: string[]
+  timeline: ErpStageEvent[]
+  current_stage: string
+  activity: ContainerErpActivity[]
 }
 
 export { ApiError }

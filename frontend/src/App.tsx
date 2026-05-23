@@ -12,6 +12,8 @@ import VendorForgotPasswordPage from './pages/VendorForgotPasswordPage'
 import VendorWelcomePage from './pages/VendorWelcomePage'
 import DODetailPage from './pages/DODetailPage'
 import LotDetailPage from './pages/LotDetailPage'
+import ContainerDetailPage from './pages/ContainerDetailPage'
+import OutboundOrderDetailPage from './pages/OutboundOrderDetailPage'
 
 function RequireAuth({
   role,
@@ -82,6 +84,22 @@ export default function App() {
               element={
                 <RequireAuth role="manager_or_dev">
                   <LotDetailPage />
+                </RequireAuth>
+              }
+            />
+            <Route
+              path="/manager/containers/:container_no"
+              element={
+                <RequireAuth role="manager_or_dev">
+                  <ContainerDetailPage />
+                </RequireAuth>
+              }
+            />
+            <Route
+              path="/manager/outbound-orders/:transfer_order_no"
+              element={
+                <RequireAuth role="manager_or_dev">
+                  <OutboundOrderDetailPage />
                 </RequireAuth>
               }
             />

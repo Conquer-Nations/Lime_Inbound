@@ -1306,3 +1306,50 @@ async def get_manager_calendar(
     days = max(1, min(60, int(days)))
     data = await build_calendar(session, days=days, customer_name=None)
     return data
+
+
+# ─── ERP drilldowns ────────────────────────────────────────────────────
+
+
+@router.get("/containers/{container_no}")
+async def get_container_erp_detail(
+    container_no: str,
+    session: AsyncSession = Depends(get_session),
+):
+    """Comprehensive container detail — order chain, driver, lines, scans,
+    lot put-away, documents, downstream outbound TOs, exceptions, activity
+    log. Single round-trip; powers the manager ERP detail UI."""
+    from app.services.manager_erp import NotFound, get_container_detail
+
+    try:
+        return await get_container_detail(session, container_no)
+    except NotFound as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@router.get("/outbound-orders")
+async def list_outbound_orders(
+    limit: int = Query(200, ge=1, le=500),
+    session: AsyncSession = Depends(get_session),
+):
+    """Cross-customer list of every outbound Transfer Order — manager's
+    counterpart to the inbound DOs list."""
+    from app.services.manager_erp import list_outbound_orders_all
+
+    return await list_outbound_orders_all(session, limit=limit)
+
+
+@router.get("/outbound-orders/{transfer_order_no}")
+async def get_outbound_erp_detail(
+    transfer_order_no: str,
+    session: AsyncSession = Depends(get_session),
+):
+    """Comprehensive TO detail — lines (picked vs ordered), attached
+    trucks, linked inbound containers (drilldown back to source), timeline,
+    activity log."""
+    from app.services.manager_erp import NotFound, get_outbound_order_detail
+
+    try:
+        return await get_outbound_order_detail(session, transfer_order_no)
+    except NotFound as e:
+        raise HTTPException(status_code=404, detail=str(e))

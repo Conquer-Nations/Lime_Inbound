@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { Link } from 'react-router-dom'
 import type { CalendarResponse, CalendarDay } from '../api/client'
 
 /**
@@ -13,11 +14,16 @@ export function CalendarView({
   defaultDays = 14,
   showWindowSelector = false,
   emptyHint,
+  drilldown = false,
 }: {
   fetcher: (days: number) => Promise<CalendarResponse>
   defaultDays?: number
   showWindowSelector?: boolean
   emptyHint?: string
+  /** When true, container_no on each row becomes a Link into the manager
+   * ERP drilldown. Vendors pass false so the vendor portal stays a flat
+   * read-only view. */
+  drilldown?: boolean
 }) {
   const [days, setDays] = useState(defaultDays)
   const [data, setData] = useState<CalendarResponse | null>(null)
@@ -94,7 +100,7 @@ export function CalendarView({
       {!busy && !error && (
         <div className="space-y-3">
           {visibleDays.map((day) => (
-            <DayCard key={day.date} day={day} />
+            <DayCard key={day.date} day={day} drilldown={drilldown} />
           ))}
           {visibleDays.every(
             (d) => d.inbound_containers.length === 0 && d.outbound_containers.length === 0,
@@ -109,7 +115,7 @@ export function CalendarView({
   )
 }
 
-function DayCard({ day }: { day: CalendarDay }) {
+function DayCard({ day, drilldown }: { day: CalendarDay; drilldown: boolean }) {
   const [open, setOpen] = useState(false)
   const inCount = day.inbound_containers.length
   const outCount = day.outbound_containers.length
@@ -164,6 +170,8 @@ function DayCard({ day }: { day: CalendarDay }) {
               title="Inbound (arriving)"
               accent="cyan"
               rows={day.inbound_containers}
+              drilldown={drilldown}
+              direction="inbound"
             />
           )}
           {outCount > 0 && (
@@ -171,6 +179,8 @@ function DayCard({ day }: { day: CalendarDay }) {
               title="Outbound (loading)"
               accent="navy"
               rows={day.outbound_containers}
+              drilldown={drilldown}
+              direction="outbound"
             />
           )}
         </div>
@@ -211,10 +221,14 @@ function ContainerList({
   title,
   rows,
   accent,
+  drilldown,
+  direction,
 }: {
   title: string
   rows: import('../api/client').CalendarContainerRow[]
   accent: 'cyan' | 'navy'
+  drilldown: boolean
+  direction: 'inbound' | 'outbound'
 }) {
   const accentColor = accent === 'cyan' ? '#0093D0' : '#1B4676'
   return (
@@ -223,27 +237,53 @@ function ContainerList({
         {title}
       </div>
       <ul className="space-y-1.5 text-sm">
-        {rows.map((r, i) => (
-          <li
-            key={`${r.container_no}|${r.ref_no}|${i}`}
-            className="flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2 rounded-md border border-slate-200 bg-slate-50/40"
-          >
+        {rows.map((r, i) => {
+          const containerLabel = (
             <span className="font-mono font-bold" style={{ color: accentColor }}>
               {r.container_no}
             </span>
-            <span className="text-xs text-slate-600">{r.customer}</span>
+          )
+          const refLabel = (
             <span className="text-xs text-slate-500">{r.ref_no}</span>
-            <span
-              className="ml-auto text-[10.5px] uppercase tracking-wider font-bold px-2 py-0.5 rounded"
-              style={{
-                background: `${accentColor}1A`,
-                color: accentColor,
-              }}
+          )
+          return (
+            <li
+              key={`${r.container_no}|${r.ref_no}|${i}`}
+              className="flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2 rounded-md border border-slate-200 bg-slate-50/40"
             >
-              {r.current_label}
-            </span>
-          </li>
-        ))}
+              {drilldown && direction === 'inbound' ? (
+                <Link
+                  to={`/manager/containers/${encodeURIComponent(r.container_no)}`}
+                  className="hover:opacity-70 underline decoration-dotted"
+                >
+                  {containerLabel}
+                </Link>
+              ) : (
+                containerLabel
+              )}
+              <span className="text-xs text-slate-600">{r.customer}</span>
+              {drilldown && direction === 'outbound' ? (
+                <Link
+                  to={`/manager/outbound-orders/${encodeURIComponent(r.ref_no)}`}
+                  className="hover:opacity-70 underline decoration-dotted"
+                >
+                  {refLabel}
+                </Link>
+              ) : (
+                refLabel
+              )}
+              <span
+                className="ml-auto text-[10.5px] uppercase tracking-wider font-bold px-2 py-0.5 rounded"
+                style={{
+                  background: `${accentColor}1A`,
+                  color: accentColor,
+                }}
+              >
+                {r.current_label}
+              </span>
+            </li>
+          )
+        })}
       </ul>
     </div>
   )

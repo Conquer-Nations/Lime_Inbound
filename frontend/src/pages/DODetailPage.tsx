@@ -116,7 +116,13 @@ function ContainerCard({ c }: { c: ContainerInDO }) {
     >
       <div className="flex items-center gap-3 flex-wrap">
         <h2 className="text-xl font-bold font-mono tracking-wider text-[#1B4676]">
-          {c.container_no}
+          <Link
+            to={`/manager/containers/${encodeURIComponent(c.container_no)}`}
+            className="hover:text-[#0093D0] underline decoration-dotted decoration-2 underline-offset-4"
+            title="Open full container detail"
+          >
+            {c.container_no}
+          </Link>
         </h2>
         <StatusPill status={c.status} />
         <div className="flex-1" />
