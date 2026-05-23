@@ -101,7 +101,11 @@ export default function VendorIntakePage() {
   const [brandForTQL, setBrandForTQL] = useState<string>('')
   // Effective brand = the brand whose shipment is being submitted.
   const effectiveBrand = isTQL ? brandForTQL : vendorUser?.company ?? ''
-  const useStructuredForm = isLoggedIn && (!isTQL || brandForTQL !== '')
+  // Structured form is the default for every logged-in vendor — paste
+  // textarea is legacy and only ever surfaces as the Quick Import shortcut
+  // on the Lime path. (TQL users still need to pick a brand before submit,
+  // but the form layout doesn't depend on it.)
+  const useStructuredForm = isLoggedIn
   const showQuickImport = effectiveBrand === STRUCTURED_BRAND
   const [structuredWHPO, setStructuredWHPO] = useState<StructuredWHPO>(() => makeEmptyWHPO())
   const [quickImportOpen, setQuickImportOpen] = useState(false)
@@ -294,8 +298,8 @@ export default function VendorIntakePage() {
             NEW SHIPMENT
           </h1>
           <p className="mt-3 text-base text-slate-600 max-w-2xl leading-relaxed">
-            Paste shipment lines in the format your team already uses. Each line covers
-            one container × one SKU. The warehouse system parses the rest.
+            Add each container and its SKU lines below.{' '}
+            {isTQL && 'Pick which brand this shipment is for, then fill in the containers.'}
           </p>
         </div>
 
