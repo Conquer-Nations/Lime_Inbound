@@ -754,12 +754,17 @@ async def wipe_transactional_data(
                 detail=f"Excel InboundTable clear failed — aborting before Postgres wipe to keep stores consistent. Error: {e}",
             )
 
-    # Step 2: wipe Postgres transactional tables
+    # Step 2: wipe Postgres transactional tables.
+    # Includes outbound tables (orders, lines, line_serials, containers,
+    # scans) so a wipe leaves the DB fully empty for test runs.
     from sqlalchemy import text as _text
 
     await session.execute(
         _text(
-            "TRUNCATE scans, pallets, receipts, lot_assignments, "
+            "TRUNCATE "
+            "outbound_scans, outbound_line_serials, outbound_lines, "
+            "outbound_containers, outbound_orders, "
+            "scans, pallets, receipts, lot_assignments, "
             "container_lines, containers, dos, whpos, exceptions, "
             "activity_log RESTART IDENTITY CASCADE"
         )
@@ -778,6 +783,10 @@ async def wipe_transactional_data(
         "container_lines",
         "activity_log",
         "exceptions",
+        "outbound_orders",
+        "outbound_lines",
+        "outbound_containers",
+        "outbound_scans",
     ):
         n = await session.scalar(_text(f"SELECT count(*) FROM {tbl}"))
         counts[tbl] = n
@@ -786,6 +795,7 @@ async def wipe_transactional_data(
         "excel_rows_deleted": excel_deleted,
         "postgres_rows_remaining": counts,
         "next_do_number": "DO-2026-0001",
+        "next_po_number": "PO-2026-0001",
     }
 
 
