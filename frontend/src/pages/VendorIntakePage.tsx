@@ -93,11 +93,13 @@ export default function VendorIntakePage() {
   const [results, setResults] = useState<WHPOIntakeResponse[] | null>(null)
 
   // TQL is a broker submitting on behalf of multiple brands. They pick a
-  // brand per submission; only the Lime path swaps the paste textarea for
-  // the structured form. Initialised once when the vendor logs in.
+  // brand per submission. All TQL submissions use the structured per-
+  // container form regardless of brand — the legacy paste textarea is
+  // Lime-specific (matches the format Lime's broker emails use) and lives
+  // on as the Quick Import shortcut available on the structured editor.
   const isTQL = vendorUser?.company === TQL_COMPANY
   const [brandForTQL, setBrandForTQL] = useState<string>('')
-  const useStructuredForm = isTQL && brandForTQL === STRUCTURED_BRAND
+  const useStructuredForm = isTQL && brandForTQL !== ''
   const [structuredWHPO, setStructuredWHPO] = useState<StructuredWHPO>(() => makeEmptyWHPO())
   const [quickImportOpen, setQuickImportOpen] = useState(false)
 
@@ -356,10 +358,11 @@ export default function VendorIntakePage() {
                       onChange={setBrandForTQL}
                       options={CUSTOMERS}
                     />
-                    {brandForTQL === STRUCTURED_BRAND && (
+                    {brandForTQL && (
                       <p className="text-[11px] text-slate-500 mt-1">
-                        Lime shipments use the structured form below. Use{' '}
-                        <em>Quick import</em> if you have a pasteable line block.
+                        {brandForTQL === STRUCTURED_BRAND
+                          ? 'Lime shipments use the structured form below. The Quick Import shortcut takes the legacy paste format.'
+                          : `${brandForTQL} shipments use the structured form below — enter each container and SKU directly.`}
                       </p>
                     )}
                   </div>
@@ -406,7 +409,14 @@ export default function VendorIntakePage() {
               <StructuredShipmentsEditor
                 whpo={structuredWHPO}
                 onChange={setStructuredWHPO}
-                onQuickImport={() => setQuickImportOpen(true)}
+                onQuickImport={
+                  // Quick Import wraps the legacy Lime-format parser.
+                  // Only surface it when the picked brand is Lime; other
+                  // brands' emails don't follow that token shape.
+                  brandForTQL === STRUCTURED_BRAND
+                    ? () => setQuickImportOpen(true)
+                    : undefined
+                }
               />
             ) : (
               <>
