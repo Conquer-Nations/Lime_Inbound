@@ -370,8 +370,16 @@ function SkuFormModal({
     setSubmitting(true)
     try {
       if (isEdit && initial) {
+        const newCustomerId = Number(customerId)
         const payload: SKUAdminUpdate = {
           sku: sku.trim() !== initial.sku ? sku.trim() : undefined,
+          // Only include customer_id when it actually changed — server
+          // returns 409 if the SKU is already in use (container lines / lot
+          // assignments) and we tried to move it.
+          customer_id:
+            newCustomerId && newCustomerId !== initial.customer_id
+              ? newCustomerId
+              : undefined,
           description: description.trim() || null,
           product_type: resolvedProductType || null,
           sqft_per_unit: sqftPerUnit ? Number(sqftPerUnit) : null,
@@ -435,69 +443,65 @@ function SkuFormModal({
             </div>
           )}
 
-          {/* Customer */}
+          {/* Customer (Brand). Editable on both create and edit; the server
+              rejects re-pointing when the SKU is already referenced by
+              container lines / lot assignments. */}
           <div>
             <Label>Customer *</Label>
-            {!isEdit && (
-              <>
-                {!showNewCustomer ? (
-                  <div className="flex gap-2 items-center">
-                    <select
-                      value={customerId}
-                      onChange={(e) => setCustomerId(Number(e.target.value))}
-                      className="flex-1 border border-slate-300 rounded-md px-3 py-2 text-sm focus:border-[#0093D0] focus:ring-2 focus:ring-[#0093D0]/20 focus:outline-none"
-                      required
-                    >
-                      <option value="">— pick customer —</option>
-                      {customers.map((c) => (
-                        <option key={c.id} value={c.id}>
-                          {c.name}
-                        </option>
-                      ))}
-                    </select>
-                    <button
-                      type="button"
-                      onClick={() => setShowNewCustomer(true)}
-                      className="text-xs font-bold text-[#1B4676] hover:text-[#0093D0] whitespace-nowrap"
-                    >
-                      + New customer
-                    </button>
-                  </div>
-                ) : (
-                  <div className="flex gap-2">
-                    <input
-                      type="text"
-                      value={newCustomerName}
-                      onChange={(e) => setNewCustomerName(e.target.value)}
-                      placeholder="New customer name"
-                      className="flex-1 border border-slate-300 rounded-md px-3 py-2 text-sm"
-                      autoFocus
-                    />
-                    <button
-                      type="button"
-                      onClick={handleCreateCustomer}
-                      className="bg-[#1B4676] text-white text-sm font-bold rounded-md px-3 py-2 hover:bg-[#224E72]"
-                    >
-                      Create
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setShowNewCustomer(false)}
-                      className="text-sm text-slate-500 hover:text-slate-700 px-2"
-                    >
-                      Cancel
-                    </button>
-                  </div>
-                )}
-              </>
+            {!showNewCustomer ? (
+              <div className="flex gap-2 items-center">
+                <select
+                  value={customerId}
+                  onChange={(e) => setCustomerId(Number(e.target.value))}
+                  className="flex-1 border border-slate-300 rounded-md px-3 py-2 text-sm focus:border-[#0093D0] focus:ring-2 focus:ring-[#0093D0]/20 focus:outline-none"
+                  required
+                >
+                  <option value="">— pick customer —</option>
+                  {customers.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  onClick={() => setShowNewCustomer(true)}
+                  className="text-xs font-bold text-[#1B4676] hover:text-[#0093D0] whitespace-nowrap"
+                >
+                  + New customer
+                </button>
+              </div>
+            ) : (
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={newCustomerName}
+                  onChange={(e) => setNewCustomerName(e.target.value)}
+                  placeholder="New customer name"
+                  className="flex-1 border border-slate-300 rounded-md px-3 py-2 text-sm"
+                  autoFocus
+                />
+                <button
+                  type="button"
+                  onClick={handleCreateCustomer}
+                  className="bg-[#1B4676] text-white text-sm font-bold rounded-md px-3 py-2 hover:bg-[#224E72]"
+                >
+                  Create
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowNewCustomer(false)}
+                  className="text-sm text-slate-500 hover:text-slate-700 px-2"
+                >
+                  Cancel
+                </button>
+              </div>
             )}
             {isEdit && (
-              <div className="text-sm text-slate-700 px-3 py-2 bg-slate-50 rounded-md border border-slate-200">
-                {initial!.customer_name}{' '}
-                <span className="text-xs text-slate-400 ml-2">
-                  (can't change customer on an existing SKU)
-                </span>
-              </div>
+              <p className="text-[11px] text-slate-500 mt-1">
+                Moving a SKU to a different brand is only allowed if it isn't
+                yet referenced by any container line or lot assignment.
+              </p>
             )}
           </div>
 

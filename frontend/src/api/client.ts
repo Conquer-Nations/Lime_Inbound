@@ -1027,6 +1027,9 @@ export interface SKUAdminCreate {
 
 export interface SKUAdminUpdate {
   sku?: string
+  /** Move this SKU to a different Brand. Server returns 409 if the SKU is
+   *  already referenced by container lines / lot assignments. */
+  customer_id?: number
   description?: string | null
   product_type?: string | null
   sqft_per_unit?: number | null

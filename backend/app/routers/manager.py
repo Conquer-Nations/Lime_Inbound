@@ -1712,6 +1712,51 @@ async def update_sku(
         raise HTTPException(status_code=404, detail=f"SKU {sku_id} not found")
 
     data = payload.model_dump(exclude_unset=True)
+
+    # Repointing to a different brand: only allowed when no container_lines
+    # or lot_assignments reference this SKU (would break receiving history).
+    if "customer_id" in data and data["customer_id"] is not None and data["customer_id"] != s.customer_id:
+        new_customer_id = int(data["customer_id"])
+        new_customer = await session.get(Customer, new_customer_id)
+        if new_customer is None:
+            raise HTTPException(
+                status_code=404, detail=f"Customer {new_customer_id} not found"
+            )
+        in_use_lines = await session.scalar(
+            select(func.count()).select_from(ContainerLine).where(ContainerLine.sku_id == s.id)
+        )
+        in_use_la = await session.scalar(
+            select(func.count()).select_from(LotAssignment).where(LotAssignment.sku_id == s.id)
+        )
+        if (in_use_lines or 0) + (in_use_la or 0) > 0:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"Cannot move SKU to a different brand — it's already "
+                    f"referenced by {in_use_lines or 0} container line(s) and "
+                    f"{in_use_la or 0} lot assignment(s). Create a new SKU "
+                    "under the correct brand instead."
+                ),
+            )
+        # Also check the destination brand doesn't already have this code.
+        clash = await session.scalar(
+            select(SKU).where(
+                SKU.customer_id == new_customer_id,
+                SKU.sku == s.sku,
+                SKU.id != s.id,
+            )
+        )
+        if clash is not None:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Brand '{new_customer.name}' already has a SKU '{s.sku}'",
+            )
+        s.customer_id = new_customer_id
+        data.pop("customer_id")
+    elif "customer_id" in data:
+        # Same brand (or null) — drop without touching.
+        data.pop("customer_id")
+
     if "sku" in data:
         # Renaming — check for clash within the same customer.
         new_sku = data["sku"].strip()

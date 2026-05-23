@@ -251,6 +251,11 @@ class SKUAdminCreateRequest(BaseModel):
 
 class SKUAdminUpdateRequest(BaseModel):
     sku: str | None = Field(default=None, min_length=1, max_length=120)
+    # Repointing a SKU to a different Brand. Server rejects if the SKU
+    # is already referenced by container lines or lot assignments — moving
+    # it would break receiving history. Leave None to keep the current
+    # brand.
+    customer_id: int | None = None
     description: str | None = None
     product_type: str | None = None
     sqft_per_unit: float | None = None
