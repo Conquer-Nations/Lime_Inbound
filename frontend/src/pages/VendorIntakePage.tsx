@@ -92,14 +92,17 @@ export default function VendorIntakePage() {
   const [error, setError] = useState<string | null>(null)
   const [results, setResults] = useState<WHPOIntakeResponse[] | null>(null)
 
-  // TQL is a broker submitting on behalf of multiple brands. They pick a
-  // brand per submission. All TQL submissions use the structured per-
-  // container form regardless of brand — the legacy paste textarea is
-  // Lime-specific (matches the format Lime's broker emails use) and lives
-  // on as the Quick Import shortcut available on the structured editor.
+  // TQL is a broker submitting on behalf of multiple brands; they get a
+  // brand picker. Every other logged-in vendor IS the brand. All logged-in
+  // vendors use the structured per-container form — the paste textarea is
+  // legacy and only survives as the Quick Import shortcut on the Lime
+  // path (its parser is built for Lime's broker-email format).
   const isTQL = vendorUser?.company === TQL_COMPANY
   const [brandForTQL, setBrandForTQL] = useState<string>('')
-  const useStructuredForm = isTQL && brandForTQL !== ''
+  // Effective brand = the brand whose shipment is being submitted.
+  const effectiveBrand = isTQL ? brandForTQL : vendorUser?.company ?? ''
+  const useStructuredForm = isLoggedIn && (!isTQL || brandForTQL !== '')
+  const showQuickImport = effectiveBrand === STRUCTURED_BRAND
   const [structuredWHPO, setStructuredWHPO] = useState<StructuredWHPO>(() => makeEmptyWHPO())
   const [quickImportOpen, setQuickImportOpen] = useState(false)
 
@@ -209,11 +212,7 @@ export default function VendorIntakePage() {
       // TQL submits ON BEHALF OF a brand they picked. Other logged-in
       // vendors submit for their own company. Anonymous fallback uses the
       // form field.
-      const customer = isTQL
-        ? brandForTQL
-        : isLoggedIn && vendorUser
-        ? vendorUser.company
-        : form.customer
+      const customer = isLoggedIn ? effectiveBrand : form.customer
       const submitterName =
         isLoggedIn && vendorUser ? vendorUser.full_name : form.submitter_name
       const submitterEmail =
@@ -411,11 +410,10 @@ export default function VendorIntakePage() {
                 onChange={setStructuredWHPO}
                 onQuickImport={
                   // Quick Import wraps the legacy Lime-format parser.
-                  // Only surface it when the picked brand is Lime; other
-                  // brands' emails don't follow that token shape.
-                  brandForTQL === STRUCTURED_BRAND
-                    ? () => setQuickImportOpen(true)
-                    : undefined
+                  // Only surface it on the Lime path; other brands' emails
+                  // don't follow that token shape so it would just produce
+                  // errors.
+                  showQuickImport ? () => setQuickImportOpen(true) : undefined
                 }
               />
             ) : (
