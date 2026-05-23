@@ -1200,16 +1200,15 @@ async def wipe_except_container(
     target_do = await session.scalar(select(DO).where(DO.id == target_do_id))
     target_whpo_id = target_do.whpo_id if target_do else None
 
-    # 1. Nuke outbound entirely + exceptions + activity_log + non-seed SKUs.
+    # 1. Nuke outbound entirely + exceptions + activity_log.
+    # SKUs are NOT touched — the kept container's lines still reference
+    # them via container_lines.sku_id (would violate FK on delete).
     await session.execute(
         _text(
             "TRUNCATE outbound_scans, outbound_line_serials, outbound_lines, "
             "outbound_containers, outbound_orders, "
             "exceptions, activity_log RESTART IDENTITY CASCADE"
         )
-    )
-    await session.execute(
-        _text("DELETE FROM skus WHERE source IS DISTINCT FROM 'seed'")
     )
 
     # 2. Delete everything related to OTHER containers (child rows first,
