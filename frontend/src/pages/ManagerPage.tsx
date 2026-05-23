@@ -4,6 +4,8 @@ import { useAuth } from '../auth/AuthContext'
 import { api } from '../api/client'
 import DashboardTab from '../components/DashboardTab'
 import InboundView from '../components/InboundView'
+import ManagerSidebar from '../components/ManagerSidebar'
+import type { NavCategory } from '../components/ManagerSidebar'
 import ResolveExceptionModal from '../components/ResolveExceptionModal'
 import SkuAdmin from '../components/SkuAdmin'
 import WarehouseFloorPlan from '../components/WarehouseFloorPlan'
@@ -22,15 +24,50 @@ type Tab =
   | 'inbound'
   | 'skus'
 
-const TABS: { key: Tab; label: string }[] = [
-  { key: 'dashboard', label: 'Dashboard' },
-  { key: 'calendar', label: 'Calendar' },
-  { key: 'dos', label: 'Delivery Orders' },
-  { key: 'tos', label: 'Transfer Orders' },
-  { key: 'lots', label: 'Warehouse Map' },
-  { key: 'exceptions', label: 'Exceptions' },
-  { key: 'inbound', label: 'Inbound' },
-  { key: 'skus', label: 'SKUs' },
+// ERP module structure — mirrors how Dynamics / SAP / Odoo group screens.
+// Each category collapses in the sidebar. Add new top-level groups
+// (Invoicing, Reports, Settings) by extending NAV_CATEGORIES and adding
+// the corresponding case in the main switch below.
+const NAV_CATEGORIES: NavCategory[] = [
+  {
+    key: 'home',
+    label: 'Home',
+    icon: 'home',
+    items: [
+      { key: 'dashboard', label: 'Dashboard' },
+      { key: 'calendar', label: 'Calendar' },
+    ],
+  },
+  {
+    key: 'customer',
+    label: 'Customer',
+    icon: 'customer',
+    items: [
+      { key: 'skus', label: 'Product Specification' },
+    ],
+  },
+  {
+    key: 'receiving',
+    label: 'Receiving',
+    icon: 'receiving',
+    items: [
+      { key: 'dos', label: 'Delivery Orders' },
+      { key: 'inbound', label: 'Inbound Data' },
+      { key: 'exceptions', label: 'Exceptions' },
+    ],
+  },
+  {
+    key: 'shipping',
+    label: 'Shipping',
+    icon: 'shipping',
+    items: [{ key: 'tos', label: 'Transfer Orders' }],
+  },
+  {
+    key: 'warehouse',
+    label: 'Warehouse',
+    icon: 'warehouse',
+    items: [{ key: 'lots', label: 'Floor Map' }],
+  },
 ]
 
 export default function ManagerPage() {
@@ -60,7 +97,7 @@ export default function ManagerPage() {
   }, [tab, dos, tos, lots, exceptions])
 
   return (
-    <ManagerChrome activeTab={tab} onTabChange={setTab}>
+    <ManagerChrome activeTab={tab} onTabChange={(k) => setTab(k as Tab)}>
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8">
         {error && (
           <div
@@ -128,102 +165,103 @@ function ManagerChrome({
   children,
 }: {
   activeTab: Tab
-  onTabChange: (t: Tab) => void
+  onTabChange: (t: string) => void
   children: ReactNode
 }) {
   const { user, signOut } = useAuth()
   const initial = user?.name?.[0]?.toUpperCase() ?? '?'
 
-  return (
-    <div className="min-h-screen bg-slate-50 text-slate-800 antialiased">
-      <header
-        className="text-white"
-        style={{
-          background:
-            'linear-gradient(180deg, #0B1828 0%, #14233A 100%)',
-        }}
-      >
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <BrandMark className="h-12 text-white" />
-            <div className="leading-tight">
-              <div className="text-base font-extrabold tracking-[0.16em]">
-                CONQUER NATION
-              </div>
-              <div className="text-[10px] uppercase tracking-[0.28em] text-[#0093D0]">
-                Manager Console
-              </div>
-            </div>
-          </div>
+  // Active-tab label for the breadcrumb in the top bar
+  let activeLabel = ''
+  let activeCategoryLabel = ''
+  for (const c of NAV_CATEGORIES) {
+    const found = c.items.find((it) => it.key === activeTab)
+    if (found) {
+      activeLabel = found.label
+      activeCategoryLabel = c.label
+      break
+    }
+  }
 
-          <div className="flex items-center gap-3 sm:gap-4">
-            <div className="hidden md:flex items-center gap-2 text-sm text-white/90">
-              <span
-                className="w-8 h-8 rounded-full bg-white/10 ring-1 ring-white/20 flex items-center justify-center text-xs font-bold uppercase"
-                aria-hidden
-              >
-                {initial}
-              </span>
-              <div className="leading-tight">
-                <div className="text-sm">{user?.name}</div>
-                <div className="text-[10.5px] uppercase tracking-wider text-white/60">
-                  {user?.role}
+  return (
+    <div className="min-h-screen bg-slate-50 text-slate-800 antialiased flex">
+      {/* Left rail */}
+      <ManagerSidebar
+        categories={NAV_CATEGORIES}
+        activeTab={activeTab}
+        onTabChange={onTabChange}
+      />
+
+      {/* Main column */}
+      <div className="flex-1 flex flex-col min-w-0">
+        <header
+          className="text-white"
+          style={{
+            background: 'linear-gradient(180deg, #0B1828 0%, #14233A 100%)',
+          }}
+        >
+          <div className="px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+            <div className="flex items-center gap-3 min-w-0">
+              <BrandMark className="h-10 text-white shrink-0" />
+              <div className="leading-tight min-w-0">
+                <div className="text-sm font-extrabold tracking-[0.16em] truncate">
+                  CONQUER NATION
+                </div>
+                <div className="text-[10px] uppercase tracking-[0.22em] text-[#0093D0] flex items-center gap-1.5">
+                  <span>Manager ERP</span>
+                  {activeCategoryLabel && (
+                    <>
+                      <span className="text-white/30">›</span>
+                      <span className="text-white/70">{activeCategoryLabel}</span>
+                      {activeLabel && activeLabel !== activeCategoryLabel && (
+                        <>
+                          <span className="text-white/30">›</span>
+                          <span className="text-white">{activeLabel}</span>
+                        </>
+                      )}
+                    </>
+                  )}
                 </div>
               </div>
             </div>
-            <button
-              type="button"
-              onClick={signOut}
-              className="inline-flex items-center gap-2 rounded-full bg-white/8 hover:bg-white/15 border border-white/15 hover:border-white/30 px-4 py-1.5 text-sm font-medium transition focus:outline-none focus-visible:ring-2 focus-visible:ring-[#0093D0] focus-visible:ring-offset-2 focus-visible:ring-offset-[#0B1828]"
-            >
-              <LogOutIcon className="w-4 h-4" />
-              <span className="hidden sm:inline">Sign out</span>
-            </button>
-          </div>
-        </div>
-        <div
-          className="h-px"
-          style={{
-            background:
-              'linear-gradient(90deg, transparent, rgba(0,147,208,0.65) 30%, rgba(0,147,208,0.65) 70%, transparent)',
-          }}
-          aria-hidden
-        />
-      </header>
 
-      <nav
-        aria-label="Manager sections"
-        className="bg-white border-b border-slate-200 shadow-sm"
-      >
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex overflow-x-auto">
-          {TABS.map((t) => {
-            const active = activeTab === t.key
-            return (
+            <div className="flex items-center gap-3 sm:gap-4 shrink-0">
+              <div className="hidden md:flex items-center gap-2 text-sm text-white/90">
+                <span
+                  className="w-8 h-8 rounded-full bg-white/10 ring-1 ring-white/20 flex items-center justify-center text-xs font-bold uppercase"
+                  aria-hidden
+                >
+                  {initial}
+                </span>
+                <div className="leading-tight">
+                  <div className="text-sm">{user?.name}</div>
+                  <div className="text-[10.5px] uppercase tracking-wider text-white/60">
+                    {user?.role}
+                  </div>
+                </div>
+              </div>
               <button
-                key={t.key}
                 type="button"
-                onClick={() => onTabChange(t.key)}
-                aria-current={active ? 'page' : undefined}
-                className={`relative px-4 py-3 text-sm whitespace-nowrap transition focus:outline-none focus-visible:bg-slate-50 ${
-                  active
-                    ? 'text-[#0B1828] font-bold'
-                    : 'text-slate-500 hover:text-[#0B1828] font-medium'
-                }`}
+                onClick={signOut}
+                className="inline-flex items-center gap-2 rounded-full bg-white/8 hover:bg-white/15 border border-white/15 hover:border-white/30 px-4 py-1.5 text-sm font-medium transition focus:outline-none focus-visible:ring-2 focus-visible:ring-[#0093D0] focus-visible:ring-offset-2 focus-visible:ring-offset-[#0B1828]"
               >
-                {t.label}
-                {active && (
-                  <span
-                    className="absolute bottom-0 left-3 right-3 h-[3px] bg-[#0093D0] rounded-t"
-                    aria-hidden
-                  />
-                )}
+                <LogOutIcon className="w-4 h-4" />
+                <span className="hidden sm:inline">Sign out</span>
               </button>
-            )
-          })}
-        </div>
-      </nav>
+            </div>
+          </div>
+          <div
+            className="h-px"
+            style={{
+              background:
+                'linear-gradient(90deg, transparent, rgba(0,147,208,0.65) 30%, rgba(0,147,208,0.65) 70%, transparent)',
+            }}
+            aria-hidden
+          />
+        </header>
 
-      {children}
+        <div className="flex-1 overflow-y-auto">{children}</div>
+      </div>
     </div>
   )
 }
