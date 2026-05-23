@@ -142,6 +142,57 @@ async def append_outbound_rows(rows: list[dict[str, Any]]) -> int:
     return 0
 
 
+async def clear_outbound_table() -> int:
+    """Wipe every row from the OutboundTable worksheet. Used by the
+    manager wipe-transactional flow. Returns count of rows deleted."""
+    url = settings.onedrive_outbound_ops_url
+    if not url:
+        return 0
+    body = {"action": "clear_outbound_table", "payload": "{}"}
+    try:
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            r = await client.post(url, json=body)
+        if r.is_success:
+            try:
+                data = r.json()
+                return int(data.get("deleted", 0)) if isinstance(data, dict) else 0
+            except (ValueError, TypeError):
+                return 0
+        logger.warning(
+            "outbound sheet sync: clear_outbound_table returned %s: %s",
+            r.status_code,
+            r.text[:200],
+        )
+    except Exception as e:
+        logger.warning("outbound sheet sync: clear_outbound_table failed: %s", e)
+    return 0
+
+
+async def clear_container_inventory() -> int:
+    """Wipe every row from the ContainerInventory worksheet."""
+    url = settings.onedrive_outbound_ops_url
+    if not url:
+        return 0
+    body = {"action": "clear_inventory_table", "payload": "{}"}
+    try:
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            r = await client.post(url, json=body)
+        if r.is_success:
+            try:
+                data = r.json()
+                return int(data.get("deleted", 0)) if isinstance(data, dict) else 0
+            except (ValueError, TypeError):
+                return 0
+        logger.warning(
+            "outbound sheet sync: clear_inventory_table returned %s: %s",
+            r.status_code,
+            r.text[:200],
+        )
+    except Exception as e:
+        logger.warning("outbound sheet sync: clear_inventory_table failed: %s", e)
+    return 0
+
+
 async def delete_outbound_rows_for_to(transfer_order_no: str) -> int:
     """Delete every row in OutboundTable whose transfer_order_no matches.
     Called by the update flow before re-appending the new state.

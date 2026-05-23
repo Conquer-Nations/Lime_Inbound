@@ -754,6 +754,24 @@ async def wipe_transactional_data(
                 detail=f"Excel InboundTable clear failed — aborting before Postgres wipe to keep stores consistent. Error: {e}",
             )
 
+    # Step 1b: clear outbound Excel sheets (OutboundTable + ContainerInventory).
+    # Best-effort — these are independent workbooks; failures log and proceed
+    # so we don't block the Postgres wipe on a transient OneDrive hiccup.
+    from app.services import outbound_sheet_sync as _out_sync
+
+    outbound_rows_deleted = 0
+    inventory_rows_deleted = 0
+    try:
+        outbound_rows_deleted = await _out_sync.clear_outbound_table()
+        inventory_rows_deleted = await _out_sync.clear_container_inventory()
+    except Exception as e:
+        # Don't 502 here — operator's test resets shouldn't fail because
+        # the outbound ops Logic App is unreachable.
+        import logging as _log
+        _log.getLogger(__name__).warning(
+            "wipe-transactional: outbound excel clear failed: %s", e
+        )
+
     # Step 2: wipe Postgres transactional tables.
     # Includes outbound tables (orders, lines, line_serials, containers,
     # scans) so a wipe leaves the DB fully empty for test runs.
@@ -793,6 +811,8 @@ async def wipe_transactional_data(
 
     return {
         "excel_rows_deleted": excel_deleted,
+        "outbound_excel_rows_deleted": outbound_rows_deleted,
+        "container_inventory_rows_deleted": inventory_rows_deleted,
         "postgres_rows_remaining": counts,
         "next_do_number": "DO-2026-0001",
         "next_po_number": "PO-2026-0001",
