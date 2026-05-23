@@ -22,6 +22,7 @@ from app.models import (
     ContainerLine,
     Customer,
     DO,
+    Receipt,
     WHPO,
 )
 from app.schemas.vendor import (
@@ -37,7 +38,10 @@ from app.schemas.vendor import (
     WHPOContainersResponse,
     WHPOCurrentContainer,
     WHPOCurrentLine,
+    ContainerStatus,
+    StatusEvent,
     WHPOCurrentState,
+    WHPOStatusResponse,
     WHPOIntakeResponse,
     WHPOUpdateRequest,
     WHPOUpdateResponse,
@@ -351,6 +355,74 @@ async def get_whpo_current_state(
         bol_number=whpo.bol_number,
         containers=containers_out,
         any_locked=any_locked,
+    )
+
+
+@router.get("/whpo/{whpo_number}/status", response_model=WHPOStatusResponse)
+async def get_whpo_status(
+    whpo_number: str,
+    session: AsyncSession = Depends(get_session),
+    vendor: dict = Depends(current_vendor_required),
+):
+    """Status timeline for each container on a WHPO. Vendor-visible
+    inbound progress: order placed → driver assigned → scanning → complete."""
+    whpo = await _whpo_for_vendor(session, whpo_number, vendor)
+    order_placed_at = whpo.received_at
+
+    # Pull every inbound Receipt for these containers in one shot.
+    container_ids = [c.id for c in whpo.do.containers]
+    receipts_by_container: dict[int, Receipt] = {}
+    if container_ids:
+        from sqlalchemy import select as _sel
+        rs = await session.scalars(
+            _sel(Receipt)
+            .where(Receipt.kind == "inbound")
+            .where(Receipt.container_id.in_(container_ids))
+            .order_by(Receipt.started_at.desc())
+        )
+        for r in rs.all():
+            # Keep the most recent receipt per container.
+            receipts_by_container.setdefault(r.container_id, r)
+
+    containers_out: list[ContainerStatus] = []
+    for c in sorted(whpo.do.containers, key=lambda x: x.container_no):
+        receipt = receipts_by_container.get(c.id)
+        timeline = [
+            StatusEvent(stage="order_placed", label="Order placed", at=order_placed_at),
+            StatusEvent(
+                stage="driver_assigned",
+                label="Driver / truck info added",
+                at=c.driver_info_received_at,
+            ),
+            StatusEvent(
+                stage="scanning",
+                label="Scanning in progress",
+                at=receipt.started_at if receipt else None,
+            ),
+            StatusEvent(
+                stage="complete",
+                label="Scanning complete",
+                at=(receipt.finished_at if (receipt and receipt.status == "completed") else None),
+            ),
+        ]
+        current_stage = "order_placed"
+        for ev in timeline:
+            if ev.at is not None:
+                current_stage = ev.stage
+        containers_out.append(
+            ContainerStatus(
+                container_no=c.container_no,
+                current_stage=current_stage,
+                timeline=timeline,
+            )
+        )
+
+    return WHPOStatusResponse(
+        whpo_number=whpo.whpo_number,
+        do_number=whpo.do.do_number,
+        customer_name=whpo.customer.name,
+        order_placed_at=order_placed_at,
+        containers=containers_out,
     )
 
 

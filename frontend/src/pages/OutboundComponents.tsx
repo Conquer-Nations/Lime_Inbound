@@ -9,8 +9,10 @@ import {
   type OutboundLineInput,
   type OutboundOrderRead,
   type OutboundOrderListItem,
+  type OutboundOrderStatusResponse,
   type PickingTicketExtraction,
 } from '../api/client'
+import { StatusTimeline } from '../components/StatusTimeline'
 import Spinner from '../components/Spinner'
 import { useVendorAuth } from '../auth/VendorAuthContext'
 
@@ -2157,6 +2159,7 @@ export function OutboundViewOrderForm({ onBack }: { onBack: () => void }) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [order, setOrder] = useState<OutboundOrderRead | null>(null)
+  const [status, setStatus] = useState<OutboundOrderStatusResponse | null>(null)
   const [list, setList] = useState<OutboundOrderListItem[] | null>(null)
 
   useEffect(() => {
@@ -2176,11 +2179,17 @@ export function OutboundViewOrderForm({ onBack }: { onBack: () => void }) {
     if (!tno.trim()) return
     setBusy(true)
     try {
-      const res = await api.viewOutboundOrder(tno.trim())
+      const tnoUp = tno.trim().toUpperCase()
+      const [res, stat] = await Promise.all([
+        api.viewOutboundOrder(tnoUp),
+        api.outboundOrderStatus(tnoUp).catch(() => null),
+      ])
       setOrder(res)
+      setStatus(stat)
     } catch (e) {
       setError(e instanceof ApiError ? e.detail : String(e))
       setOrder(null)
+      setStatus(null)
     } finally {
       setBusy(false)
     }
@@ -2245,6 +2254,24 @@ export function OutboundViewOrderForm({ onBack }: { onBack: () => void }) {
               <Stat k="Ship to" v={order.ship_to_name ?? '—'} />
               <Stat k="Memo" v={order.memo ?? '—'} />
             </dl>
+
+            {status && status.containers.length > 0 && (
+              <div>
+                <h3 className="text-sm font-bold text-[#1B4676] mb-2">
+                  Truck status
+                </h3>
+                <div className="space-y-3">
+                  {status.containers.map((c) => (
+                    <StatusTimeline
+                      key={c.container_no}
+                      container={c}
+                      accent="navy"
+                    />
+                  ))}
+                </div>
+              </div>
+            )}
+
             <div>
               <h3 className="text-sm font-bold text-[#1B4676] mb-2">Lines</h3>
               <table className="w-full text-sm border border-slate-200 rounded-md overflow-hidden">

@@ -5,6 +5,7 @@ import { useVendorAuth } from '../auth/VendorAuthContext'
 import Spinner from '../components/Spinner'
 import VendorPortalChrome from '../components/VendorPortalChrome'
 import { ContainerDocumentUploads } from '../components/ContainerDocumentUploads'
+import { StatusTimeline } from '../components/StatusTimeline'
 import type { VendorContainerSubmission, VendorLineItem, WHPOIntakeResponse } from '../types/api'
 import BrandMark from '../components/BrandMark'
 import { isAuditor } from './AuditPage'
@@ -2990,6 +2991,7 @@ function ViewShipmentForm({ onBack }: { onBack: () => void }) {
   const [whpoNumber, setWhpoNumber] = useState('')
   const [loading, setLoading] = useState(false)
   const [state, setState] = useState<ViewState | null>(null)
+  const [status, setStatus] = useState<import('../api/client').WHPOStatusResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   async function handleLookup(e: React.FormEvent) {
@@ -3001,7 +3003,10 @@ function ViewShipmentForm({ onBack }: { onBack: () => void }) {
     }
     setLoading(true)
     try {
-      const r = await api.getWHPOCurrent(whpoNumber)
+      const [r, st] = await Promise.all([
+        api.getWHPOCurrent(whpoNumber),
+        api.whpoStatus(whpoNumber).catch(() => null),
+      ])
       setState({
         whpo_number: r.whpo_number,
         do_number: r.do_number,
@@ -3009,6 +3014,7 @@ function ViewShipmentForm({ onBack }: { onBack: () => void }) {
         expected_arrival_date: r.expected_arrival_date,
         containers: r.containers,
       })
+      setStatus(st)
     } catch (e) {
       setError(e instanceof ApiError ? e.detail : String(e))
     } finally {
@@ -3129,6 +3135,23 @@ function ViewShipmentForm({ onBack }: { onBack: () => void }) {
             ← Look up another
           </button>
         </div>
+
+        {status && status.containers.length > 0 && (
+          <div className="mb-8">
+            <h2 className="text-sm font-bold text-[#1B4676] mb-3 uppercase tracking-wider">
+              Container status
+            </h2>
+            <div className="space-y-3">
+              {status.containers.map((c) => (
+                <StatusTimeline
+                  key={c.container_no}
+                  container={c}
+                  accent="cyan"
+                />
+              ))}
+            </div>
+          </div>
+        )}
 
         <div className="space-y-6">
           {state.containers.map((c, idx) => (

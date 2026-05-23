@@ -219,3 +219,26 @@ class ContainerInventoryResponse(BaseModel):
     total_inbound: int
     total_outbound: int
     total_pending: int
+
+
+# ─── Status timeline (vendor visibility) ──────────────────────────────
+
+
+class OutboundStatusEvent(BaseModel):
+    stage: str  # 'order_placed' | 'truck_attached' | 'truck_arrived' | 'loading' | 'sealed'
+    label: str
+    at: datetime | None = None
+
+
+class OutboundContainerStatus(BaseModel):
+    container_no: str  # truck plate
+    current_stage: str
+    timeline: list[OutboundStatusEvent]
+
+
+class OutboundOrderStatusResponse(BaseModel):
+    transfer_order_no: str
+    po_number: str | None
+    customer_name: str
+    order_placed_at: datetime
+    containers: list[OutboundContainerStatus]

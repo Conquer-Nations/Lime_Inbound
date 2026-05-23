@@ -222,3 +222,26 @@ class DocumentKindOption(BaseModel):
 
 class DocumentKindsResponse(BaseModel):
     kinds: list[DocumentKindOption]
+
+
+# ─── Status timeline (vendor visibility into receiving progress) ───────
+
+
+class StatusEvent(BaseModel):
+    stage: str  # 'order_placed' | 'driver_assigned' | 'scanning' | 'complete'
+    label: str
+    at: datetime | None = None
+
+
+class ContainerStatus(BaseModel):
+    container_no: str
+    current_stage: str  # most recent stage with a non-null `at`
+    timeline: list[StatusEvent]
+
+
+class WHPOStatusResponse(BaseModel):
+    whpo_number: str
+    do_number: str
+    customer_name: str
+    order_placed_at: datetime
+    containers: list[ContainerStatus]

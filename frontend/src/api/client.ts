@@ -513,6 +513,16 @@ export const api = {
   outboundContainerInventory: () =>
     request<ContainerInventoryResponse>('/vendor/outbound/container-inventory'),
 
+  whpoStatus: (whpoNumber: string) =>
+    request<WHPOStatusResponse>(
+      `/vendor/whpo/${encodeURIComponent(whpoNumber)}/status`,
+    ),
+
+  outboundOrderStatus: (tno: string) =>
+    request<OutboundOrderStatusResponse>(
+      `/vendor/outbound/order/${encodeURIComponent(tno)}/status`,
+    ),
+
   extractPickingTicket: (file: File) => {
     const fd = new FormData()
     fd.append('file', file)
@@ -728,6 +738,36 @@ export interface ContainerInventoryResponse {
   total_inbound: number
   total_outbound: number
   total_pending: number
+}
+
+// ─── Status timelines ─────────────────────────────────────────────────
+
+export interface StatusEvent {
+  stage: string
+  label: string
+  at: string | null
+}
+
+export interface ContainerStatusTimeline {
+  container_no: string
+  current_stage: string
+  timeline: StatusEvent[]
+}
+
+export interface WHPOStatusResponse {
+  whpo_number: string
+  do_number: string
+  customer_name: string
+  order_placed_at: string
+  containers: ContainerStatusTimeline[]
+}
+
+export interface OutboundOrderStatusResponse {
+  transfer_order_no: string
+  po_number: string | null
+  customer_name: string
+  order_placed_at: string
+  containers: ContainerStatusTimeline[]
 }
 
 export interface OutboundContainerRead {

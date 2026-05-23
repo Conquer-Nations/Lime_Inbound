@@ -24,6 +24,7 @@ from app.models import (
     OutboundLineSerial,
     OutboundOrder,
     OutboundScan,
+    Receipt,
 )
 from app.schemas.outbound import (
     ContainerInventoryItem,
@@ -33,13 +34,16 @@ from app.schemas.outbound import (
     OutboundContainerAttachRequest,
     OutboundContainerAttachResponse,
     OutboundContainerRead,
+    OutboundContainerStatus,
     OutboundIntakeResponse,
     OutboundLineRead,
     OutboundOrderListItem,
     OutboundOrderListResponse,
     OutboundOrderRead,
+    OutboundOrderStatusResponse,
     OutboundOrderSubmission,
     OutboundOrderUpdateRequest,
+    OutboundStatusEvent,
     OutboundUpdateResponse,
 )
 from app.services import outbound as outbound_service
@@ -662,4 +666,76 @@ async def container_inventory(
         total_inbound=sum(i.inbound_qty for i in items),
         total_outbound=sum(i.outbound_qty for i in items),
         total_pending=sum(i.pending_qty for i in items),
+    )
+
+
+@router.get(
+    "/order/{transfer_order_no}/status",
+    response_model=OutboundOrderStatusResponse,
+)
+async def get_outbound_order_status(
+    transfer_order_no: str,
+    session: AsyncSession = Depends(get_session),
+    vendor: dict = Depends(current_vendor_required),
+):
+    """Status timeline for each truck on a Transfer Order. Vendor-visible
+    outbound progress: order placed → truck attached → truck arrived →
+    loading → sealed."""
+    order = await _load_order_for_vendor(session, transfer_order_no, vendor)
+    order_placed_at = order.submitted_at
+
+    # Pull outbound receipts (kind='outbound') for these containers.
+    receipts_by_container: dict[int, Receipt] = {}
+    container_ids = [c.id for c in (order.containers or [])]
+    if container_ids:
+        rs = await session.scalars(
+            select(Receipt)
+            .where(Receipt.kind == "outbound")
+            .where(Receipt.outbound_container_id.in_(container_ids))
+            .order_by(Receipt.started_at.desc())
+        )
+        for r in rs.all():
+            receipts_by_container.setdefault(r.outbound_container_id, r)
+
+    containers_out: list[OutboundContainerStatus] = []
+    for c in sorted(order.containers or [], key=lambda x: x.container_no):
+        receipt = receipts_by_container.get(c.id)
+        # truck_attached = the OutboundContainer was created. We don't
+        # have a dedicated attached_at column, so approximate with
+        # started_at or scheduled_arrival_at (earliest non-null);
+        # fall back to order_placed_at if neither set yet.
+        attached_at = c.started_at or c.scheduled_arrival_at or order_placed_at
+        truck_arrived_at = c.started_at  # operator opening scan sheet
+        loading_at = receipt.started_at if receipt else c.started_at
+        sealed_at = c.sealed_at
+
+        timeline = [
+            OutboundStatusEvent(stage="order_placed", label="Order placed", at=order_placed_at),
+            OutboundStatusEvent(stage="truck_attached", label="Truck attached", at=attached_at),
+            OutboundStatusEvent(
+                stage="truck_arrived",
+                label="Truck arrived at dock",
+                at=truck_arrived_at,
+            ),
+            OutboundStatusEvent(stage="loading", label="Loading in progress", at=loading_at),
+            OutboundStatusEvent(stage="sealed", label="Truck sealed / departed", at=sealed_at),
+        ]
+        current_stage = "order_placed"
+        for ev in timeline:
+            if ev.at is not None:
+                current_stage = ev.stage
+        containers_out.append(
+            OutboundContainerStatus(
+                container_no=c.container_no,
+                current_stage=current_stage,
+                timeline=timeline,
+            )
+        )
+
+    return OutboundOrderStatusResponse(
+        transfer_order_no=order.transfer_order_no,
+        po_number=order.po_number,
+        customer_name=order.customer.name if order.customer else "",
+        order_placed_at=order_placed_at,
+        containers=containers_out,
     )
