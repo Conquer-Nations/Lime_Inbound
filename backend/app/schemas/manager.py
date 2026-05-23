@@ -46,7 +46,7 @@ class ContainerLineRow(BaseModel):
     line_id: int
     sku: str
     qty: int
-    items_per_pallet: int | None
+    items_per_pallet: float | None
     sqft_per_unit: float | None
     sku_resolved: bool
     # Computed footprint using vendor packaging + SKU master fallback
@@ -153,7 +153,8 @@ class ResolveExceptionRequest(BaseModel):
 class SKUCreatePayload(BaseModel):
     description: str | None = None
     sqft_per_unit: float | None = None
-    items_per_pallet: int = Field(gt=0)
+    items_per_pallet: float = Field(gt=0)
+    pallet_sqft: float | None = None
     pallet_mode: str = "logical"
     stackable: bool = False
     max_stack_height: int | None = None
@@ -164,7 +165,8 @@ class SKUCreatePayload(BaseModel):
 class SKUPatchPayload(BaseModel):
     description: str | None = None
     sqft_per_unit: float | None = None
-    items_per_pallet: int | None = None
+    items_per_pallet: float | None = None
+    pallet_sqft: float | None = None
     pallet_mode: str | None = None
     stackable: bool | None = None
     max_stack_height: int | None = None
@@ -222,7 +224,8 @@ class SKURead(BaseModel):
     description: str | None
     product_type: str | None
     sqft_per_unit: float | None
-    items_per_pallet: int | None
+    items_per_pallet: float | None
+    pallet_sqft: float | None
     pallet_mode: str
     stackable: bool
     max_stack_height: int | None
@@ -238,7 +241,8 @@ class SKUAdminCreateRequest(BaseModel):
     description: str | None = None
     product_type: str | None = None
     sqft_per_unit: float | None = None
-    items_per_pallet: int | None = None
+    items_per_pallet: float | None = None
+    pallet_sqft: float | None = None
     pallet_mode: str = "logical"
     stackable: bool = False
     max_stack_height: int | None = None
@@ -250,7 +254,8 @@ class SKUAdminUpdateRequest(BaseModel):
     description: str | None = None
     product_type: str | None = None
     sqft_per_unit: float | None = None
-    items_per_pallet: int | None = None
+    items_per_pallet: float | None = None
+    pallet_sqft: float | None = None
     pallet_mode: str | None = None
     stackable: bool | None = None
     max_stack_height: int | None = None

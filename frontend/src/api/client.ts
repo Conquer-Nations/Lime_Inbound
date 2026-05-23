@@ -943,6 +943,7 @@ export interface SKURead {
   product_type: string | null
   sqft_per_unit: number | null
   items_per_pallet: number | null
+  pallet_sqft: number | null
   pallet_mode: string
   stackable: boolean
   max_stack_height: number | null
@@ -959,6 +960,7 @@ export interface SKUAdminCreate {
   product_type?: string | null
   sqft_per_unit?: number | null
   items_per_pallet?: number | null
+  pallet_sqft?: number | null
   pallet_mode?: string
   stackable?: boolean
   max_stack_height?: number | null
@@ -971,10 +973,19 @@ export interface SKUAdminUpdate {
   product_type?: string | null
   sqft_per_unit?: number | null
   items_per_pallet?: number | null
+  pallet_sqft?: number | null
   pallet_mode?: string
   stackable?: boolean
   max_stack_height?: number | null
   unit?: string
+}
+
+export interface SkuCalculatorResult {
+  pallets: number
+  total_sqft: number
+  lots: number
+  lots_needed: number
+  lot_sqft_used: number
 }
 
 // ─── Manager ERP types (mirror schemas/manager_erp.py) ────────────────

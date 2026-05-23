@@ -52,7 +52,14 @@ class SKU(Base):
     # restricted, so vendors can introduce new categories.
     product_type: Mapped[str | None] = mapped_column(String(120), index=True)
     sqft_per_unit: Mapped[float | None] = mapped_column(Float)
-    items_per_pallet: Mapped[int | None] = mapped_column(Integer)
+    # Items per pallet. Float (not int) because gliders pack at 1.9655 /
+    # pallet — a vendor-supplied conversion factor, not a count.
+    items_per_pallet: Mapped[float | None] = mapped_column(Float)
+    # Floor footprint of one fully-loaded pallet, in sqft. Fixed per SKU
+    # (e.g. Lime gliders = 20 sqft / pallet). When set, the receiving
+    # space calculator rounds qty up to whole pallets, then multiplies by
+    # this — matching how the warehouse actually stages product.
+    pallet_sqft: Mapped[float | None] = mapped_column(Float)
     pallet_mode: Mapped[str] = mapped_column(String(16), default="logical")
     stackable: Mapped[bool] = mapped_column(Boolean, default=False)
     max_stack_height: Mapped[int | None] = mapped_column(Integer)

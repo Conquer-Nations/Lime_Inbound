@@ -225,6 +225,7 @@ async def assign_container_lots(
             sku_sqft_per_unit=line.sku.sqft_per_unit,
             stackable=line.sku.stackable,
             max_stack_height=line.sku.max_stack_height,
+            sku_pallet_sqft=line.sku.pallet_sqft,
         )
 
         # Compute sqft_per_pallet for deriving pallet counts in each allocation

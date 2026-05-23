@@ -1,6 +1,11 @@
-import { useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { api } from '../api/client'
 import type { CustomerRead, SKURead, SKUAdminCreate, SKUAdminUpdate } from '../api/client'
+
+// Vernon facility lot footprint (17 ft × 23 ft). Calculator preview
+// uses this by default — backend's /skus/calculator falls back to the
+// same value when no override is sent.
+const DEFAULT_LOT_SQFT = 391
 
 /**
  * SKU master admin — manager-facing CRUD for the product catalogue.
@@ -159,8 +164,9 @@ export default function SkuAdmin() {
                 <Th>SKU</Th>
                 <Th>Product type</Th>
                 <Th>Description</Th>
-                <Th align="right">Sqft / unit</Th>
                 <Th align="right">Items / pallet</Th>
+                <Th align="right">Sqft / pallet</Th>
+                <Th align="right">Sqft / unit</Th>
                 <Th>Pallet mode</Th>
                 <Th>Unit</Th>
                 <Th align="right">Actions</Th>
@@ -184,10 +190,19 @@ export default function SkuAdmin() {
                     {s.description ?? '—'}
                   </td>
                   <td className="px-3 py-2 text-right font-mono text-slate-700">
-                    {s.sqft_per_unit ?? '—'}
+                    {s.items_per_pallet != null
+                      ? formatNumber(s.items_per_pallet)
+                      : '—'}
                   </td>
                   <td className="px-3 py-2 text-right font-mono text-slate-700">
-                    {s.items_per_pallet ?? '—'}
+                    {s.pallet_sqft != null
+                      ? formatNumber(s.pallet_sqft)
+                      : '—'}
+                  </td>
+                  <td className="px-3 py-2 text-right font-mono text-slate-700">
+                    {s.sqft_per_unit != null
+                      ? formatNumber(s.sqft_per_unit)
+                      : '—'}
                   </td>
                   <td className="px-3 py-2 text-slate-600 capitalize">
                     {s.pallet_mode}
@@ -293,13 +308,32 @@ function SkuFormModal({
   const [itemsPerPallet, setItemsPerPallet] = useState(
     initial?.items_per_pallet?.toString() ?? '',
   )
+  const [palletSqft, setPalletSqft] = useState(
+    initial?.pallet_sqft?.toString() ?? '',
+  )
   const [palletMode, setPalletMode] = useState(initial?.pallet_mode ?? 'logical')
   const [stackable, setStackable] = useState(initial?.stackable ?? false)
   const [unit, setUnit] = useState(initial?.unit ?? 'each')
+  const [forecastQty, setForecastQty] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [showNewCustomer, setShowNewCustomer] = useState(false)
   const [newCustomerName, setNewCustomerName] = useState('')
   const [error, setError] = useState<string | null>(null)
+
+  // Live preview — pure client-side math (no API call). Same epsilon-aware
+  // ceil the backend uses so the numbers match exactly.
+  const preview = useMemo(() => {
+    const qty = Number(forecastQty)
+    const ipp = Number(itemsPerPallet)
+    const psqft = Number(palletSqft)
+    if (!qty || !ipp || qty <= 0 || ipp <= 0) return null
+    const raw = qty / ipp
+    const pallets = Math.max(0, Math.ceil(raw - 1e-3))
+    const totalSqft = pallets * (psqft || 0)
+    const lotsRaw = totalSqft / DEFAULT_LOT_SQFT
+    const lotsNeeded = lotsRaw > 0 ? Math.ceil(lotsRaw) : 0
+    return { pallets, totalSqft, lotsRaw, lotsNeeded }
+  }, [forecastQty, itemsPerPallet, palletSqft])
 
   async function handleCreateCustomer() {
     const name = newCustomerName.trim()
@@ -338,6 +372,7 @@ function SkuFormModal({
           product_type: resolvedProductType || null,
           sqft_per_unit: sqftPerUnit ? Number(sqftPerUnit) : null,
           items_per_pallet: itemsPerPallet ? Number(itemsPerPallet) : null,
+          pallet_sqft: palletSqft ? Number(palletSqft) : null,
           pallet_mode: palletMode,
           stackable,
           unit: unit.trim() || 'each',
@@ -352,6 +387,7 @@ function SkuFormModal({
           product_type: resolvedProductType || null,
           sqft_per_unit: sqftPerUnit ? Number(sqftPerUnit) : null,
           items_per_pallet: itemsPerPallet ? Number(itemsPerPallet) : null,
+          pallet_sqft: palletSqft ? Number(palletSqft) : null,
           pallet_mode: palletMode,
           stackable,
           unit: unit.trim() || 'each',
@@ -513,28 +549,108 @@ function SkuFormModal({
             />
           </div>
 
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-            <div>
-              <Label>Sqft / unit</Label>
-              <input
-                type="number"
-                step="0.01"
-                min="0"
-                value={sqftPerUnit}
-                onChange={(e) => setSqftPerUnit(e.target.value)}
-                className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm focus:border-[#0093D0] focus:ring-2 focus:ring-[#0093D0]/20 focus:outline-none"
-              />
+          {/* Pallet specs — the values that drive the receiving space calculation */}
+          <div className="rounded-md border border-slate-200 bg-slate-50/40 px-4 py-3 space-y-3">
+            <div className="text-[10.5px] uppercase tracking-[0.15em] font-bold text-[#0093D0]">
+              Pallet specs
             </div>
-            <div>
-              <Label>Items / pallet</Label>
-              <input
-                type="number"
-                min="1"
-                value={itemsPerPallet}
-                onChange={(e) => setItemsPerPallet(e.target.value)}
-                className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm focus:border-[#0093D0] focus:ring-2 focus:ring-[#0093D0]/20 focus:outline-none"
-              />
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div>
+                <Label>Items / pallet</Label>
+                <input
+                  type="number"
+                  step="0.0001"
+                  min="0"
+                  value={itemsPerPallet}
+                  onChange={(e) => setItemsPerPallet(e.target.value)}
+                  placeholder="e.g. 1.9655"
+                  className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm font-mono focus:border-[#0093D0] focus:ring-2 focus:ring-[#0093D0]/20 focus:outline-none"
+                />
+                <p className="text-[11px] text-slate-500 mt-1">
+                  How many units fit on one pallet. Decimal OK.
+                </p>
+              </div>
+              <div>
+                <Label>Sqft / pallet</Label>
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  value={palletSqft}
+                  onChange={(e) => setPalletSqft(e.target.value)}
+                  placeholder="e.g. 20"
+                  className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm font-mono focus:border-[#0093D0] focus:ring-2 focus:ring-[#0093D0]/20 focus:outline-none"
+                />
+                <p className="text-[11px] text-slate-500 mt-1">
+                  Floor footprint of one full pallet.
+                </p>
+              </div>
+              <div>
+                <Label>Sqft / unit (optional)</Label>
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  value={sqftPerUnit}
+                  onChange={(e) => setSqftPerUnit(e.target.value)}
+                  className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm focus:border-[#0093D0] focus:ring-2 focus:ring-[#0093D0]/20 focus:outline-none"
+                />
+                <p className="text-[11px] text-slate-500 mt-1">
+                  Fallback if pallet specs are missing.
+                </p>
+              </div>
             </div>
+
+            {/* Live calculator preview */}
+            <div className="border-t border-slate-200 pt-3 mt-1">
+              <div className="text-[10.5px] uppercase tracking-[0.15em] font-bold text-slate-500 mb-2">
+                Space calculator
+              </div>
+              <div className="flex flex-wrap items-end gap-3">
+                <div className="flex-1 min-w-[10rem]">
+                  <Label>Forecast qty</Label>
+                  <input
+                    type="number"
+                    min="0"
+                    value={forecastQty}
+                    onChange={(e) => setForecastQty(e.target.value)}
+                    placeholder="e.g. 114"
+                    className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm font-mono focus:border-[#0093D0] focus:ring-2 focus:ring-[#0093D0]/20 focus:outline-none"
+                  />
+                </div>
+                <div className="flex-[2] min-w-[15rem]">
+                  {preview ? (
+                    <div className="rounded-md bg-white border border-[#0093D0]/30 px-3 py-2 text-sm flex items-center gap-3 flex-wrap">
+                      <CalcStat
+                        n={preview.pallets}
+                        label={preview.pallets === 1 ? 'pallet' : 'pallets'}
+                      />
+                      <span className="text-slate-300">→</span>
+                      <CalcStat n={preview.totalSqft} label="sqft total" />
+                      <span className="text-slate-300">→</span>
+                      <CalcStat
+                        n={preview.lotsNeeded}
+                        label={preview.lotsNeeded === 1 ? 'lot' : 'lots'}
+                        sub={`(${preview.lotsRaw.toFixed(2)} raw)`}
+                      />
+                    </div>
+                  ) : (
+                    <div className="text-xs text-slate-400 italic px-3 py-2">
+                      Enter a forecast qty + items/pallet + sqft/pallet to see
+                      the rollup.
+                    </div>
+                  )}
+                </div>
+              </div>
+              <p className="text-[11px] text-slate-500 mt-2">
+                Assumes one lot = {DEFAULT_LOT_SQFT} sqft (Vernon 17 × 23).
+                Rounds qty up to whole pallets (you can't put half a pallet
+                on the floor).
+              </p>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <div>
               <Label>Pallet mode</Label>
               <select
@@ -556,18 +672,17 @@ function SkuFormModal({
                 className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm focus:border-[#0093D0] focus:ring-2 focus:ring-[#0093D0]/20 focus:outline-none"
               />
             </div>
-          </div>
-
-          <div>
-            <label className="inline-flex items-center gap-2 text-sm text-slate-700">
-              <input
-                type="checkbox"
-                checked={stackable}
-                onChange={(e) => setStackable(e.target.checked)}
-                className="rounded border-slate-300 text-[#0093D0] focus:ring-[#0093D0]"
-              />
-              <span>Stackable</span>
-            </label>
+            <div className="flex items-end">
+              <label className="inline-flex items-center gap-2 text-sm text-slate-700 px-3 py-2">
+                <input
+                  type="checkbox"
+                  checked={stackable}
+                  onChange={(e) => setStackable(e.target.checked)}
+                  className="rounded border-slate-300 text-[#0093D0] focus:ring-[#0093D0]"
+                />
+                <span>Stackable</span>
+              </label>
+            </div>
           </div>
 
           <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
@@ -638,6 +753,36 @@ function ProductTypePill({ type }: { type: string }) {
       {type}
     </span>
   )
+}
+
+function CalcStat({
+  n,
+  label,
+  sub,
+}: {
+  n: number
+  label: string
+  sub?: string
+}) {
+  return (
+    <span className="inline-flex items-baseline gap-1.5">
+      <span className="font-mono font-bold text-base text-[#1B4676]">
+        {n.toLocaleString(undefined, {
+          maximumFractionDigits: 2,
+        })}
+      </span>
+      <span className="text-[11px] uppercase tracking-wider text-slate-500 font-semibold">
+        {label}
+      </span>
+      {sub && <span className="text-[10px] text-slate-400">{sub}</span>}
+    </span>
+  )
+}
+
+function formatNumber(n: number): string {
+  // Trim trailing zeros but keep 0.0001 precision (items/pallet can be very fine)
+  if (Number.isInteger(n)) return n.toString()
+  return Number(n.toFixed(4)).toString()
 }
 
 function LoadingHint() {

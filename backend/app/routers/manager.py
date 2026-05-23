@@ -1310,6 +1310,7 @@ def _sku_to_read(s: SKU, customer_name: str) -> SKURead:
         product_type=s.product_type,
         sqft_per_unit=s.sqft_per_unit,
         items_per_pallet=s.items_per_pallet,
+        pallet_sqft=s.pallet_sqft,
         pallet_mode=s.pallet_mode,
         stackable=s.stackable,
         max_stack_height=s.max_stack_height,
@@ -1416,6 +1417,7 @@ async def create_sku(
         product_type=(payload.product_type or "").strip() or None,
         sqft_per_unit=payload.sqft_per_unit,
         items_per_pallet=payload.items_per_pallet,
+        pallet_sqft=payload.pallet_sqft,
         pallet_mode=payload.pallet_mode,
         stackable=payload.stackable,
         max_stack_height=payload.max_stack_height,
@@ -1511,6 +1513,31 @@ async def update_sku(
     )
     await session.commit()
     return _sku_to_read(s, customer.name if customer else "?")
+
+
+@router.get("/skus/calculator")
+async def sku_space_calculator(
+    qty: int = Query(..., ge=0),
+    items_per_pallet: float = Query(..., gt=0),
+    pallet_sqft: float = Query(..., gt=0),
+    lot_sqft: float | None = Query(None, gt=0),
+):
+    """Pure calc preview — no DB. Used by the SKU admin form to render
+    'if you receive qty units → X pallets → Y sqft → Z lots' live as the
+    user types. Defaults lot_sqft to the Vernon facility size (17×23)."""
+    from app.services.space import DEFAULT_LOT_SQFT, compute_pallet_rollup
+
+    lot = lot_sqft if lot_sqft else DEFAULT_LOT_SQFT
+    rollup = compute_pallet_rollup(qty, items_per_pallet, pallet_sqft, lot)
+    # ceil up lots — partial lots still consume a whole lot's footprint.
+    import math
+
+    lots_needed = math.ceil(rollup["lots"]) if rollup["lots"] > 0 else 0
+    return {
+        **rollup,
+        "lots_needed": lots_needed,
+        "lot_sqft_used": lot,
+    }
 
 
 @router.delete("/skus/{sku_id}", status_code=204)

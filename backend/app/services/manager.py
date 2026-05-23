@@ -163,6 +163,7 @@ async def get_do_detail(session: AsyncSession, do_id: int) -> DODetail:
                 sku_sqft_per_unit=ln.sku.sqft_per_unit if ln.sku else None,
                 stackable=ln.sku.stackable if ln.sku else False,
                 max_stack_height=ln.sku.max_stack_height if ln.sku else None,
+                sku_pallet_sqft=ln.sku.pallet_sqft if ln.sku else None,
             )
             container_total_sqft += space.total_sqft
             line_rows.append(

@@ -258,6 +258,7 @@ async def record_scan(
         sku_sqft_per_unit=sku.sqft_per_unit,
         stackable=sku.stackable,
         max_stack_height=sku.max_stack_height,
+        sku_pallet_sqft=sku.pallet_sqft,
     )
     pallet_footprint_sqft = space.total_sqft  # sqft for one full pallet
 
