@@ -1276,6 +1276,56 @@ export interface OutboundOrderErpDetail {
   activity: ContainerErpActivity[]
 }
 
+// ─── Master list (auto-computed inbound + outbound) ──────────────────────
+
+export interface MasterListRow {
+  row_kind: 'inbound' | 'outbound'
+  source_id: number
+  container_no: string
+  customer_name: string | null
+  invoice_no: string | null
+  whpo_number: string | null
+  expected_arrival_date: string | null
+  received_date: string | null
+  units: number | null
+  pallets: number | null
+  carrier_or_broker: string | null
+  driver_name: string | null
+  transfer_order_no: string | null
+  ship_date: string | null
+  ship_to: string | null
+  outbound_units: number | null
+  outbound_pallets: number | null
+  scanned: boolean
+  status: string | null
+}
+
+export interface MasterListResponse {
+  items: MasterListRow[]
+  total: number
+}
+
+export const masterListApi = {
+  list: (params: {
+    customer?: string
+    since?: string
+    until?: string
+    scanned?: boolean
+    limit?: number
+    offset?: number
+  } = {}): Promise<MasterListResponse> => {
+    const q = new URLSearchParams()
+    if (params.customer) q.set('customer', params.customer)
+    if (params.since) q.set('since', params.since)
+    if (params.until) q.set('until', params.until)
+    if (params.scanned !== undefined) q.set('scanned', String(params.scanned))
+    if (params.limit != null) q.set('limit', String(params.limit))
+    if (params.offset != null) q.set('offset', String(params.offset))
+    const qs = q.toString()
+    return request<MasterListResponse>(`/manager/master-list${qs ? `?${qs}` : ''}`)
+  },
+}
+
 // ─── Tally sheets (POD-driven billing audit) ─────────────────────────────
 
 export interface TallySheetRead {
