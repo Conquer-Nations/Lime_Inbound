@@ -265,6 +265,49 @@ class SKUAdminUpdateRequest(BaseModel):
 class CustomerRead(BaseModel):
     id: int
     name: str
+    account_id: int | None = None
+    account_name: str | None = None
+    contact_email: str | None = None
+
+
+class CustomerCreateRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    account_id: int | None = None
+    contact_email: str | None = None
+
+
+class CustomerUpdateRequest(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=120)
+    account_id: int | None = None
+    contact_email: str | None = None
+    # Special sentinel — pass False to keep account_id, True to explicitly
+    # null it out (Pydantic can't tell "field omitted" from "field set to
+    # null" otherwise). Frontends just send `account_id: null` and the
+    # endpoint handles it.
+
+
+class AccountRead(BaseModel):
+    id: int
+    name: str
+    billing_email: str | None
+    billing_address: str | None
+    notes: str | None
+    customer_count: int
+    created_at: datetime
+
+
+class AccountCreateRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    billing_email: str | None = None
+    billing_address: str | None = None
+    notes: str | None = None
+
+
+class AccountUpdateRequest(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=120)
+    billing_email: str | None = None
+    billing_address: str | None = None
+    notes: str | None = None
 
 
 # Forward references

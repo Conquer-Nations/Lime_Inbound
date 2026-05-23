@@ -549,14 +549,43 @@ export const api = {
     )
   },
 
-  // ─── SKU master admin ──────────────────────────────────────────────
-  listManagerCustomers: () =>
-    request<CustomerRead[]>('/manager/customers'),
+  // ─── Account hierarchy admin ───────────────────────────────────────
+  listAccounts: () => request<AccountRead[]>('/manager/accounts'),
 
-  createCustomer: (name: string) =>
+  createAccount: (payload: AccountCreate) =>
+    request<AccountRead>('/manager/accounts', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+
+  updateAccount: (id: number, payload: AccountUpdate) =>
+    request<AccountRead>(`/manager/accounts/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(payload),
+    }),
+
+  deleteAccount: (id: number) =>
+    requestVoid(`/manager/accounts/${id}`, { method: 'DELETE' }),
+
+  // ─── SKU master admin ──────────────────────────────────────────────
+  listManagerCustomers: (account_id?: number) => {
+    const qs = account_id != null ? `?account_id=${account_id}` : ''
+    return request<CustomerRead[]>(`/manager/customers${qs}`)
+  },
+
+  createCustomer: (payload: { name: string; account_id?: number | null; contact_email?: string | null }) =>
     request<CustomerRead>('/manager/customers', {
       method: 'POST',
-      body: JSON.stringify({ name }),
+      body: JSON.stringify(payload),
+    }),
+
+  updateCustomer: (
+    id: number,
+    payload: { name?: string; account_id?: number | null; contact_email?: string | null },
+  ) =>
+    request<CustomerRead>(`/manager/customers/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(payload),
     }),
 
   listSkus: (params?: { customer_id?: number; q?: string }) => {
@@ -927,11 +956,40 @@ export interface InventoryResponse {
   items: InventoryItem[]
 }
 
+// ─── Account hierarchy types ──────────────────────────────────────────
+
+export interface AccountRead {
+  id: number
+  name: string
+  billing_email: string | null
+  billing_address: string | null
+  notes: string | null
+  customer_count: number
+  created_at: string
+}
+
+export interface AccountCreate {
+  name: string
+  billing_email?: string | null
+  billing_address?: string | null
+  notes?: string | null
+}
+
+export interface AccountUpdate {
+  name?: string
+  billing_email?: string | null
+  billing_address?: string | null
+  notes?: string | null
+}
+
 // ─── SKU admin types (mirror schemas/manager.py SKU* models) ──────────
 
 export interface CustomerRead {
   id: number
   name: string
+  account_id?: number | null
+  account_name?: string | null
+  contact_email?: string | null
 }
 
 export interface SKURead {

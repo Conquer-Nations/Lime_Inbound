@@ -2,6 +2,7 @@ import { useEffect, useState, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../auth/AuthContext'
 import { api } from '../api/client'
+import AccountAdmin from '../components/AccountAdmin'
 import DashboardTab from '../components/DashboardTab'
 import InboundView from '../components/InboundView'
 import ManagerSidebar from '../components/ManagerSidebar'
@@ -23,6 +24,7 @@ type Tab =
   | 'exceptions'
   | 'inbound'
   | 'skus'
+  | 'accounts'
 
 // ERP module structure — mirrors how Dynamics / SAP / Odoo group screens.
 // Each category collapses in the sidebar. Add new top-level groups
@@ -43,6 +45,7 @@ const NAV_CATEGORIES: NavCategory[] = [
     label: 'Customer',
     icon: 'customer',
     items: [
+      { key: 'accounts', label: 'Accounts & Brands' },
       { key: 'skus', label: 'Product Specification' },
     ],
   },
@@ -140,6 +143,7 @@ export default function ManagerPage() {
         {tab === 'tos' && <TOsTab data={tos} />}
         {tab === 'lots' && <LotsTab data={lots} />}
         {tab === 'inbound' && <InboundView />}
+        {tab === 'accounts' && <AccountAdmin />}
         {tab === 'skus' && <SkuAdmin />}
         {tab === 'exceptions' && (
           <ExceptionsTab

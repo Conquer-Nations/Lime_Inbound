@@ -125,7 +125,7 @@ export default function SkuAdmin() {
         </div>
         <p className="text-xs text-slate-500 mt-3">
           One row per (customer × SKU). Product type drives IMEI / box-number
-          capture on the scan sheet: <strong>eBikes</strong> and{' '}
+          capture on the scan sheet: <strong>N-E-BIKE</strong> and{' '}
           <strong>Gliders</strong> require IMEI; <strong>Scooters</strong> ship
           10-per-box and get the box # column.
         </p>
@@ -267,9 +267,13 @@ export default function SkuAdmin() {
 
 // ─── Form modal ────────────────────────────────────────────────────────
 
+// Product type labels are what gets persisted to SKU.product_type and
+// drives the scan-sheet IMEI / box-number logic. "N-E-BIKE" still
+// contains "bike" (case-insensitive) so the IMEI requirement still
+// fires correctly on the operator side.
 const PRODUCT_TYPE_OPTIONS = [
   'Scooters',
-  'eBikes',
+  'N-E-BIKE',
   'Gliders',
   'Batteries',
   'Helmets',
@@ -339,7 +343,7 @@ function SkuFormModal({
     const name = newCustomerName.trim()
     if (!name) return
     try {
-      const c = await api.createCustomer(name)
+      const c = await api.createCustomer({ name })
       setCustomerId(c.id)
       setShowNewCustomer(false)
       setNewCustomerName('')
@@ -533,7 +537,7 @@ function SkuFormModal({
                 />
               )}
               <p className="text-[11px] text-slate-500 mt-1">
-                eBikes / Gliders → IMEI required. Scooters → 10-per-box.
+                N-E-BIKE / Gliders → IMEI required. Scooters → 10-per-box.
               </p>
             </div>
           </div>

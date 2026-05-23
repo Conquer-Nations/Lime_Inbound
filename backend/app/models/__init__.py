@@ -24,15 +24,51 @@ from app.db import Base
 # ─── Master data ────────────────────────────────────────────────────────────
 
 
+class Account(Base):
+    """Billing account — the legal entity we have a service contract with
+    and invoice. e.g. TQL. Each account has many product-owner brands
+    (Customer rows) whose stuff we warehouse on their behalf.
+
+    Conquer Nation bills TQL for warehouse activity across all of TQL's
+    brands (Lime, National Plastic, Pan America, Boviet Solar, …). At
+    invoicing time we group usage by Account so one TQL invoice
+    aggregates every brand's storage / handling charges."""
+
+    __tablename__ = "accounts"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(120), unique=True, index=True)
+    billing_email: Mapped[str | None] = mapped_column(String(255))
+    billing_address: Mapped[str | None] = mapped_column(Text)
+    notes: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    customers: Mapped[list[Customer]] = relationship(back_populates="account")
+
+
 class Customer(Base):
+    """Product-owner brand — the company whose physical inventory lives on
+    our floor. e.g. Lime, National Plastic, Pan America, Boviet Solar.
+
+    Most operational data (SKUs, WHPOs, scans) is scoped here. Billing
+    rolls up through `account_id` to the Account row, which is who we
+    actually invoice. account_id is nullable so legacy direct-bill
+    customers (no intermediary) still fit the schema."""
+
     __tablename__ = "customers"
 
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(120), unique=True, index=True)
+    account_id: Mapped[int | None] = mapped_column(
+        ForeignKey("accounts.id"), index=True
+    )
     contact_email: Mapped[str | None] = mapped_column(String(255))
     notes: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
+    account: Mapped[Account | None] = relationship(back_populates="customers")
     skus: Mapped[list[SKU]] = relationship(back_populates="customer", cascade="all, delete-orphan")
     whpos: Mapped[list[WHPO]] = relationship(back_populates="customer")
 
@@ -561,6 +597,7 @@ class OutboundScan(Base):
 
 
 __all__ = [
+    "Account",
     "Customer",
     "SKU",
     "Floor",

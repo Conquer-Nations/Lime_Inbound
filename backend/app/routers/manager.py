@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db import get_session
 from app.models import (
     SKU,
+    Account,
     ActivityLog,
     Container,
     ContainerLine,
@@ -26,7 +27,12 @@ from app.models import (
     WHPO,
 )
 from app.schemas.manager import (
+    AccountCreateRequest,
+    AccountRead,
+    AccountUpdateRequest,
+    CustomerCreateRequest,
     CustomerRead,
+    CustomerUpdateRequest,
     DODetail,
     DOListItem,
     DashboardResponse,
@@ -1321,31 +1327,204 @@ def _sku_to_read(s: SKU, customer_name: str) -> SKURead:
     )
 
 
+# ─── Accounts (billing entities — TQL etc.) ────────────────────────────
+
+
+async def _account_to_read(session: AsyncSession, a: Account) -> AccountRead:
+    customer_count = await session.scalar(
+        select(func.count()).select_from(Customer).where(Customer.account_id == a.id)
+    )
+    return AccountRead(
+        id=a.id,
+        name=a.name,
+        billing_email=a.billing_email,
+        billing_address=a.billing_address,
+        notes=a.notes,
+        customer_count=int(customer_count or 0),
+        created_at=a.created_at,
+    )
+
+
+@router.get("/accounts", response_model=list[AccountRead])
+async def list_accounts(session: AsyncSession = Depends(get_session)):
+    """Billing accounts (TQL, etc.). Each account rolls up many product-
+    owner brands (Customer rows) for invoicing."""
+    accts = (await session.scalars(select(Account).order_by(Account.name))).all()
+    return [await _account_to_read(session, a) for a in accts]
+
+
+@router.post("/accounts", response_model=AccountRead, status_code=201)
+async def create_account(
+    payload: AccountCreateRequest,
+    session: AsyncSession = Depends(get_session),
+):
+    existing = await session.scalar(
+        select(Account).where(func.lower(Account.name) == payload.name.strip().lower())
+    )
+    if existing is not None:
+        raise HTTPException(
+            status_code=409, detail=f"Account '{payload.name}' already exists"
+        )
+    a = Account(
+        name=payload.name.strip(),
+        billing_email=payload.billing_email,
+        billing_address=payload.billing_address,
+        notes=payload.notes,
+    )
+    session.add(a)
+    await session.flush()
+    session.add(
+        ActivityLog(
+            actor="manager",
+            kind="account_created",
+            ref_type="account",
+            ref_id=a.id,
+            message=f"Account '{a.name}' created",
+        )
+    )
+    await session.commit()
+    return await _account_to_read(session, a)
+
+
+@router.patch("/accounts/{account_id}", response_model=AccountRead)
+async def update_account(
+    account_id: int,
+    payload: AccountUpdateRequest,
+    session: AsyncSession = Depends(get_session),
+):
+    a = await session.get(Account, account_id)
+    if a is None:
+        raise HTTPException(status_code=404, detail=f"Account {account_id} not found")
+    data = payload.model_dump(exclude_unset=True)
+    if "name" in data:
+        new_name = data["name"].strip()
+        clash = await session.scalar(
+            select(Account).where(
+                func.lower(Account.name) == new_name.lower(), Account.id != a.id
+            )
+        )
+        if clash is not None:
+            raise HTTPException(
+                status_code=409, detail=f"Account '{new_name}' already exists"
+            )
+        a.name = new_name
+        data.pop("name")
+    for k, v in data.items():
+        setattr(a, k, v)
+    session.add(
+        ActivityLog(
+            actor="manager",
+            kind="account_updated",
+            ref_type="account",
+            ref_id=a.id,
+            message=f"Account '{a.name}' updated",
+            payload={"fields": list(data.keys())},
+        )
+    )
+    await session.commit()
+    return await _account_to_read(session, a)
+
+
+@router.delete("/accounts/{account_id}", status_code=204)
+async def delete_account(
+    account_id: int,
+    session: AsyncSession = Depends(get_session),
+):
+    a = await session.get(Account, account_id)
+    if a is None:
+        raise HTTPException(status_code=404, detail=f"Account {account_id} not found")
+    in_use = await session.scalar(
+        select(func.count()).select_from(Customer).where(Customer.account_id == a.id)
+    )
+    if (in_use or 0) > 0:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Account has {in_use} brand(s) attached — unlink them first or "
+                "reassign them to another account."
+            ),
+        )
+    name = a.name
+    await session.delete(a)
+    session.add(
+        ActivityLog(
+            actor="manager",
+            kind="account_deleted",
+            ref_type="account",
+            ref_id=account_id,
+            message=f"Account '{name}' deleted",
+        )
+    )
+    await session.commit()
+
+
+# ─── Customers (product owners — Lime, NP, Pan America, Boviet Solar) ──
+
+
+def _customer_to_read(c: Customer, account_name: str | None) -> CustomerRead:
+    return CustomerRead(
+        id=c.id,
+        name=c.name,
+        account_id=c.account_id,
+        account_name=account_name,
+        contact_email=c.contact_email,
+    )
+
+
 @router.get("/customers", response_model=list[CustomerRead])
-async def list_customers(session: AsyncSession = Depends(get_session)):
-    """Customer dropdown for the SKU admin form."""
-    rows = (
-        await session.execute(select(Customer.id, Customer.name).order_by(Customer.name))
-    ).all()
-    return [CustomerRead(id=r[0], name=r[1]) for r in rows]
+async def list_customers(
+    account_id: int | None = None,
+    session: AsyncSession = Depends(get_session),
+):
+    """Product-owner brands. Optional filter by parent account (e.g. show
+    just TQL's brands). Each row carries the parent account_name for the
+    SKU admin dropdown."""
+    stmt = (
+        select(Customer, Account.name)
+        .outerjoin(Account, Account.id == Customer.account_id)
+        .order_by(Customer.name)
+    )
+    if account_id is not None:
+        stmt = stmt.where(Customer.account_id == account_id)
+    rows = (await session.execute(stmt)).all()
+    return [_customer_to_read(c, account_name) for c, account_name in rows]
 
 
 @router.post("/customers", response_model=CustomerRead, status_code=201)
 async def create_customer(
-    payload: dict,
+    payload: CustomerCreateRequest,
     session: AsyncSession = Depends(get_session),
 ):
-    """Create a new customer inline from the SKU admin UI. Idempotent —
-    returns the existing customer if the name (normalised) already exists."""
-    name = (payload.get("name") or "").strip()
-    if not name:
-        raise HTTPException(status_code=400, detail="name required")
+    """Create a new product-owner brand. Idempotent — returns the existing
+    brand if a normalised name match already exists (account_id and other
+    fields are applied as a patch in that case)."""
+    name = payload.name.strip()
     existing = await session.scalar(
         select(Customer).where(func.lower(Customer.name) == name.lower())
     )
     if existing is not None:
-        return CustomerRead(id=existing.id, name=existing.name)
-    c = Customer(name=name)
+        # Patch in-place — useful when adding accounts to legacy customers.
+        if payload.account_id is not None and existing.account_id != payload.account_id:
+            existing.account_id = payload.account_id
+        if payload.contact_email is not None:
+            existing.contact_email = payload.contact_email
+        await session.commit()
+        acct = await session.get(Account, existing.account_id) if existing.account_id else None
+        return _customer_to_read(existing, acct.name if acct else None)
+
+    if payload.account_id is not None:
+        acct = await session.get(Account, payload.account_id)
+        if acct is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Account {payload.account_id} not found",
+            )
+
+    c = Customer(
+        name=name,
+        account_id=payload.account_id,
+        contact_email=payload.contact_email,
+    )
     session.add(c)
     await session.flush()
     session.add(
@@ -1354,11 +1533,64 @@ async def create_customer(
             kind="customer_created",
             ref_type="customer",
             ref_id=c.id,
-            message=f"Customer '{name}' created via SKU admin",
+            message=f"Brand '{name}' created",
         )
     )
     await session.commit()
-    return CustomerRead(id=c.id, name=c.name)
+    acct = await session.get(Account, c.account_id) if c.account_id else None
+    return _customer_to_read(c, acct.name if acct else None)
+
+
+@router.patch("/customers/{customer_id}", response_model=CustomerRead)
+async def update_customer(
+    customer_id: int,
+    payload: CustomerUpdateRequest,
+    session: AsyncSession = Depends(get_session),
+):
+    """Update a brand. Send `account_id: null` in the body to detach from
+    its current account (legacy direct-bill)."""
+    c = await session.get(Customer, customer_id)
+    if c is None:
+        raise HTTPException(status_code=404, detail=f"Customer {customer_id} not found")
+    data = payload.model_dump(exclude_unset=True)
+    if "name" in data:
+        new_name = data["name"].strip()
+        clash = await session.scalar(
+            select(Customer).where(
+                func.lower(Customer.name) == new_name.lower(), Customer.id != c.id
+            )
+        )
+        if clash is not None:
+            raise HTTPException(
+                status_code=409, detail=f"Brand '{new_name}' already exists"
+            )
+        c.name = new_name
+        data.pop("name")
+    if "account_id" in data:
+        new_acct = data["account_id"]
+        if new_acct is not None:
+            acct = await session.get(Account, new_acct)
+            if acct is None:
+                raise HTTPException(
+                    status_code=404, detail=f"Account {new_acct} not found"
+                )
+        c.account_id = new_acct
+        data.pop("account_id")
+    for k, v in data.items():
+        setattr(c, k, v)
+    session.add(
+        ActivityLog(
+            actor="manager",
+            kind="customer_updated",
+            ref_type="customer",
+            ref_id=c.id,
+            message=f"Brand '{c.name}' updated",
+            payload={"fields": list(payload.model_dump(exclude_unset=True).keys())},
+        )
+    )
+    await session.commit()
+    acct = await session.get(Account, c.account_id) if c.account_id else None
+    return _customer_to_read(c, acct.name if acct else None)
 
 
 @router.get("/skus", response_model=list[SKURead])
