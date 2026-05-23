@@ -128,6 +128,12 @@ class Settings(BaseSettings):
     # scan-sheet finish. Same body shape; different workbook + Office Script.
     onedrive_outbound_scan_sheet_url: str = ""
 
+    # Wipe-only Logic Apps that delete every per-container worksheet in the
+    # scan workbooks (leaving one empty placeholder sheet so Excel stays
+    # valid). Called from wipe-transactional for clean test resets.
+    onedrive_scan_sheet_clear_url: str = ""
+    onedrive_outbound_scan_sheet_clear_url: str = ""
+
     # OneDrive outbound sync — mirror of the inbound webhooks, pointing at
     # `Lime Outbound Data.xlsx`.
     #   - onedrive_outbound_webhook_url: Logic App that APPENDs rows to

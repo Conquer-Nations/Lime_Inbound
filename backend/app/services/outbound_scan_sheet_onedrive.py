@@ -96,3 +96,31 @@ async def push_outbound_scan_sheet(
         )
         return False
     return True
+
+
+async def clear_all_outbound_scan_worksheets() -> int:
+    """Mirror of scan_sheet_onedrive.clear_all_scan_worksheets for the
+    Lime Outbound Scan Data.xlsx workbook."""
+    url = settings.onedrive_outbound_scan_sheet_clear_url
+    if not url:
+        logger.info(
+            "outbound_scan_sheet_onedrive: clear url not set, skipping clear"
+        )
+        return 0
+    try:
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            r = await client.post(url, json={})
+        if r.is_success:
+            try:
+                data = r.json()
+                return int(data.get("deleted", 0)) if isinstance(data, dict) else 0
+            except (ValueError, TypeError):
+                return 0
+        logger.warning(
+            "outbound_scan_sheet_onedrive clear returned %s: %s",
+            r.status_code,
+            r.text[:200],
+        )
+    except Exception as e:
+        logger.warning("outbound_scan_sheet_onedrive clear errored: %s", e)
+    return 0

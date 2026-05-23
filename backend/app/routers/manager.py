@@ -758,12 +758,18 @@ async def wipe_transactional_data(
     # Best-effort — these are independent workbooks; failures log and proceed
     # so we don't block the Postgres wipe on a transient OneDrive hiccup.
     from app.services import outbound_sheet_sync as _out_sync
+    from app.services import scan_sheet_onedrive as _scan_od
+    from app.services import outbound_scan_sheet_onedrive as _out_scan_od
 
     outbound_rows_deleted = 0
     inventory_rows_deleted = 0
+    scan_sheets_deleted = 0
+    outbound_scan_sheets_deleted = 0
     try:
         outbound_rows_deleted = await _out_sync.clear_outbound_table()
         inventory_rows_deleted = await _out_sync.clear_container_inventory()
+        scan_sheets_deleted = await _scan_od.clear_all_scan_worksheets()
+        outbound_scan_sheets_deleted = await _out_scan_od.clear_all_outbound_scan_worksheets()
     except Exception as e:
         # Don't 502 here — operator's test resets shouldn't fail because
         # the outbound ops Logic App is unreachable.
@@ -813,6 +819,8 @@ async def wipe_transactional_data(
         "excel_rows_deleted": excel_deleted,
         "outbound_excel_rows_deleted": outbound_rows_deleted,
         "container_inventory_rows_deleted": inventory_rows_deleted,
+        "scan_worksheets_deleted": scan_sheets_deleted,
+        "outbound_scan_worksheets_deleted": outbound_scan_sheets_deleted,
         "postgres_rows_remaining": counts,
         "next_do_number": "DO-2026-0001",
         "next_po_number": "PO-2026-0001",
