@@ -29,22 +29,26 @@ from app.schemas.vendor import (
     ContainerDocumentItem,
     ContainerDocumentsResponse,
     ContainerListItem,
+    ContainerStatus,
     DocumentKindOption,
     DocumentKindsResponse,
     DriverInfoResponse,
+    StatusEvent,
     VendorDriverInfo,
     VendorWHPOSubmission,
     WHPOChange,
     WHPOContainersResponse,
     WHPOCurrentContainer,
     WHPOCurrentLine,
-    ContainerStatus,
-    StatusEvent,
     WHPOCurrentState,
-    WHPOStatusResponse,
     WHPOIntakeResponse,
+    WHPOStatusResponse,
     WHPOUpdateRequest,
     WHPOUpdateResponse,
+)
+from app.schemas.calendar import (
+    CalendarDay,
+    CalendarResponse,
 )
 from app.services import (
     onedrive_files,
@@ -1110,3 +1114,23 @@ def _summarize_changes(whpo_number: str, changes: list[WHPOChange]) -> str:
         bits.append(f"{n_lines} SKU line change{'s' if n_lines != 1 else ''}")
     detail = ", ".join(bits) if bits else "no changes"
     return f"WHPO/Load No {whpo_number} updated by vendor — {detail}."
+
+
+@router.get("/calendar", response_model=CalendarResponse)
+async def get_vendor_calendar(
+    days: int = 14,
+    session: AsyncSession = Depends(get_session),
+    vendor: dict = Depends(current_vendor_required),
+):
+    """Inbound + outbound activity for the next `days` days, scoped to
+    the vendor's own company. Default 14 days (per Tiana's spec)."""
+    from app.services.calendar import build_calendar
+
+    days = max(1, min(60, int(days)))
+    company = (vendor.get("company") or "").strip()
+    data = await build_calendar(session, days=days, customer_name=company)
+    return CalendarResponse(
+        window_start=data["window_start"],
+        window_end=data["window_end"],
+        days=[CalendarDay(**d) for d in data["days"]],
+    )

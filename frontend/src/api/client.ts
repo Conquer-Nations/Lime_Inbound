@@ -523,6 +523,12 @@ export const api = {
       `/vendor/outbound/order/${encodeURIComponent(tno)}/status`,
     ),
 
+  vendorCalendar: (days = 14) =>
+    request<CalendarResponse>(`/vendor/calendar?days=${days}`),
+
+  managerCalendar: (days = 14) =>
+    request<CalendarResponse>(`/manager/calendar?days=${days}`),
+
   extractPickingTicket: (file: File) => {
     const fd = new FormData()
     fd.append('file', file)
@@ -768,6 +774,28 @@ export interface OutboundOrderStatusResponse {
   customer_name: string
   order_placed_at: string
   containers: ContainerStatusTimeline[]
+}
+
+// ─── Calendar ──────────────────────────────────────────────────────────
+
+export interface CalendarContainerRow {
+  container_no: string
+  ref_no: string
+  customer: string
+  current_stage: string
+  current_label: string
+}
+
+export interface CalendarDay {
+  date: string
+  inbound_containers: CalendarContainerRow[]
+  outbound_containers: CalendarContainerRow[]
+}
+
+export interface CalendarResponse {
+  window_start: string
+  window_end: string
+  days: CalendarDay[]
 }
 
 export interface OutboundContainerRead {

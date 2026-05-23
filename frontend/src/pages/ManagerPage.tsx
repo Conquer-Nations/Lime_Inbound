@@ -6,13 +6,15 @@ import DashboardTab from '../components/DashboardTab'
 import InboundView from '../components/InboundView'
 import ResolveExceptionModal from '../components/ResolveExceptionModal'
 import WarehouseFloorPlan from '../components/WarehouseFloorPlan'
+import { CalendarView } from '../components/CalendarView'
 import type { DOListItem, ExceptionItem, LotMapItem } from '../types/api'
 import BrandMark from '../components/BrandMark'
 
-type Tab = 'dashboard' | 'dos' | 'lots' | 'exceptions' | 'inbound'
+type Tab = 'dashboard' | 'calendar' | 'dos' | 'lots' | 'exceptions' | 'inbound'
 
 const TABS: { key: Tab; label: string }[] = [
   { key: 'dashboard', label: 'Dashboard' },
+  { key: 'calendar', label: 'Calendar' },
   { key: 'dos', label: 'Delivery Orders' },
   { key: 'lots', label: 'Warehouse Map' },
   { key: 'exceptions', label: 'Exceptions' },
@@ -61,6 +63,24 @@ export default function ManagerPage() {
               setTab(target.tab === 'data' ? 'inbound' : target.tab)
             }}
           />
+        )}
+        {tab === 'calendar' && (
+          <div className="space-y-4">
+            <div className="flex items-baseline justify-between">
+              <h2 className="text-lg sm:text-xl font-bold tracking-tight text-[#1B4676]">
+                Container activity calendar
+              </h2>
+              <span className="text-[11px] uppercase tracking-[0.18em] text-slate-400 font-semibold">
+                All customers
+              </span>
+            </div>
+            <CalendarView
+              fetcher={(d) => api.managerCalendar(d)}
+              defaultDays={14}
+              showWindowSelector
+              emptyHint="No inbound or outbound activity in this window."
+            />
+          </div>
         )}
         {tab === 'dos' && <DOsTab data={dos} />}
         {tab === 'lots' && <LotsTab data={lots} />}

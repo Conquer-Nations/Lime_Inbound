@@ -6,6 +6,7 @@ import Spinner from '../components/Spinner'
 import VendorPortalChrome from '../components/VendorPortalChrome'
 import { ContainerDocumentUploads } from '../components/ContainerDocumentUploads'
 import { StatusTimeline } from '../components/StatusTimeline'
+import { CalendarView } from '../components/CalendarView'
 import type { VendorContainerSubmission, VendorLineItem, WHPOIntakeResponse } from '../types/api'
 import BrandMark from '../components/BrandMark'
 import { isAuditor } from './AuditPage'
@@ -1319,6 +1320,23 @@ function DirectionChooser({
             description="Place a Transfer Order, attach driver / truck info, update an existing order, or look up one already on file."
             onClick={() => onChoose('out_choose')}
             accent="navy"
+          />
+        </div>
+
+        {/* Activity calendar — your inbound + outbound over the next 2 weeks. */}
+        <div className="mt-12">
+          <div className="flex items-baseline justify-between mb-4">
+            <h2 className="text-lg sm:text-xl font-bold tracking-tight text-[#1B4676]">
+              Next 2 weeks — your activity
+            </h2>
+            <span className="text-[11px] uppercase tracking-[0.18em] text-slate-400 font-semibold">
+              Calendar
+            </span>
+          </div>
+          <CalendarView
+            fetcher={(d) => api.vendorCalendar(d)}
+            defaultDays={14}
+            emptyHint="No inbound or outbound activity scheduled in the next 2 weeks. Submit a WHPO or Transfer Order to see it here."
           />
         </div>
 

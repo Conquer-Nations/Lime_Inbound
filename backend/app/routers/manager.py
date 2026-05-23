@@ -1291,3 +1291,18 @@ async def wipe_except_container(
             "alone. Delete unwanted ones manually in Excel if needed."
         ),
     }
+
+
+@router.get("/calendar")
+async def get_manager_calendar(
+    days: int = 14,
+    session: AsyncSession = Depends(get_session),
+):
+    """Cross-customer inbound + outbound activity for the next `days` days.
+    No customer filter — managers see everything. Window: 1 / 7 / 14 / 30
+    (the UI offers those presets but any int 1-60 works)."""
+    from app.services.calendar import build_calendar
+
+    days = max(1, min(60, int(days)))
+    data = await build_calendar(session, days=days, customer_name=None)
+    return data
