@@ -255,6 +255,15 @@ export default function ScanSheetMode({ sheet, operator, onFinished }: Props) {
               : 'sm:grid-cols-[2fr_1fr_auto]'
           }`}
         >
+          {/*
+            NOTE on inputMode: previously these fields had inputMode="none"
+            to suppress the on-screen keyboard on tablets. In practice that
+            attribute also disrupted rapid keyboard events from the Keyence
+            BT-A500 (scans dropped or arrived in the wrong field). Removed
+            so the inputs behave like the Notes field, which always works.
+            If virtual-keyboard suppression is needed later, gate it on a
+            touch-device detect rather than always-on.
+          */}
           <input
             ref={serialInputRef}
             type="text"
@@ -266,7 +275,6 @@ export default function ScanSheetMode({ sheet, operator, onFinished }: Props) {
             autoComplete="off"
             autoCorrect="off"
             autoCapitalize="off"
-            inputMode="none"
             className="font-mono w-full border border-slate-300 rounded-md px-4 py-4 text-xl tracking-wider text-[#1B4676] placeholder:text-slate-400 focus:border-[#0093D0] focus:ring-2 focus:ring-[#0093D0]/20 focus:outline-none transition"
             disabled={busy || h.is_completed}
           />
@@ -282,7 +290,6 @@ export default function ScanSheetMode({ sheet, operator, onFinished }: Props) {
               autoComplete="off"
               autoCorrect="off"
               autoCapitalize="off"
-              inputMode="none"
               className="font-mono w-full border border-slate-300 rounded-md px-4 py-4 text-xl tracking-wider text-[#1B4676] placeholder:text-slate-400 focus:border-[#0093D0] focus:ring-2 focus:ring-[#0093D0]/20 focus:outline-none transition"
               disabled={busy || h.is_completed}
             />
