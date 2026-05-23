@@ -46,10 +46,15 @@ export const OCR_ENDPOINT = OCR_BASE.length > 0
 class ApiError extends Error {
   status: number
   detail: string
-  constructor(status: number, detail: string) {
+  /** Parsed `detail` value when the server returned an object (e.g. the
+   *  scan-sheet 409 with {message, tally_required, container_no}).
+   *  Stringified in `detail` for backward compatibility. */
+  detailObj: unknown
+  constructor(status: number, detail: string, detailObj?: unknown) {
     super(`API ${status}: ${detail}`)
     this.status = status
     this.detail = detail
+    this.detailObj = detailObj
   }
 }
 
@@ -73,13 +78,21 @@ async function request<T>(
   })
   if (!res.ok) {
     let detail = res.statusText
+    let detailObj: unknown = undefined
     try {
       const body = await res.json()
-      detail = typeof body.detail === 'string' ? body.detail : JSON.stringify(body.detail)
+      if (typeof body.detail === 'string') {
+        detail = body.detail
+      } else {
+        detailObj = body.detail
+        // Friendlier string fallback when detail is structured.
+        const m = (body.detail as { message?: string } | undefined)?.message
+        detail = m || JSON.stringify(body.detail)
+      }
     } catch {
       /* ignore JSON parse */
     }
-    throw new ApiError(res.status, detail)
+    throw new ApiError(res.status, detail, detailObj)
   }
   return (await res.json()) as T
 }
@@ -1261,6 +1274,107 @@ export interface OutboundOrderErpDetail {
   timeline: ErpStageEvent[]
   current_stage: string
   activity: ContainerErpActivity[]
+}
+
+// ─── Tally sheets (POD-driven billing audit) ─────────────────────────────
+
+export interface TallySheetRead {
+  id: number
+  container_id: number
+  container_no: string
+  pod_filename: string
+  pod_content_type: string
+  pod_file_size: number
+  ocr_from_location: string | null
+  ocr_to_location: string | null
+  ocr_engine: string | null
+  matched_driver_name: string | null
+  matched_driver_license: string | null
+  matched_driver_phone: string | null
+  matched_carrier: string | null
+  matched_truck_plate: string | null
+  manual_seal_no: string | null
+  manual_chassis_no: string | null
+  tallied_at: string
+  tallied_by: string
+  billing_status: 'pending' | 'billed' | 'disputed' | 'waived'
+  billing_notes: string | null
+  updated_at: string
+}
+
+export interface TallySheetList {
+  items: TallySheetRead[]
+  total: number
+}
+
+export interface TallySheetUpdate {
+  ocr_from_location?: string | null
+  ocr_to_location?: string | null
+  manual_seal_no?: string | null
+  manual_chassis_no?: string | null
+  billing_status?: 'pending' | 'billed' | 'disputed' | 'waived'
+  billing_notes?: string | null
+}
+
+export interface VendorTallyView {
+  container_no: string
+  tallied: boolean
+  tallied_at?: string | null
+  ocr_from_location?: string | null
+  ocr_to_location?: string | null
+  matched_carrier?: string | null
+  matched_truck_plate?: string | null
+}
+
+// Tally API surface — manager endpoints + a vendor read.
+export const tallyApi = {
+  /** Manager uploads the physical POD photo and creates the tally row. */
+  uploadPod: async (
+    container_no: string,
+    file: File,
+    tallied_by: string,
+    extras?: { manual_seal_no?: string; manual_chassis_no?: string }
+  ): Promise<TallySheetRead> => {
+    const form = new FormData()
+    form.append('file', file)
+    form.append('tallied_by', tallied_by)
+    if (extras?.manual_seal_no) form.append('manual_seal_no', extras.manual_seal_no)
+    if (extras?.manual_chassis_no) form.append('manual_chassis_no', extras.manual_chassis_no)
+    return requestMultipart<TallySheetRead>(
+      `/manager/tally/${encodeURIComponent(container_no)}/pod`,
+      'POST',
+      form
+    )
+  },
+
+  list: (params: {
+    billing_status?: 'pending' | 'billed' | 'disputed' | 'waived'
+    since?: string
+    until?: string
+    limit?: number
+    offset?: number
+  } = {}): Promise<TallySheetList> => {
+    const q = new URLSearchParams()
+    if (params.billing_status) q.set('billing_status', params.billing_status)
+    if (params.since) q.set('since', params.since)
+    if (params.until) q.set('until', params.until)
+    if (params.limit != null) q.set('limit', String(params.limit))
+    if (params.offset != null) q.set('offset', String(params.offset))
+    const qs = q.toString()
+    return request<TallySheetList>(`/manager/tally-sheets${qs ? `?${qs}` : ''}`)
+  },
+
+  get: (id: number) => request<TallySheetRead>(`/manager/tally-sheets/${id}`),
+
+  update: (id: number, patch: TallySheetUpdate) =>
+    request<TallySheetRead>(`/manager/tally-sheets/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(patch),
+    }),
+
+  /** Vendor-scoped read — only their containers; no billing fields. */
+  vendorView: (container_no: string) =>
+    request<VendorTallyView>(`/vendor/container/${encodeURIComponent(container_no)}/tally`),
 }
 
 export { ApiError }

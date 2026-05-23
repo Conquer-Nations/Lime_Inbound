@@ -85,7 +85,22 @@ export default function OperatorPage() {
         setPhase('scanning')
       }
     } catch (e) {
-      setError(e instanceof ApiError ? e.detail : String(e))
+      if (
+        e instanceof ApiError &&
+        e.status === 409 &&
+        (e.detailObj as { tally_required?: boolean } | undefined)?.tally_required
+      ) {
+        // Specific message for the tally guard — operators shouldn't see
+        // a generic "Conflict" here; they need to know what to do.
+        const obj = e.detailObj as { container_no?: string; message?: string }
+        setError(
+          obj.message ||
+            `Container ${obj.container_no ?? ''} hasn't been tallied yet. ` +
+              'Ask your manager to upload the POD before offloading.'
+        )
+      } else {
+        setError(e instanceof ApiError ? e.detail : String(e))
+      }
     } finally {
       setBusy(false)
     }
