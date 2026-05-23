@@ -386,26 +386,28 @@ function AccountFormModal({
             autoFocus
           />
         </div>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <div>
-            <Label>Billing email</Label>
-            <input
-              type="email"
-              value={billingEmail}
-              onChange={(e) => setBillingEmail(e.target.value)}
-              placeholder="ap@tql.com"
-              className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm focus:border-[#0093D0] focus:ring-2 focus:ring-[#0093D0]/20 focus:outline-none"
-            />
-          </div>
-          <div>
-            <Label>Billing address</Label>
-            <input
-              type="text"
-              value={billingAddress}
-              onChange={(e) => setBillingAddress(e.target.value)}
-              className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm focus:border-[#0093D0] focus:ring-2 focus:ring-[#0093D0]/20 focus:outline-none"
-            />
-          </div>
+        <div>
+          <Label>Billing email</Label>
+          <input
+            type="email"
+            value={billingEmail}
+            onChange={(e) => setBillingEmail(e.target.value)}
+            placeholder="ap@tql.com"
+            className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm focus:border-[#0093D0] focus:ring-2 focus:ring-[#0093D0]/20 focus:outline-none"
+          />
+        </div>
+        <div>
+          <Label>Billing address</Label>
+          <textarea
+            value={billingAddress}
+            onChange={(e) => setBillingAddress(e.target.value)}
+            rows={4}
+            placeholder={'Attn: Accounts Payable\n123 Main St, Suite 100\nCincinnati, OH 45202\nUnited States'}
+            className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm font-mono focus:border-[#0093D0] focus:ring-2 focus:ring-[#0093D0]/20 focus:outline-none resize-y"
+          />
+          <p className="text-[11px] text-slate-500 mt-1">
+            Multi-line OK — newlines are preserved when shown on invoices.
+          </p>
         </div>
         <div>
           <Label>Notes</Label>
