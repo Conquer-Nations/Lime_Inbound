@@ -10,7 +10,6 @@ from app.routers import audit as audit_router
 from app.routers import manager as manager_router
 from app.routers import ocr as ocr_router
 from app.routers import operator as operator_router
-from app.routers import master_list as master_list_router
 from app.routers import outbound as outbound_router
 from app.routers import scan_sheet as scan_sheet_router
 from app.routers import tally as tally_router
@@ -50,8 +49,6 @@ app.include_router(outbound_router.router)
 # sees status.
 app.include_router(tally_router.router)
 app.include_router(tally_router.vendor_router)
-# Master list — auto-joined inbound + outbound view (#3). Read-only.
-app.include_router(master_list_router.router)
 
 
 @app.get("/health")
