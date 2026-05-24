@@ -55,11 +55,12 @@ SELECT
     NULL::text                            AS ship_to,
     NULL::bigint                          AS outbound_units,
     NULL::bigint                          AS outbound_pallets,
-    -- "Scanned" = has any scan landed on this container?
+    -- "Scanned" = has any receipt landed on this container?
+    -- Receipt.finished_at is set when the operator seals the scan sheet.
     EXISTS (
         SELECT 1 FROM receipts r
         WHERE r.container_id = c.id
-          AND r.completed_timestamp IS NOT NULL
+          AND r.finished_at IS NOT NULL
     )                                     AS scanned,
     c.status                              AS status
 FROM containers c
@@ -93,9 +94,7 @@ SELECT
     (SELECT COUNT(DISTINCT la.pallet_id)
        FROM outbound_scans os
        JOIN scans s ON s.id = os.inbound_scan_id
-       JOIN lot_assignments la ON la.container_id = (
-           SELECT container_id FROM receipts WHERE id = s.receipt_id
-       )
+       JOIN lot_assignments la ON la.container_id = s.container_id
       WHERE os.outbound_container_id = oc.id
         AND la.pallet_id IS NOT NULL)      AS outbound_pallets,
     -- "Scanned" = any outbound scans on this container?
