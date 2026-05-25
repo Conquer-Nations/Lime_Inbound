@@ -114,7 +114,13 @@ async def _fetch_token() -> str:
 
 async def _company_guid(client: httpx.AsyncClient) -> str:
     """BC's REST API addresses Customer rows via company GUID, not the
-    display name. Resolve it once + cache."""
+    display name. Resolve it once + cache.
+
+    BC stores companies with both `name` (internal — often 'My Company'
+    or 'CRONUS USA, Inc.') and `displayName` (user-facing — e.g.
+    'Conquer Nation Inc'). We match BC_COMPANY_NAME against either
+    (case-insensitive) so configurers can use whichever they see in
+    the BC UI."""
     global _company_id
     if _company_id:
         return _company_id
@@ -128,14 +134,20 @@ async def _company_guid(client: httpx.AsyncClient) -> str:
             f"BC list-companies failed [{r.status_code}]: {r.text[:300]}"
         )
     companies = r.json().get("value", [])
-    target = settings.bc_company_name.strip()
+    target = settings.bc_company_name.strip().casefold()
     for c in companies:
-        if c.get("name", "").strip() == target:
+        name = c.get("name", "").strip().casefold()
+        display = c.get("displayName", "").strip().casefold()
+        if target in (name, display):
             _company_id = c["id"]
             return _company_id  # type: ignore[return-value]
-    available = ", ".join(c.get("name", "?") for c in companies)
+    available = ", ".join(
+        f"{c.get('name', '?')!r} (display: {c.get('displayName', '?')!r})"
+        for c in companies
+    )
     raise RuntimeError(
-        f"BC company {target!r} not found in tenant. Available: {available}"
+        f"BC company {settings.bc_company_name!r} not found in tenant. "
+        f"Available: {available}"
     )
 
 
