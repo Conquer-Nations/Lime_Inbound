@@ -578,18 +578,15 @@ function DetailPanel({
           userName={user.name}
           verifyPin={(pin) => signIn(user.id, pin).ok}
           onCancel={() => setShowReauth(false)}
-          onConfirmed={async () => {
-            setBusy(true)
-            setErr(null)
+          onConfirmed={async (setModalErr) => {
             try {
               await tallyApi.remove(tally.id, user.name)
               setShowReauth(false)
               onDeleted()
             } catch (e: unknown) {
-              setErr(String((e as { detail?: string })?.detail ?? e))
-              setShowReauth(false)
-            } finally {
-              setBusy(false)
+              // Show the error INSIDE the modal so the manager can see it
+              // without the modal closing behind a busy detail panel.
+              setModalErr(String((e as { detail?: string })?.detail ?? e))
             }
           }}
         />
@@ -615,12 +612,13 @@ function ReauthRemoveModal({
   userName: string
   verifyPin: (pin: string) => boolean
   onCancel: () => void
-  onConfirmed: () => void
+  onConfirmed: (setErr: (msg: string | null) => void) => void | Promise<void>
 }) {
   const [pin, setPin] = useState('')
   const [err, setErr] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
 
-  function attempt(e: React.FormEvent) {
+  async function attempt(e: React.FormEvent) {
     e.preventDefault()
     setErr(null)
     if (!pin) {
@@ -632,7 +630,12 @@ function ReauthRemoveModal({
       setPin('')
       return
     }
-    onConfirmed()
+    setBusy(true)
+    try {
+      await onConfirmed(setErr)
+    } finally {
+      setBusy(false)
+    }
   }
 
   return (
@@ -685,15 +688,17 @@ function ReauthRemoveModal({
           <button
             type="button"
             onClick={onCancel}
-            className="text-sm text-slate-600 hover:text-slate-800 px-3 py-2"
+            disabled={busy}
+            className="text-sm text-slate-600 hover:text-slate-800 px-3 py-2 disabled:opacity-60"
           >
             Cancel
           </button>
           <button
             type="submit"
-            className="bg-rose-600 hover:bg-rose-700 text-white font-bold rounded-full px-5 py-2 text-sm transition"
+            disabled={busy}
+            className="bg-rose-600 hover:bg-rose-700 text-white font-bold rounded-full px-5 py-2 text-sm transition disabled:opacity-60"
           >
-            Remove
+            {busy ? 'Removing…' : 'Remove'}
           </button>
         </div>
       </form>
