@@ -342,6 +342,13 @@ export const api = {
   listVendorCustomers: () =>
     request<string[]>('/vendor/auth/customers', { auth: false }),
 
+  /** Brands the logged-in vendor can submit shipments for. Returns one
+   *  name (no picker needed) for direct-brand logins, or many (Submitting-
+   *  on-behalf-of picker) for Account-level logins like TQL. Backend
+   *  resolves the company string → Account → Customers under that
+   *  Account, or → single Customer, or → [company] fallback. */
+  myBrands: () => request<string[]>('/vendor/auth/my-brands'),
+
   vendorResetPassword: (payload: { email: string; new_password: string }) =>
     request<VendorTokenResponse>('/vendor/auth/reset-password', {
       method: 'POST',

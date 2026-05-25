@@ -32,9 +32,9 @@ import StructuredShipmentsEditor, {
 import QuickImportModal from '../components/QuickImportModal'
 import VendorTallyStatus from '../components/VendorTallyStatus'
 
-// TQL brokers on behalf of multiple brands. Only the Lime path uses the
-// structured per-container form; other brands fall back to paste.
-const TQL_COMPANY = 'TQL'
+// Brand whose path keeps the legacy paste-format Quick Import shortcut
+// (its parser was built for Lime's broker-email format). Other brands
+// only see the structured per-container form.
 const STRUCTURED_BRAND = 'Lime Mobility'
 
 const CUSTOMERS = ['Lime Mobility', 'Boviet Solar', 'Pan American Wire MFG', 'National Plastic']
@@ -93,19 +93,33 @@ export default function VendorIntakePage() {
   const [error, setError] = useState<string | null>(null)
   const [results, setResults] = useState<WHPOIntakeResponse[] | null>(null)
 
-  // TQL is a broker submitting on behalf of multiple brands; they get a
-  // brand picker. Every other logged-in vendor IS the brand. All logged-in
-  // vendors use the structured per-container form — the paste textarea is
-  // legacy and only survives as the Quick Import shortcut on the Lime
-  // path (its parser is built for Lime's broker-email format).
-  const isTQL = vendorUser?.company === TQL_COMPANY
+  // Brands the vendor can submit shipments for, fetched from
+  // /vendor/auth/my-brands. Backend resolves vendor.company → Account →
+  // [brands under it], or → [single brand], or → [company-as-string].
+  // If >1 → show "Submitting on behalf of" picker. If 1 → no picker, the
+  // single brand is the customer automatically.
+  const [myBrands, setMyBrands] = useState<string[] | null>(null)
   const [brandForTQL, setBrandForTQL] = useState<string>('')
-  // Effective brand = the brand whose shipment is being submitted.
-  const effectiveBrand = isTQL ? brandForTQL : vendorUser?.company ?? ''
+  useEffect(() => {
+    if (!isLoggedIn) return
+    api
+      .myBrands()
+      .then((bs) => {
+        setMyBrands(bs)
+        // If only one brand, auto-select so submit doesn't gate on a picker.
+        if (bs.length === 1) setBrandForTQL(bs[0])
+      })
+      .catch(() => setMyBrands([vendorUser?.company ?? ''])) // legacy fallback
+  }, [isLoggedIn, vendorUser?.company])
+  const needsBrandPicker = (myBrands?.length ?? 0) > 1
+  // Effective brand = picked brand (if picker shown) else the single brand.
+  const effectiveBrand = needsBrandPicker
+    ? brandForTQL
+    : myBrands?.[0] ?? vendorUser?.company ?? ''
   // Structured form is the default for every logged-in vendor — paste
   // textarea is legacy and only ever surfaces as the Quick Import shortcut
-  // on the Lime path. (TQL users still need to pick a brand before submit,
-  // but the form layout doesn't depend on it.)
+  // on the Lime path. (Multi-brand vendors still need to pick a brand
+  // before submit, but the form layout doesn't depend on it.)
   const useStructuredForm = isLoggedIn
   const showQuickImport = effectiveBrand === STRUCTURED_BRAND
   const [structuredWHPO, setStructuredWHPO] = useState<StructuredWHPO>(() => makeEmptyWHPO())
@@ -194,9 +208,10 @@ export default function VendorIntakePage() {
         return
       }
     }
-    // TQL must pick a brand even on the paste path (their session's
-    // company "TQL" isn't a valid customer for the warehouse).
-    if (isTQL && !brandForTQL) {
+    // Multi-brand vendors must pick which brand they're submitting for
+    // (their session's company is the Account, not a Customer the
+    // warehouse can store against).
+    if (needsBrandPicker && !brandForTQL) {
       setError('Select which company this shipment is for.')
       return
     }
@@ -266,8 +281,8 @@ export default function VendorIntakePage() {
     setStructuredWHPO(makeEmptyWHPO())
     setResults(null)
     setError(null)
-    // Keep brandForTQL so a TQL user can submit several Lime WHPOs in a row
-    // without re-picking the brand each time.
+    // Keep brandForTQL so a multi-brand user can submit several WHPOs for
+    // the same brand in a row without re-picking it each time.
   }
 
   if (results) {
@@ -300,7 +315,8 @@ export default function VendorIntakePage() {
           </h1>
           <p className="mt-3 text-base text-slate-600 max-w-2xl leading-relaxed">
             Add each container and its SKU lines below.{' '}
-            {isTQL && 'Pick which brand this shipment is for, then fill in the containers.'}
+            {needsBrandPicker &&
+              'Pick which brand this shipment is for, then fill in the containers.'}
           </p>
         </div>
 
@@ -353,14 +369,14 @@ export default function VendorIntakePage() {
                     Sign out
                   </button>
                 </div>
-                {isTQL && (
+                {needsBrandPicker && myBrands && (
                   <div className="mt-3 pt-3 border-t border-[#0093D0]/20">
                     <Select
                       label="Submitting on behalf of"
                       required
                       value={brandForTQL}
                       onChange={setBrandForTQL}
-                      options={CUSTOMERS}
+                      options={myBrands}
                     />
                     {brandForTQL && (
                       <p className="text-[11px] text-slate-500 mt-1">

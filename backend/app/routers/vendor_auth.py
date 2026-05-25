@@ -11,12 +11,12 @@ import logging
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.db import get_session
-from app.models import Customer
+from app.models import Account, Customer
 from app.schemas.vendor_auth import (
     LoginRequest,
     RegisterRequest,
@@ -33,10 +33,20 @@ router = APIRouter(prefix="/vendor/auth", tags=["vendor-auth"])
 
 async def _ensure_customer(session: AsyncSession, name: str) -> None:
     """Insert a customer row if no exact-name match exists. Idempotent.
-    Lets vendor self-registration auto-create the customer record so we don't
-    have to seed it by hand every time a new company onboards."""
+    Lets vendor self-registration auto-create the customer record so we
+    don't have to seed it by hand every time a new company onboards.
+
+    Skips creation when the name matches an existing Account — registering
+    as an account (e.g. "TQL") shouldn't accidentally spawn a Customer row
+    with the same name; the account hierarchy already covers it."""
     clean = name.strip()
     if not clean:
+        return
+    # Don't create a Customer named after an existing Account.
+    acc = await session.scalar(
+        select(Account).where(func.lower(Account.name) == clean.lower())
+    )
+    if acc is not None:
         return
     existing = await session.scalar(select(Customer).where(Customer.name == clean))
     if existing is None:
@@ -112,10 +122,67 @@ async def register(
 
 @router.get("/customers", response_model=list[str])
 async def list_customer_names(session: AsyncSession = Depends(get_session)):
-    """Public — returns customer names for the register-page dropdown.
-    Names only; no contact info or other internals."""
-    rows = await session.scalars(select(Customer.name).order_by(Customer.name))
-    return list(rows)
+    """Public — names for the register-page dropdown. Includes both
+    Customer (brand) names AND Account names — registering as an
+    Account lets the user later submit shipments for ANY brand under it
+    (e.g. TQL → Lime / Boviet / Pan Am / NP). Brand-only registration
+    constrains the user to that single brand."""
+    cust_names = (await session.scalars(select(Customer.name))).all()
+    acct_names = (await session.scalars(select(Account.name))).all()
+    # De-duplicate (an Account and Customer can share a name in legacy
+    # data) and sort. Names only; no contact info or other internals.
+    return sorted({*cust_names, *acct_names})
+
+
+@router.get("/my-brands", response_model=list[str])
+async def my_brands(
+    claims: dict = Depends(vendor_auth_service.current_vendor_required),
+    session: AsyncSession = Depends(get_session),
+) -> list[str]:
+    """Return the brand names the logged-in vendor is allowed to submit
+    shipments for. Resolution, in order:
+
+      1. If vendor.company matches an Account → all Customers under that
+         Account (e.g. TQL → Lime, Boviet, Pan Am, NP). Frontend renders
+         these as the "Submitting on behalf of" picker.
+      2. If vendor.company matches a single Customer (brand) → return
+         just that brand. Frontend skips the picker, customer is set
+         automatically.
+      3. Legacy fallback (vendor.company is free-text, doesn't match any
+         Account/Customer) → return the company string as-is so the
+         submission still goes through. Manager can later link them.
+
+    Case-insensitive matching; whitespace trimmed."""
+    company = (claims.get("company") or "").strip()
+    if not company:
+        return []
+
+    # 1) Account?
+    acc = await session.scalar(
+        select(Account).where(func.lower(Account.name) == company.lower())
+    )
+    if acc is not None:
+        brand_rows = (
+            await session.scalars(
+                select(Customer.name)
+                .where(Customer.account_id == acc.id)
+                .order_by(Customer.name)
+            )
+        ).all()
+        if brand_rows:
+            return list(brand_rows)
+        # Account exists but no brands attached — fall through to brand lookup
+        # in case someone registered with the same name as a brand AND an account.
+
+    # 2) Customer (brand)?
+    cust = await session.scalar(
+        select(Customer).where(func.lower(Customer.name) == company.lower())
+    )
+    if cust is not None:
+        return [cust.name]
+
+    # 3) Legacy fallback
+    return [company]
 
 
 @router.post("/login", response_model=TokenResponse)
