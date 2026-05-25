@@ -258,6 +258,58 @@ async def get_tally_sheet(
     return _to_read(item[0], item[1])
 
 
+@router.delete("/tally-sheets/{tally_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_tally_sheet(
+    tally_id: int,
+    deleted_by: str | None = Query(
+        None, description="Operator name for the audit log (not required server-side; frontend gates on PIN re-auth)"
+    ),
+    session: AsyncSession = Depends(get_session),
+) -> None:
+    """Hard-delete a tally row. Frontend gates this behind a PIN re-auth
+    modal so a manager can't accidentally wipe a billing-grade audit row.
+    The Postgres row, the on-disk POD file, and the OneDrive Excel row
+    are all removed. Container row stays — only the tally is gone, so a
+    fresh POD can be uploaded against the same container."""
+    tally = await session.scalar(
+        select(TallySheet).where(TallySheet.id == tally_id)
+    )
+    if tally is None:
+        raise HTTPException(404, f"Tally {tally_id} not found")
+
+    pod_storage_path = tally.pod_storage_path
+    container_no = tally.matched_container_no
+
+    await session.delete(tally)
+    await session.commit()
+
+    # Best-effort cleanup of the file + Excel mirror. If either fails we
+    # still consider the DB delete authoritative — log + swallow.
+    if pod_storage_path:
+        try:
+            vendor_uploads.delete_storage_file(pod_storage_path)
+        except Exception as e:
+            logger.warning(
+                "tally delete: POD file %s removal failed: %s",
+                pod_storage_path,
+                e,
+            )
+
+    try:
+        await tally_sheet_sync.delete_tally_row(tally_id)
+    except Exception as e:
+        logger.warning(
+            "tally delete: OneDrive Excel row removal failed: %s", e
+        )
+
+    logger.info(
+        "Tally %d (container %s) deleted by %s",
+        tally_id,
+        container_no,
+        deleted_by or "unknown",
+    )
+
+
 @router.patch("/tally-sheets/{tally_id}", response_model=TallySheetRead)
 async def update_tally_sheet(
     tally_id: int,

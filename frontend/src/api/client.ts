@@ -1429,6 +1429,15 @@ export const tallyApi = {
       body: JSON.stringify(patch),
     }),
 
+  /** Hard-delete a tally row (DB row + POD file + OneDrive Excel mirror).
+   *  Frontend must PIN-re-auth before calling this — there's no server-
+   *  side auth gate (manager portal trusts the SPA's login state). */
+  remove: (id: number, deletedBy: string) =>
+    requestVoid(
+      `/manager/tally-sheets/${id}?deleted_by=${encodeURIComponent(deletedBy)}`,
+      { method: 'DELETE' }
+    ),
+
   /** Vendor-scoped read — only their containers; no billing fields. */
   vendorView: (container_no: string) =>
     request<VendorTallyView>(`/vendor/container/${encodeURIComponent(container_no)}/tally`),

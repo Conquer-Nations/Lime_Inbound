@@ -4,6 +4,7 @@ import type {
   TallySheetRead,
   TallySheetUpdate,
 } from '../api/client'
+import { useAuth } from '../auth/AuthContext'
 
 /**
  * Manager-facing Tally Sheets admin.
@@ -219,6 +220,12 @@ export default function TallySheetsAdmin() {
             reload()
             showToast(`${t.container_no} updated`)
           }}
+          onDeleted={() => {
+            const cn = selected.container_no
+            setSelected(null)
+            reload()
+            showToast(`Tally for ${cn} removed`)
+          }}
         />
       )}
     </div>
@@ -375,11 +382,14 @@ function DetailPanel({
   tally,
   onClose,
   onUpdated,
+  onDeleted,
 }: {
   tally: TallySheetRead
   onClose: () => void
   onUpdated: (t: TallySheetRead) => void
+  onDeleted: () => void
 }) {
+  const { user, signIn } = useAuth()
   const [from, setFrom] = useState(tally.ocr_from_location ?? '')
   const [to, setTo] = useState(tally.ocr_to_location ?? '')
   const [sealNo, setSealNo] = useState(tally.manual_seal_no ?? '')
@@ -388,6 +398,7 @@ function DetailPanel({
   const [notes, setNotes] = useState(tally.billing_notes ?? '')
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState<string | null>(null)
+  const [showReauth, setShowReauth] = useState(false)
 
   // When user picks a different row, reset local edit state.
   useEffect(() => {
@@ -529,25 +540,163 @@ function DetailPanel({
             </div>
           </section>
 
-          <div className="flex justify-end gap-2 pt-2 border-t border-slate-200">
+          <div className="flex items-center justify-between gap-2 pt-2 border-t border-slate-200">
             <button
               type="button"
-              onClick={onClose}
-              className="text-sm text-slate-600 hover:text-slate-800 px-3 py-2"
-            >
-              Close
-            </button>
-            <button
-              type="button"
-              onClick={save}
+              onClick={() => setShowReauth(true)}
               disabled={busy}
-              className="bg-[#0093D0] hover:bg-[#00A8E8] text-white font-bold rounded-full px-5 py-2 text-sm transition disabled:opacity-60"
+              className="text-sm font-semibold text-rose-600 hover:text-rose-800 hover:bg-rose-50 px-3 py-2 rounded-md transition"
+              title="Remove this tally row (PIN re-auth required)"
             >
-              {busy ? 'Saving…' : 'Save changes'}
+              Remove tally
             </button>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={onClose}
+                className="text-sm text-slate-600 hover:text-slate-800 px-3 py-2"
+              >
+                Close
+              </button>
+              <button
+                type="button"
+                onClick={save}
+                disabled={busy}
+                className="bg-[#0093D0] hover:bg-[#00A8E8] text-white font-bold rounded-full px-5 py-2 text-sm transition disabled:opacity-60"
+              >
+                {busy ? 'Saving…' : 'Save changes'}
+              </button>
+            </div>
           </div>
         </div>
       </div>
+
+      {showReauth && user && (
+        <ReauthRemoveModal
+          containerNo={tally.container_no}
+          userId={user.id}
+          userName={user.name}
+          verifyPin={(pin) => signIn(user.id, pin).ok}
+          onCancel={() => setShowReauth(false)}
+          onConfirmed={async () => {
+            setBusy(true)
+            setErr(null)
+            try {
+              await tallyApi.remove(tally.id, user.name)
+              setShowReauth(false)
+              onDeleted()
+            } catch (e: unknown) {
+              setErr(String((e as { detail?: string })?.detail ?? e))
+              setShowReauth(false)
+            } finally {
+              setBusy(false)
+            }
+          }}
+        />
+      )}
+    </div>
+  )
+}
+
+
+// ─── Re-auth modal for destructive ops ──────────────────────────────────
+
+
+function ReauthRemoveModal({
+  containerNo,
+  userId,
+  userName,
+  verifyPin,
+  onCancel,
+  onConfirmed,
+}: {
+  containerNo: string
+  userId: string
+  userName: string
+  verifyPin: (pin: string) => boolean
+  onCancel: () => void
+  onConfirmed: () => void
+}) {
+  const [pin, setPin] = useState('')
+  const [err, setErr] = useState<string | null>(null)
+
+  function attempt(e: React.FormEvent) {
+    e.preventDefault()
+    setErr(null)
+    if (!pin) {
+      setErr('Enter your PIN to continue.')
+      return
+    }
+    if (!verifyPin(pin)) {
+      setErr('Wrong PIN.')
+      setPin('')
+      return
+    }
+    onConfirmed()
+  }
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4"
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onCancel()
+      }}
+    >
+      <form
+        onSubmit={attempt}
+        className="bg-white rounded-xl shadow-2xl w-full max-w-sm overflow-hidden"
+      >
+        <header className="px-5 py-4 border-b border-slate-200">
+          <h3 className="text-base font-bold text-rose-700">Remove tally?</h3>
+          <p className="text-xs text-slate-600 mt-1">
+            This deletes the tally row for{' '}
+            <span className="font-mono font-semibold text-[#1B4676]">{containerNo}</span>,
+            the POD file, and the OneDrive Excel mirror. The container itself
+            stays — you can upload a fresh POD afterwards.
+          </p>
+        </header>
+        <div className="p-5 space-y-3">
+          {err && (
+            <div className="text-xs text-rose-700 bg-rose-50 border border-rose-200 rounded-md px-3 py-2">
+              {err}
+            </div>
+          )}
+          <label className="block">
+            <span className="text-[11px] uppercase tracking-wider text-slate-500 font-semibold">
+              Confirm with your PIN
+            </span>
+            <div className="text-xs text-slate-500 mt-0.5">
+              Signed in as <span className="font-semibold text-[#1B4676]">{userName}</span>{' '}
+              <span className="text-slate-400">({userId})</span>
+            </div>
+            <input
+              type="password"
+              inputMode="numeric"
+              autoComplete="off"
+              autoFocus
+              value={pin}
+              onChange={(e) => setPin(e.target.value)}
+              placeholder="••••"
+              className="mt-2 w-full border border-slate-300 rounded-md px-3 py-2 text-sm font-mono tracking-widest text-center focus:border-rose-500 focus:ring-2 focus:ring-rose-500/20 focus:outline-none"
+            />
+          </label>
+        </div>
+        <div className="px-5 py-3 bg-slate-50 border-t border-slate-200 flex items-center justify-end gap-2">
+          <button
+            type="button"
+            onClick={onCancel}
+            className="text-sm text-slate-600 hover:text-slate-800 px-3 py-2"
+          >
+            Cancel
+          </button>
+          <button
+            type="submit"
+            className="bg-rose-600 hover:bg-rose-700 text-white font-bold rounded-full px-5 py-2 text-sm transition"
+          >
+            Remove
+          </button>
+        </div>
+      </form>
     </div>
   )
 }
