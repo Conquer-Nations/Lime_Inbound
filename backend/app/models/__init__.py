@@ -45,6 +45,13 @@ class Account(Base):
         DateTime(timezone=True), server_default=func.now()
     )
 
+    # Dynamics 365 Business Central dual-write state (see
+    # app/services/bc_client.py). Null until first successful sync.
+    # bc_sync_error holds the last failure message; clears on success.
+    bc_customer_no: Mapped[str | None] = mapped_column(String(40), index=True)
+    bc_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    bc_sync_error: Mapped[str | None] = mapped_column(Text)
+
     customers: Mapped[list[Customer]] = relationship(back_populates="account")
 
 

@@ -154,6 +154,22 @@ class Settings(BaseSettings):
     onedrive_tally_webhook_url: str = ""
     onedrive_tally_ops_url: str = ""
 
+    # ─── Dynamics 365 Business Central dual-write ───────────────────────
+    # Phase 1 of the BC migration: every Account create/update mirrors
+    # to a BC Customer via the BC REST API. Auth is Azure AD service-
+    # to-service (OAuth client_credentials).
+    #
+    # Set all five in App Service Application Settings. Until then the
+    # bc_client service no-ops with INFO log and never blocks the
+    # in-house flow.
+    bc_tenant_id: str = ""        # Azure AD directory (tenant) ID
+    bc_client_id: str = ""        # Azure AD app client ID
+    bc_client_secret: str = ""    # Azure AD app secret (rotate before expiry)
+    bc_environment: str = ""      # e.g. "Sandbox" or your sandbox name
+    bc_company_name: str = ""     # exact BC company name (case-sensitive)
+    # Defaults to BC Online. Override only for on-prem.
+    bc_api_base: str = "https://api.businesscentral.dynamics.com"
+
     # ─── rclone-based OneDrive upload (fallback when Graph apps are blocked)
     # rclone is a third-party file sync tool with its own pre-registered
     # multi-tenant Microsoft app. When USC blocks ALL Microsoft first-party

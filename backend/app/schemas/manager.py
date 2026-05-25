@@ -299,6 +299,11 @@ class AccountRead(BaseModel):
     notes: str | None
     customer_count: int
     created_at: datetime
+    # Business Central dual-write state. All None until BC integration
+    # is configured and the first sync runs.
+    bc_customer_no: str | None = None
+    bc_synced_at: datetime | None = None
+    bc_sync_error: str | None = None
 
 
 class AccountCreateRequest(BaseModel):

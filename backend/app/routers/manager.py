@@ -45,7 +45,7 @@ from app.schemas.manager import (
     SKUAdminUpdateRequest,
     SKURead,
 )
-from app.services import sheet_sync
+from app.services import bc_client, sheet_sync
 from app.services.manager import (
     InvalidResolutionError,
     NotFoundError,
@@ -1433,6 +1433,9 @@ async def _account_to_read(session: AsyncSession, a: Account) -> AccountRead:
         notes=a.notes,
         customer_count=int(customer_count or 0),
         created_at=a.created_at,
+        bc_customer_no=a.bc_customer_no,
+        bc_synced_at=a.bc_synced_at,
+        bc_sync_error=a.bc_sync_error,
     )
 
 
@@ -1474,6 +1477,9 @@ async def create_account(
         )
     )
     await session.commit()
+    # Best-effort dual-write to BC. Failure is recorded on the row but
+    # the in-house create has already committed and is the source of truth.
+    await bc_client.upsert_customer(session, a)
     return await _account_to_read(session, a)
 
 
@@ -1513,6 +1519,8 @@ async def update_account(
         )
     )
     await session.commit()
+    # Best-effort BC mirror.
+    await bc_client.upsert_customer(session, a)
     return await _account_to_read(session, a)
 
 
@@ -1547,6 +1555,61 @@ async def delete_account(
         )
     )
     await session.commit()
+
+
+# ─── Business Central dual-write (Phase 1: Accounts → Customers) ────────
+
+
+@router.post("/bc/reconcile-accounts")
+async def bc_reconcile_accounts(
+    only_unsynced: bool = True,
+    session: AsyncSession = Depends(get_session),
+):
+    """Backfill: push every existing Account to BC as a Customer. Useful
+    once after wiring BC credentials, then on-demand when sync errors
+    accumulate. `only_unsynced=true` skips accounts that already have a
+    bc_customer_no without a current bc_sync_error.
+
+    Returns a per-account result so the manager can see what happened."""
+    if not bc_client.is_configured():
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "BC integration not configured — set BC_TENANT_ID, "
+                "BC_CLIENT_ID, BC_CLIENT_SECRET, BC_ENVIRONMENT, "
+                "BC_COMPANY_NAME in App Service settings, then restart."
+            ),
+        )
+    accounts = (await session.scalars(select(Account))).all()
+    results: list[dict[str, object]] = []
+    synced = 0
+    skipped = 0
+    failed = 0
+    for a in accounts:
+        if only_unsynced and a.bc_customer_no and not a.bc_sync_error:
+            skipped += 1
+            results.append(
+                {"id": a.id, "name": a.name, "status": "skipped",
+                 "bc_customer_no": a.bc_customer_no}
+            )
+            continue
+        ok = await bc_client.upsert_customer(session, a)
+        if ok:
+            synced += 1
+            results.append(
+                {"id": a.id, "name": a.name, "status": "synced",
+                 "bc_customer_no": a.bc_customer_no}
+            )
+        else:
+            failed += 1
+            results.append(
+                {"id": a.id, "name": a.name, "status": "failed",
+                 "error": a.bc_sync_error}
+            )
+    return {
+        "synced": synced, "skipped": skipped, "failed": failed,
+        "results": results,
+    }
 
 
 # ─── Customers (product owners — Lime, NP, Pan America, Boviet Solar) ──
