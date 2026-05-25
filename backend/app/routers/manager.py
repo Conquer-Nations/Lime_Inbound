@@ -739,6 +739,97 @@ async def sync_inbound_to_excel(
     }
 
 
+@router.delete("/containers/{container_no}", status_code=204)
+async def delete_container_fully(
+    container_no: str,
+    session: AsyncSession = Depends(get_session),
+):
+    """Hard-delete a container and everything attached to it.
+
+    Cascades through tally_sheets, scans, receipts, lot_assignments,
+    container_documents, container_lines, then the container itself.
+    If the parent DO and WHPO are left orphaned (no other containers),
+    they're deleted too — keeps the system clean after a test reset.
+
+    Outbound side is NOT touched (different lifecycle). On-disk files
+    under containers/{id}/ are best-effort deleted via vendor_uploads.
+
+    Intended for dev cleanup and one-off corrections (e.g. test
+    container that needs to be re-created from scratch). For full
+    transactional wipe use /database/wipe-transactional."""
+    from sqlalchemy import delete as sql_delete
+    from app.models import (
+        ContainerDocument,
+        ContainerLine,
+        LotAssignment,
+        Pallet,
+        Receipt,
+        Scan,
+        TallySheet,
+    )
+    from app.services import vendor_uploads
+
+    container = await session.scalar(
+        select(Container).where(Container.container_no == container_no.upper())
+    )
+    if container is None:
+        raise HTTPException(404, f"Container {container_no} not found")
+
+    container_id = container.id
+    do_id = container.do_id
+
+    # Snapshot file paths to clean up after DB delete commits.
+    doc_paths = [
+        d.storage_path
+        for d in (
+            await session.scalars(
+                select(ContainerDocument).where(ContainerDocument.container_id == container_id)
+            )
+        ).all()
+    ]
+    tally_paths = [
+        t.pod_storage_path
+        for t in (
+            await session.scalars(
+                select(TallySheet).where(TallySheet.container_id == container_id)
+            )
+        ).all()
+    ]
+
+    # Order matters where FKs lack ON DELETE CASCADE. Children first.
+    await session.execute(sql_delete(TallySheet).where(TallySheet.container_id == container_id))
+    await session.execute(sql_delete(Scan).where(Scan.container_id == container_id))
+    await session.execute(sql_delete(Pallet).where(Pallet.container_id == container_id))
+    await session.execute(sql_delete(Receipt).where(Receipt.container_id == container_id))
+    await session.execute(sql_delete(LotAssignment).where(LotAssignment.container_id == container_id))
+    await session.execute(sql_delete(ContainerLine).where(ContainerLine.container_id == container_id))
+    await session.execute(sql_delete(ContainerDocument).where(ContainerDocument.container_id == container_id))
+    await session.execute(sql_delete(Container).where(Container.id == container_id))
+
+    # Orphan check: drop DO + WHPO if no other containers reference them.
+    if do_id is not None:
+        sibling = await session.scalar(
+            select(Container.id).where(Container.do_id == do_id).limit(1)
+        )
+        if sibling is None:
+            do_row = await session.get(DO, do_id)
+            whpo_id = do_row.whpo_id if do_row else None
+            await session.execute(sql_delete(DO).where(DO.id == do_id))
+            if whpo_id is not None:
+                await session.execute(sql_delete(WHPO).where(WHPO.id == whpo_id))
+
+    await session.commit()
+
+    # Best-effort filesystem cleanup. Errors logged but don't roll back the DB.
+    for p in [*doc_paths, *tally_paths]:
+        if not p:
+            continue
+        try:
+            vendor_uploads.delete_storage_file(p)
+        except Exception:
+            pass
+
+
 @router.post("/database/wipe-transactional")
 async def wipe_transactional_data(
     session: AsyncSession = Depends(get_session),
