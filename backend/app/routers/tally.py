@@ -139,15 +139,25 @@ async def upload_pod(
 
     # Run OCR (best-effort — manager can fix later if it fails)
     ocr: dict[str, Any] = {}
-    if content_type.startswith("image/"):
+    if content_type.startswith("image/") or content_type == "application/pdf":
+        # Gemini handles both images AND PDFs (it accepts JPEG; we only
+        # normalize images here, PDFs would need a separate page-extract
+        # but for now we send what we have and let Gemini try).
         try:
             ocr = await run_pod_ocr(data)
         except OCRUnavailableError as e:
             logger.warning("POD OCR unavailable: %s", e)
             ocr = {"_debug": {"error": str(e)}}
     else:
-        # PDF — OCR not wired for it; manager fills fields manually.
-        ocr = {"_debug": {"skipped": "pdf"}}
+        ocr = {"_debug": {"skipped": f"unsupported_content_type:{content_type}"}}
+
+    # Helper to pull a string-or-null from the OCR dict.
+    def _pick(k: str) -> str | None:
+        v = ocr.get(k) if isinstance(ocr, dict) else None
+        if v is None:
+            return None
+        s = str(v).strip()
+        return s or None
 
     tally = TallySheet(
         container_id=container.id,
@@ -155,18 +165,27 @@ async def upload_pod(
         pod_content_type=content_type,
         pod_file_size=len(data),
         pod_storage_path=rel_path,
-        ocr_from_location=str(ocr.get("from_location") or "") or None,
-        ocr_to_location=str(ocr.get("to_location") or "") or None,
+        ocr_from_location=_pick("from_location"),
+        ocr_to_location=_pick("to_location"),
         ocr_extracted_json=ocr if ocr else None,
         ocr_engine=ocr.get("_engine") if isinstance(ocr, dict) else None,
+        # Container row is the authoritative source for already-known
+        # fields. OCR-extracted values get stored in ocr_extracted_json
+        # for forensics; the dedicated `matched_*` columns snapshot the
+        # container record at tally time. If a field is missing on the
+        # container but Gemini picked it up from the POD/license, use
+        # the OCR'd value as fallback so the tally isn't blank.
         matched_container_no=container.container_no,
-        matched_driver_name=container.driver_name,
-        matched_driver_license=container.driver_license,
-        matched_driver_phone=container.driver_phone,
-        matched_carrier=container.carrier,
+        matched_driver_name=container.driver_name or _pick("driver_name"),
+        matched_driver_license=container.driver_license or _pick("driver_license_no"),
+        matched_driver_phone=container.driver_phone or _pick("driver_phone"),
+        matched_carrier=container.carrier or _pick("carrier"),
         matched_truck_plate=container.truck_license_plate,
-        manual_seal_no=manual_seal_no,
-        manual_chassis_no=manual_chassis_no,
+        # Manual-override fields: OCR populates them by default; manager
+        # can correct via PATCH if Gemini misread. The form's optional
+        # manual_seal_no / manual_chassis_no inputs override OCR.
+        manual_seal_no=manual_seal_no or _pick("seal_no"),
+        manual_chassis_no=manual_chassis_no or _pick("chassis_no"),
         tallied_by=tallied_by.strip(),
     )
     session.add(tally)
