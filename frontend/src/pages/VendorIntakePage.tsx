@@ -30,6 +30,7 @@ import StructuredShipmentsEditor, {
   type StructuredWHPO,
 } from '../components/StructuredShipmentsEditor'
 import QuickImportModal from '../components/QuickImportModal'
+import VendorTallyStatus from '../components/VendorTallyStatus'
 
 // TQL brokers on behalf of multiple brands. Only the Lime path uses the
 // structured per-container form; other brands fall back to paste.
@@ -3227,6 +3228,11 @@ function ViewShipmentForm({ onBack }: { onBack: () => void }) {
                     </p>
                   )}
                 </div>
+
+                {/* Tally / POD status — read from /vendor/container/.../tally.
+                    Tally row gets created when the warehouse manager files
+                    the POD on arrival; once present, operators can scan. */}
+                <VendorTallyStatus containerNo={c.container_no} />
 
                 {/* SKU lines */}
                 <div>
