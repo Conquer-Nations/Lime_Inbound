@@ -25,14 +25,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.db import get_session
-from app.models import Container, Customer, TallySheet, WHPO
+from app.models import DO, Container, Customer, TallySheet, WHPO
 from app.schemas.tally import (
     TallySheetList,
     TallySheetRead,
     TallySheetUpdateRequest,
     VendorTallyView,
 )
-from app.services import vendor_uploads
+from app.services import tally_sheet_sync, vendor_uploads
 from app.services.ocr import OCRUnavailableError
 from app.services.pod_ocr import run_pod_ocr
 from app.services.vendor_auth_service import current_vendor_required
@@ -95,9 +95,12 @@ async def upload_pod(
     """Manager uploads the physical POD photo for an arriving container.
     Runs RapidOCR + the rule-based POD parser, snapshots driver/truck/
     carrier off the Container row, creates the tally."""
-    # Look up container
+    # Look up container, eager-loading the brand (customer) so we can
+    # pass it into the OneDrive sync without a second roundtrip.
     res = await session.execute(
-        select(Container).where(Container.container_no == container_no)
+        select(Container)
+        .where(Container.container_no == container_no)
+        .options(selectinload(Container.do).selectinload(DO.whpo).selectinload(WHPO.customer))
     )
     container = res.scalar_one_or_none()
     if container is None:
@@ -170,6 +173,17 @@ async def upload_pod(
     await session.commit()
     await session.refresh(tally)
 
+    # Sync to OneDrive Excel (best-effort — Postgres is source of truth).
+    # The Logic App + Office Script append a row to TallyTable in the
+    # `Lime Tally Sheets.xlsx` workbook for billing. Skipped silently
+    # when ONEDRIVE_TALLY_WEBHOOK_URL isn't set.
+    customer_name = (
+        container.do.whpo.customer.name
+        if container.do and container.do.whpo and container.do.whpo.customer
+        else ""
+    )
+    await tally_sheet_sync.append_tally_row(tally, customer_name)
+
     return _to_read(tally, container.container_no)
 
 
@@ -233,20 +247,32 @@ async def update_tally_sheet(
 ) -> TallySheetRead:
     """Correct OCR misreads, fill seal/chassis, flip billing_status."""
     row = await session.execute(
-        select(TallySheet, Container.container_no)
+        select(TallySheet, Container.container_no, Customer.name)
         .join(Container, Container.id == TallySheet.container_id)
+        .join(DO, DO.id == Container.do_id)
+        .join(WHPO, WHPO.id == DO.whpo_id)
+        .join(Customer, Customer.id == WHPO.customer_id)
         .where(TallySheet.id == tally_id)
     )
     item = row.first()
     if item is None:
         raise HTTPException(404, f"Tally {tally_id} not found")
     tally: TallySheet = item[0]
+    customer_name: str = item[2] or ""
 
     data = payload.model_dump(exclude_unset=True)
     for k, v in data.items():
         setattr(tally, k, v)
     await session.commit()
     await session.refresh(tally)
+
+    # Re-sync OneDrive: delete stale row + append the corrected one. Both
+    # best-effort. If only ONEDRIVE_TALLY_WEBHOOK_URL is set (no ops URL),
+    # the delete no-ops and Excel will have duplicate rows until manual
+    # cleanup — manager should set both URLs for correct edit behavior.
+    await tally_sheet_sync.delete_tally_row(tally.id)
+    await tally_sheet_sync.append_tally_row(tally, customer_name)
+
     return _to_read(tally, item[1])
 
 

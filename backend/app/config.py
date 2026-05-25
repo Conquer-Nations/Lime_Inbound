@@ -146,6 +146,14 @@ class Settings(BaseSettings):
     onedrive_outbound_webhook_url: str = ""
     onedrive_outbound_ops_url: str = ""
 
+    # ─── Tally Sheets OneDrive sync ─────────────────────────────────────
+    # Mirror of outbound_*: one webhook URL appends each tally row to
+    # `Lime Tally Sheets.xlsx → TallyTable`. The ops URL handles
+    # delete-by-tally-id when corrections are made via PATCH.
+    # Both optional; backend no-ops when unset.
+    onedrive_tally_webhook_url: str = ""
+    onedrive_tally_ops_url: str = ""
+
     # ─── rclone-based OneDrive upload (fallback when Graph apps are blocked)
     # rclone is a third-party file sync tool with its own pre-registered
     # multi-tenant Microsoft app. When USC blocks ALL Microsoft first-party
