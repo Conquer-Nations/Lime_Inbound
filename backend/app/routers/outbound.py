@@ -54,27 +54,15 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/vendor/outbound", tags=["vendor-outbound"])
 
 
-def _normalize_company(s: str | None) -> str:
-    return (s or "").strip().lower()
-
-
-def _enforce_company_match(claims: dict, customer_name: str) -> None:
-    """A vendor account can only touch outbound orders belonging to their
-    own company (mirror of the inbound rule)."""
-    vendor_co = _normalize_company(claims.get("company"))
-    if not vendor_co:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Your session is missing a company. Sign out and back in.",
-        )
-    if vendor_co != _normalize_company(customer_name):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=(
-                "This Transfer Order belongs to a different company. Only "
-                "that company's vendor accounts can view or modify it."
-            ),
-        )
+# Outbound vendor↔customer scoping. Lives in app.services.vendor_scoping
+# so the rule (direct brand match OR Account→brand under it) stays in
+# one place. The inbound message reads "shipment"; the wording carrying
+# over here ("This shipment belongs to…") is acceptable for outbound too
+# since the helper is generic.
+from app.services.vendor_scoping import (
+    enforce_company_match as _enforce_company_match,
+    vendor_customer_ids as _vendor_customer_ids,
+)
 
 
 async def _ensure_customer(session: AsyncSession, name: str) -> Customer:
@@ -145,7 +133,7 @@ async def _load_order_for_vendor(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Transfer Order {transfer_order_no} not found.",
         )
-    _enforce_company_match(vendor, order.customer.name if order.customer else "")
+    await _enforce_company_match(session, vendor, order.customer.name if order.customer else "")
     return order
 
 
@@ -192,7 +180,7 @@ async def submit_outbound_order(
     session: AsyncSession = Depends(get_session),
     vendor: dict = Depends(current_vendor_required),
 ):
-    _enforce_company_match(vendor, payload.customer)
+    await _enforce_company_match(session, vendor, payload.customer)
     if not payload.lines:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -312,7 +300,7 @@ async def update_outbound_order(
     session: AsyncSession = Depends(get_session),
     vendor: dict = Depends(current_vendor_required),
 ):
-    _enforce_company_match(vendor, payload.customer)
+    await _enforce_company_match(session, vendor, payload.customer)
     order = await _load_order_for_vendor(session, transfer_order_no, vendor)
     if order.status not in ("open", "picking"):
         raise HTTPException(
@@ -414,16 +402,17 @@ async def list_my_outbound_orders(
     session: AsyncSession = Depends(get_session),
     vendor: dict = Depends(current_vendor_required),
 ):
-    """Compact list of outbound orders for the vendor's company."""
-    vendor_co = _normalize_company(vendor.get("company"))
-    if not vendor_co:
+    """Compact list of outbound orders the vendor can see — direct brand
+    match OR any brand rolling up to their Account (if account-level login)."""
+    customer_ids = await _vendor_customer_ids(session, vendor)
+    if not customer_ids:
         return OutboundOrderListResponse(orders=[])
 
     stmt = (
         select(OutboundOrder, Customer.name, func.count(OutboundLine.id))
         .join(Customer, OutboundOrder.customer_id == Customer.id)
         .outerjoin(OutboundLine, OutboundLine.outbound_order_id == OutboundOrder.id)
-        .where(func.lower(Customer.name) == vendor_co)
+        .where(OutboundOrder.customer_id.in_(customer_ids))
         .group_by(OutboundOrder.id, Customer.name)
         .order_by(OutboundOrder.submitted_at.desc())
     )

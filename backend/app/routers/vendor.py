@@ -72,32 +72,11 @@ router = APIRouter(prefix="/vendor", tags=["vendor"])
 
 # ─── Company-level access control ───────────────────────────────────────
 #
-# A vendor's JWT carries `company` (set at registration). Every WHPO is
-# tied to a `Customer` whose `name` mirrors that company. The rule: a
-# vendor account can only touch shipments belonging to its own company.
-# Comparison is case-fold + whitespace-trimmed so "TQL Trading Inc." matches
-# regardless of how the vendor typed it during registration.
-
-
-def _normalize_company(s: str | None) -> str:
-    return (s or "").strip().casefold()
-
-
-def _enforce_company_match(claims: dict, customer_name: str) -> None:
-    vendor_co = _normalize_company(claims.get("company"))
-    if not vendor_co:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Your session is missing a company. Sign out and back in.",
-        )
-    if vendor_co != _normalize_company(customer_name):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=(
-                f"This shipment belongs to '{customer_name}'. Only that "
-                "company's vendor accounts can view or modify it."
-            ),
-        )
+# Vendor↔customer scoping lives in app.services.vendor_scoping. The
+# helper there resolves both direct-brand matches (vendor.company ==
+# customer.name) AND account-level matches (vendor.company is an
+# Account name; customer rolls up to it via account_id).
+from app.services.vendor_scoping import enforce_company_match as _enforce_company_match
 
 
 async def _whpo_for_vendor(
@@ -123,7 +102,7 @@ async def _whpo_for_vendor(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"WHPO {whpo_number} not found.",
         )
-    _enforce_company_match(claims, whpo.customer.name)
+    await _enforce_company_match(session, claims, whpo.customer.name)
     return whpo
 
 
@@ -148,7 +127,7 @@ async def _container_for_vendor(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Container {container_no} not found.",
         )
-    _enforce_company_match(claims, container.do.whpo.customer.name)
+    await _enforce_company_match(session, claims, container.do.whpo.customer.name)
     return container
 
 
@@ -158,7 +137,7 @@ async def submit(
     session: AsyncSession = Depends(get_session),
     vendor: dict = Depends(current_vendor_required),
 ):
-    _enforce_company_match(vendor, payload.customer)
+    await _enforce_company_match(session, vendor, payload.customer)
     try:
         result = await submit_whpo(session, payload)
     except UnknownCustomerError as e:
