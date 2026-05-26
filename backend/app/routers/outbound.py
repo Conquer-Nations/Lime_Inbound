@@ -640,6 +640,10 @@ async def view_outbound_order(
             _line_to_read(l, picked_counts.get(l.id, 0)) for l in (order.lines or [])
         ],
         containers=[_container_to_read(c) for c in (order.containers or [])],
+        has_bol=bool(order.bol_storage_path),
+        bol_filename=order.bol_filename,
+        has_packing_list=bool(order.packing_list_storage_path),
+        packing_list_filename=order.packing_list_filename,
     )
 
 

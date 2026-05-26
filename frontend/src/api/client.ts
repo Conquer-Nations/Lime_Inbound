@@ -527,6 +527,30 @@ export const api = {
       { method: 'POST', body: JSON.stringify(payload) },
     ),
 
+  /** Upload a BOL or Packing List against an outbound order. `kind` is
+   *  one of 'bol' | 'packing_list'. Replaces any prior file of that
+   *  kind. Returns a small ack {transfer_order_no, kind, filename,
+   *  content_type, size}. */
+  uploadOutboundDocument: (
+    transfer_order_no: string,
+    kind: 'bol' | 'packing_list',
+    file: File,
+  ) => {
+    const form = new FormData()
+    form.append('file', file)
+    return requestMultipart<{
+      transfer_order_no: string
+      kind: string
+      filename: string
+      content_type: string
+      size: number
+    }>(
+      `/vendor/outbound/order/${encodeURIComponent(transfer_order_no)}/document/${kind}`,
+      'POST',
+      form,
+    )
+  },
+
   outboundInventory: () =>
     request<InventoryResponse>('/vendor/outbound/inventory'),
 
@@ -933,6 +957,10 @@ export interface OutboundOrderRead {
   notes: string | null
   lines: OutboundLineRead[]
   containers: OutboundContainerRead[]
+  has_bol?: boolean
+  bol_filename?: string | null
+  has_packing_list?: boolean
+  packing_list_filename?: string | null
 }
 
 export interface OutboundOrderListItem {

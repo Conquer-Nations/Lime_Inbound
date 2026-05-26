@@ -2324,6 +2324,25 @@ export function OutboundViewOrderForm({ onBack }: { onBack: () => void }) {
                 </ul>
               </div>
             )}
+
+            {/* BOL + Packing List uploads — vendor attaches the paperwork
+                that comes with the outbound. Replaces in place; one of
+                each per TO. */}
+            <OutboundDocsSection
+              transferOrderNo={order.transfer_order_no}
+              hasBol={order.has_bol ?? false}
+              bolFilename={order.bol_filename ?? null}
+              hasPackingList={order.has_packing_list ?? false}
+              packingListFilename={order.packing_list_filename ?? null}
+              onChanged={async () => {
+                try {
+                  const fresh = await api.viewOutboundOrder(order.transfer_order_no)
+                  setOrder(fresh)
+                } catch {
+                  /* swallow — keep stale order; error toast already shown */
+                }
+              }}
+            />
           </div>
         )}
 
@@ -2967,6 +2986,132 @@ function SummaryTile({
         {label}
       </div>
       <div className="mt-1 text-3xl font-bold font-mono">{value.toLocaleString()}</div>
+    </div>
+  )
+}
+
+
+// ─── BOL + Packing List uploads for an outbound TO ──────────────────────
+
+
+function OutboundDocsSection({
+  transferOrderNo,
+  hasBol,
+  bolFilename,
+  hasPackingList,
+  packingListFilename,
+  onChanged,
+}: {
+  transferOrderNo: string
+  hasBol: boolean
+  bolFilename: string | null
+  hasPackingList: boolean
+  packingListFilename: string | null
+  onChanged: () => Promise<void> | void
+}) {
+  return (
+    <div>
+      <h3 className="text-sm font-bold text-[#1B4676] mb-2">Documents</h3>
+      <p className="text-xs text-slate-500 mb-3">
+        Attach the BOL and packing list the customer sends with the
+        shipment. Re-uploading replaces the file in place.
+      </p>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <OutboundDocCard
+          kind="bol"
+          label="Bill of Lading"
+          uploaded={hasBol}
+          filename={bolFilename}
+          transferOrderNo={transferOrderNo}
+          onChanged={onChanged}
+        />
+        <OutboundDocCard
+          kind="packing_list"
+          label="Packing List"
+          uploaded={hasPackingList}
+          filename={packingListFilename}
+          transferOrderNo={transferOrderNo}
+          onChanged={onChanged}
+        />
+      </div>
+    </div>
+  )
+}
+
+
+function OutboundDocCard({
+  kind,
+  label,
+  uploaded,
+  filename,
+  transferOrderNo,
+  onChanged,
+}: {
+  kind: 'bol' | 'packing_list'
+  label: string
+  uploaded: boolean
+  filename: string | null
+  transferOrderNo: string
+  onChanged: () => Promise<void> | void
+}) {
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState<string | null>(null)
+
+  async function pick(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    e.target.value = ''
+    if (!file) return
+    setErr(null)
+    setBusy(true)
+    try {
+      await api.uploadOutboundDocument(transferOrderNo, kind, file)
+      await onChanged()
+    } catch (e2: unknown) {
+      setErr(String((e2 as { detail?: string })?.detail ?? e2))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div
+      className={`rounded-md border p-3 ${
+        uploaded
+          ? 'border-emerald-200 bg-emerald-50/40'
+          : 'border-slate-200 bg-slate-50/40'
+      }`}
+    >
+      <div className="flex items-baseline justify-between gap-2">
+        <div className="text-[11px] uppercase tracking-wider font-bold text-[#1B4676]">
+          {label}
+        </div>
+        {uploaded && (
+          <span className="text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800 border border-emerald-200">
+            On file
+          </span>
+        )}
+      </div>
+      <div className="mt-1 text-xs text-slate-600 truncate" title={filename ?? ''}>
+        {filename || <span className="text-slate-400 italic">No file uploaded yet</span>}
+      </div>
+      {err && (
+        <div className="mt-2 text-[11px] text-rose-700 bg-rose-50 border border-rose-200 rounded px-2 py-1">
+          {err}
+        </div>
+      )}
+      <label className="mt-2 block">
+        <span className="sr-only">Upload {label}</span>
+        <input
+          type="file"
+          accept="image/*,application/pdf"
+          onChange={pick}
+          disabled={busy}
+          className="text-xs text-slate-700 file:mr-2 file:py-1 file:px-2.5 file:rounded file:border-0 file:text-[11px] file:font-semibold file:bg-[#1B4676] file:text-white hover:file:bg-[#224E72] disabled:opacity-60"
+        />
+      </label>
+      {busy && (
+        <div className="mt-1 text-[11px] text-slate-500">Uploading…</div>
+      )}
     </div>
   )
 }

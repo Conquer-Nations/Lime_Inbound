@@ -130,6 +130,11 @@ class OutboundOrderRead(BaseModel):
     notes: str | None
     lines: list[OutboundLineRead]
     containers: list[OutboundContainerRead] = []
+    # BOL + packing list file refs (true when a doc is on file).
+    has_bol: bool = False
+    bol_filename: str | None = None
+    has_packing_list: bool = False
+    packing_list_filename: str | None = None
 
 
 class OutboundOrderListItem(BaseModel):
