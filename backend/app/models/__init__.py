@@ -524,6 +524,15 @@ class OutboundOrder(Base):
     submitted_by: Mapped[str | None] = mapped_column(String(255))
     notes: Mapped[str | None] = mapped_column(Text)
 
+    # BOL + packing list uploads. Vendor sends these alongside the order
+    # so the warehouse has them on file before the truck arrives.
+    bol_filename: Mapped[str | None] = mapped_column(String(255))
+    bol_storage_path: Mapped[str | None] = mapped_column(String(500))
+    bol_content_type: Mapped[str | None] = mapped_column(String(120))
+    packing_list_filename: Mapped[str | None] = mapped_column(String(255))
+    packing_list_storage_path: Mapped[str | None] = mapped_column(String(500))
+    packing_list_content_type: Mapped[str | None] = mapped_column(String(120))
+
     customer: Mapped[Customer] = relationship()
     lines: Mapped[list[OutboundLine]] = relationship(
         back_populates="order", cascade="all, delete-orphan"

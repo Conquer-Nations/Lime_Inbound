@@ -10,14 +10,18 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.db import get_session
 from app.models import (
+    DO,
+    WHPO,
     ActivityLog,
+    Container,
+    ContainerLine,
     Customer,
     OutboundContainer,
     OutboundLine,
@@ -80,6 +84,58 @@ async def _ensure_customer(session: AsyncSession, name: str) -> Customer:
     session.add(customer)
     await session.flush()
     return customer
+
+
+async def _fifo_pick_source_container(
+    session: AsyncSession,
+    *,
+    customer_id: int,
+    sku_raw: str,
+) -> str | None:
+    """FIFO source-container picker for outbound order lines.
+
+    Returns the container_no of the oldest received inbound container
+    belonging to `customer_id` that contains this SKU. None if no such
+    container exists (vendor will need to wait for a fresh inbound).
+
+    "Oldest received" = earliest `containers.finished_at` (when the
+    operator sealed the scan sheet). Pre-receipt containers aren't
+    picked since their inventory isn't physically on the floor yet.
+
+    NOTE: this is an MVP first pass. It doesn't yet account for
+    remaining stock per container (a container that's been fully
+    shipped out should be skipped). That refinement requires summing
+    outbound_scans by source_container_no minus container_lines qty
+    — to be done when partial-outbound tracking lands."""
+    sku_clean = sku_raw.strip()
+    if not sku_clean:
+        return None
+    row = await session.execute(
+        select(Container.container_no)
+        .join(DO, DO.id == Container.do_id)
+        .join(WHPO, WHPO.id == DO.whpo_id)
+        .join(ContainerLine, ContainerLine.container_id == Container.id)
+        .where(WHPO.customer_id == customer_id)
+        .where(func.lower(ContainerLine.sku_raw) == sku_clean.lower())
+        .where(Container.finished_at.is_not(None))
+        .order_by(Container.finished_at.asc())
+        .limit(1)
+    )
+    container_no = row.scalar_one_or_none()
+    if container_no:
+        logger.info(
+            "FIFO auto-pick: customer=%s sku=%s → container=%s",
+            customer_id,
+            sku_clean,
+            container_no,
+        )
+    else:
+        logger.info(
+            "FIFO auto-pick: no received container found for customer=%s sku=%s",
+            customer_id,
+            sku_clean,
+        )
+    return container_no
 
 
 def order_company_name(order: OutboundOrder) -> str:
@@ -225,6 +281,19 @@ async def submit_outbound_order(
     await session.flush()
 
     for line_in in payload.lines:
+        # FIFO auto-pick: when the vendor didn't specify a source container,
+        # find the oldest received inbound container for this customer that
+        # contains the SKU. Per Tiana: "if they don't select, the system
+        # should auto-determine a FIFO system to tell the respective items
+        # from which inbound container they need to go."
+        source_container = (line_in.source_container_no or "").strip() or None
+        if source_container is None:
+            source_container = await _fifo_pick_source_container(
+                session,
+                customer_id=order.customer_id,
+                sku_raw=line_in.sku.strip(),
+            )
+
         line = OutboundLine(
             outbound_order_id=order.id,
             line_no=line_in.line_no,
@@ -233,7 +302,7 @@ async def submit_outbound_order(
             order_qty=line_in.order_qty,
             unit=line_in.unit,
             serial_specific=line_in.serial_specific,
-            source_container_no=(line_in.source_container_no or None),
+            source_container_no=source_container,
         )
         session.add(line)
         await session.flush()
@@ -328,6 +397,14 @@ async def update_outbound_order(
     await session.flush()
 
     for line_in in payload.lines:
+        # FIFO auto-pick when vendor didn't specify (mirror of submit path).
+        source_container = (line_in.source_container_no or "").strip() or None
+        if source_container is None:
+            source_container = await _fifo_pick_source_container(
+                session,
+                customer_id=order.customer_id,
+                sku_raw=line_in.sku.strip(),
+            )
         line = OutboundLine(
             outbound_order_id=order.id,
             line_no=line_in.line_no,
@@ -336,7 +413,7 @@ async def update_outbound_order(
             order_qty=line_in.order_qty,
             unit=line_in.unit,
             serial_specific=line_in.serial_specific,
-            source_container_no=(line_in.source_container_no or None),
+            source_container_no=source_container,
         )
         session.add(line)
         await session.flush()
@@ -395,6 +472,95 @@ async def update_outbound_order(
         po_number=order.po_number,
         status=order.status,
     )
+
+
+_OUTBOUND_DOC_KINDS = {"bol", "packing_list"}
+_OUTBOUND_DOC_LABELS = {"bol": "Bill of Lading", "packing_list": "Packing List"}
+_ALLOWED_DOC_TYPES = {
+    "image/jpeg", "image/jpg", "image/png", "image/webp",
+    "image/heic", "image/heif", "image/gif", "application/pdf",
+}
+
+
+@router.post("/order/{transfer_order_no}/document/{kind}")
+async def upload_outbound_document(
+    transfer_order_no: str,
+    kind: str,
+    file: UploadFile = File(...),
+    session: AsyncSession = Depends(get_session),
+    vendor: dict = Depends(current_vendor_required),
+) -> dict:
+    """Vendor uploads a BOL or Packing List for an outbound order.
+    Replaces any prior file of the same kind (one BOL / one packing
+    list per TO). Both files mirror to OneDrive's container folder
+    when the order has containers attached."""
+    from app.services import vendor_uploads
+
+    if kind not in _OUTBOUND_DOC_KINDS:
+        raise HTTPException(
+            400,
+            f"Unknown document kind '{kind}'. Allowed: {sorted(_OUTBOUND_DOC_KINDS)}",
+        )
+    order = await _load_order_for_vendor(session, transfer_order_no, vendor)
+
+    data = await file.read()
+    if not data:
+        raise HTTPException(400, "Empty file")
+    content_type = (file.content_type or "").lower()
+    if content_type not in _ALLOWED_DOC_TYPES:
+        raise HTTPException(
+            415,
+            f"Unsupported content type {content_type!r}. Allowed: {sorted(_ALLOWED_DOC_TYPES)}",
+        )
+    if len(data) > 20 * 1024 * 1024:
+        raise HTTPException(413, "File too large (>20 MB)")
+
+    # Save bytes under outbound_orders/{id}/{kind}-{uuid}.{ext}. We
+    # reuse the inbound vendor_uploads helper since the on-disk layout
+    # is fine for both — the path is keyed by a synthetic "container id"
+    # which here is the order id + 1_000_000 offset to avoid collisions.
+    # (Outbound orders live in a separate table from inbound containers
+    # but use the same storage tree.)
+    rel_path, _abs = vendor_uploads.save_bytes(
+        1_000_000 + order.id,
+        f"outbound_{kind}",
+        data,
+        file.filename or kind,
+        content_type,
+    )
+
+    # Replace any prior file of the same kind to avoid orphans.
+    prior_path = getattr(order, f"{kind}_storage_path")
+    if prior_path and prior_path != rel_path:
+        try:
+            vendor_uploads.delete_storage_file(prior_path)
+        except Exception:
+            pass
+
+    setattr(order, f"{kind}_filename", file.filename or kind)
+    setattr(order, f"{kind}_storage_path", rel_path)
+    setattr(order, f"{kind}_content_type", content_type)
+
+    session.add(
+        ActivityLog(
+            actor=vendor.get("email") or "vendor",
+            kind=f"outbound_{kind}_uploaded",
+            ref_type="outbound_order",
+            ref_id=order.id,
+            message=(
+                f"{_OUTBOUND_DOC_LABELS[kind]} uploaded for TO "
+                f"{order.transfer_order_no}"
+            ),
+        )
+    )
+    await session.commit()
+    return {
+        "transfer_order_no": order.transfer_order_no,
+        "kind": kind,
+        "filename": file.filename or kind,
+        "content_type": content_type,
+        "size": len(data),
+    }
 
 
 @router.get("/orders", response_model=OutboundOrderListResponse)

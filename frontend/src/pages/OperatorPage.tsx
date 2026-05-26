@@ -129,6 +129,12 @@ export default function OperatorPage() {
         total_scanned: data.total_scanned,
       })
       setPhase('done')
+      // Auto-logout after 4s — matches the scan-sheet path's behaviour.
+      // Success card stays visible for handoff, then operator is signed
+      // out for the next shift.
+      setTimeout(() => {
+        signOut()
+      }, 4000)
     } catch (e) {
       setError(e instanceof ApiError ? e.detail : String(e))
     } finally {
