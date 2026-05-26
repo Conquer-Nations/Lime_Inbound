@@ -1286,6 +1286,71 @@ export interface OutboundOrderErpDetail {
   activity: ContainerErpActivity[]
 }
 
+// ─── Warehouse inventory reports (aging + remaining inventory) ──────────
+
+export type AgingBucket = 'active' | 'aging' | 'stale' | 'fully_shipped'
+
+export interface ContainerAgingRow {
+  container_no: string
+  brand: string | null
+  invoice_no: string | null
+  whpo_number: string | null
+  received_date: string | null
+  days_since_received: number | null
+  units_in: number
+  units_out: number
+  units_remaining: number
+  aging_bucket: AgingBucket
+  fully_shipped: boolean
+}
+
+export interface ContainerAgingResponse {
+  items: ContainerAgingRow[]
+  total: number
+  counts: Record<AgingBucket, number>
+}
+
+export interface RemainingInventorySkuRow {
+  sku_raw: string
+  qty_received: number
+  qty_scanned_in: number
+  qty_shipped_out: number
+  qty_remaining: number
+}
+
+export interface RemainingSerialRow {
+  serial_number: string
+  sku_raw: string | null
+  scanned_at: string
+  status: 'in_warehouse' | 'shipped'
+  shipped_to: string | null
+  shipped_at: string | null
+}
+
+export interface RemainingInventoryResponse {
+  container_no: string
+  brand: string | null
+  received_date: string | null
+  days_since_received: number | null
+  per_sku: RemainingInventorySkuRow[]
+  serials: RemainingSerialRow[]
+}
+
+export const inventoryReportsApi = {
+  aging: (params: { bucket?: AgingBucket; brand?: string; limit?: number } = {}) => {
+    const q = new URLSearchParams()
+    if (params.bucket) q.set('bucket', params.bucket)
+    if (params.brand) q.set('brand', params.brand)
+    if (params.limit) q.set('limit', String(params.limit))
+    const qs = q.toString()
+    return request<ContainerAgingResponse>(`/manager/inventory/aging${qs ? `?${qs}` : ''}`)
+  },
+  remaining: (container_no: string) =>
+    request<RemainingInventoryResponse>(
+      `/manager/inventory/container/${encodeURIComponent(container_no)}/remaining`,
+    ),
+}
+
 // ─── Master list (auto-computed inbound + outbound) ──────────────────────
 
 export interface MasterListRow {

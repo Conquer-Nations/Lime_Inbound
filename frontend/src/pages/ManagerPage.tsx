@@ -11,6 +11,7 @@ import ResolveExceptionModal from '../components/ResolveExceptionModal'
 import MasterList from '../components/MasterList'
 import SkuAdmin from '../components/SkuAdmin'
 import TallySheetsAdmin from '../components/TallySheetsAdmin'
+import WarehouseInventory from '../components/WarehouseInventory'
 import WarehouseFloorPlan from '../components/WarehouseFloorPlan'
 import { CalendarView } from '../components/CalendarView'
 import type { DOListItem, ExceptionItem, LotMapItem } from '../types/api'
@@ -29,6 +30,7 @@ type Tab =
   | 'accounts'
   | 'tally'
   | 'master_list'
+  | 'warehouse_inventory'
 
 // ERP module structure — mirrors how Dynamics / SAP / Odoo group screens.
 // Each category collapses in the sidebar. Add new top-level groups
@@ -74,7 +76,10 @@ const NAV_CATEGORIES: NavCategory[] = [
     key: 'warehouse',
     label: 'Warehouse',
     icon: 'warehouse',
-    items: [{ key: 'lots', label: 'Floor Map' }],
+    items: [
+      { key: 'warehouse_inventory', label: 'Inventory & Aging' },
+      { key: 'lots', label: 'Floor Map' },
+    ],
   },
   {
     key: 'reports',
@@ -158,6 +163,7 @@ export default function ManagerPage() {
         {tab === 'skus' && <SkuAdmin />}
         {tab === 'tally' && <TallySheetsAdmin />}
         {tab === 'master_list' && <MasterList />}
+        {tab === 'warehouse_inventory' && <WarehouseInventory />}
         {tab === 'exceptions' && (
           <ExceptionsTab
             data={exceptions}
