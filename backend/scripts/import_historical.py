@@ -30,9 +30,11 @@ export them for manual fix-up.
 from __future__ import annotations
 
 import argparse
+import asyncio
 import csv
 import re
 import sys
+import time as _time
 from collections import Counter
 from datetime import date, datetime, time, timezone
 from pathlib import Path
@@ -47,6 +49,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.config import settings  # noqa: E402
 from app.models import (  # noqa: E402
+    Account,
     Container,
     Customer,
     DO,
@@ -429,6 +432,88 @@ def print_report(rows_ok: list[dict], rows_skipped: list[dict], plan: dict) -> N
     print("\n" + "=" * 72)
 
 
+# ─── OneDrive folder seeding ────────────────────────────────────────
+
+
+async def _seed_onedrive_folders_async(
+    rows: list[dict[str, Any]],
+    *,
+    brand: str,
+    account: str | None,
+    pause_seconds: float = 1.0,
+) -> tuple[int, int]:
+    """For each historical container, drop a placeholder README into its
+    OneDrive folder. The README creates the folder hierarchy as a side
+    effect (Logic App auto-creates intermediate folders on upload).
+
+    Returns (success_count, failure_count). Best-effort — never raises.
+    Pace = pause_seconds between calls so the Logic App rate limit
+    (~2/s on Consumption tier) isn't tripped."""
+    from app.services.onedrive_files import (  # noqa: E402
+        upload_to_container_folder,
+    )
+
+    if not (
+        settings.onedrive_container_files_url
+        or settings.onedrive_vendor_files_url
+    ):
+        print("⚠ OneDrive Logic App URL not configured; skipping folder seed.")
+        return 0, 0
+
+    today = date.today().isoformat()
+    succ = fail = 0
+    total = len(rows)
+    for i, r in enumerate(rows, start=1):
+        readme = (
+            f"This folder was created during historical-data backfill on {today}.\n"
+            f"\n"
+            f"Container:  {r['container_no']}\n"
+            f"WHPO:       {r['whpo_number']}\n"
+            f"Commodity:  {r['commodity']}\n"
+            f"Carrier:    {r['carrier'] or '?'}\n"
+            f"Received:   {r['received_date'] or '?'}\n"
+            f"\n"
+            "Drop the supporting docs (BOL, POD, driver photos, picking "
+            "ticket) into this folder when you find them.\n"
+        ).encode("utf-8")
+        try:
+            await upload_to_container_folder(
+                account=account,
+                brand=brand,
+                arrival_date=r["received_date"],
+                container_no=r["container_no"],
+                data=readme,
+                filename="_README_historical_backfill.txt",
+                content_type="text/plain",
+            )
+            succ += 1
+        except Exception as e:  # noqa: BLE001
+            fail += 1
+            print(f"   ! {r['container_no']}: {e!r}")
+        if i % 25 == 0 or i == total:
+            print(f"   … seeded {i}/{total} folders ({succ} ok, {fail} failed)")
+        await asyncio.sleep(pause_seconds)
+    return succ, fail
+
+
+def seed_onedrive_folders(
+    rows: list[dict[str, Any]], customer: Customer, account_name: str | None
+) -> None:
+    """Sync wrapper. Pulls the asyncio event loop just for the upload phase."""
+    print(
+        f"\n>>> Seeding OneDrive folders for {len(rows)} containers "
+        f"(brand={customer.name!r}, account={account_name!r}) …"
+    )
+    t0 = _time.monotonic()
+    succ, fail = asyncio.run(
+        _seed_onedrive_folders_async(rows, brand=customer.name, account=account_name)
+    )
+    print(
+        f"✓ OneDrive seed done: {succ} ok, {fail} failed, "
+        f"{_time.monotonic() - t0:.0f}s elapsed"
+    )
+
+
 # ─── CLI ────────────────────────────────────────────────────────────
 
 
@@ -450,6 +535,15 @@ def main() -> int:
         type=Path,
         default=None,
         help="Path to write a CSV of skipped rows + reasons (manual fix-up).",
+    )
+    parser.add_argument(
+        "--seed-onedrive-folders",
+        action="store_true",
+        help=(
+            "After --commit, fire one upload per container so OneDrive folder "
+            "hierarchies are pre-created (placeholder README.txt per folder). "
+            "Adds ~10 min for ~400 containers. Best-effort."
+        ),
     )
     args = parser.parse_args()
 
@@ -494,6 +588,19 @@ def main() -> int:
             print(f"\nERROR during insert (transaction rolled back): {e}", file=sys.stderr)
             raise
         print("✓ Transaction committed. All rows imported.")
+
+        if args.seed_onedrive_folders:
+            # Re-fetch customer so we have the account relationship loaded.
+            customer = session.scalar(
+                select(Customer).where(Customer.name == args.customer)
+            )
+            account_name: str | None = None
+            if customer and customer.account_id:
+                account_row = session.get(Account, customer.account_id)
+                if account_row is not None:
+                    account_name = account_row.name
+            seed_onedrive_folders(rows_ok, customer, account_name)
+
         return 0
 
 
