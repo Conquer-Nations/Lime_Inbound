@@ -113,6 +113,106 @@ def build_path_parts(
     }
 
 
+# ─── Container-folder hierarchy (Account/Brand/Quarter/Month/Container) ──
+#
+# Per Tiana's request, every document related to a container (POD, generated
+# tally sheet, driver license, truck photos, etc.) lands in a single folder:
+#
+#   /{root}/{Account}/{Brand}/Q{n} {YYYY}/{Month YYYY}/{Container}/{file}
+#
+# e.g. /Vendor Files/TQL Trading Inc/Lime/Q2 2026/May 2026/ZCSU7954612/POD.pdf
+#
+# Brands roll up to billing Accounts (TQL → Lime / Boviet / Pan Am / NP).
+# Quarter + Month derive from the container's actual or expected arrival
+# date. If no arrival date is on file we default to today so the upload
+# still lands somewhere reasonable.
+
+
+def quarter_folder(d: date) -> str:
+    """'Q2 2026'-style. Calendar quarters."""
+    return f"Q{((d.month - 1) // 3) + 1} {d.year:04d}"
+
+
+def month_year_folder(d: date) -> str:
+    """'May 2026'-style. Reading-order, matches Tiana's request."""
+    return d.strftime("%B %Y")
+
+
+def build_container_path_parts(
+    *,
+    account: str | None,
+    brand: str,
+    arrival_date: date | None,
+    container_no: str,
+    filename: str,
+) -> dict[str, str]:
+    """Compute Account/Brand/Quarter/Month/Container path components.
+    `account` is optional: a direct-bill brand with no parent account
+    drops the Account folder so the path becomes
+    /{root}/{Brand}/Q.../Month .../{Container}/{file}."""
+    from datetime import date as _date
+    eff_date = arrival_date or _date.today()
+    components: list[str] = [
+        sanitize(settings.onedrive_vendor_files_root),
+    ]
+    if account:
+        components.append(sanitize(account))
+    components.extend(
+        [
+            sanitize(brand),
+            sanitize(quarter_folder(eff_date)),
+            sanitize(month_year_folder(eff_date)),
+            sanitize(container_folder(container_no)),
+            sanitize(filename),
+        ]
+    )
+    return {
+        "root": sanitize(settings.onedrive_vendor_files_root),
+        "account": sanitize(account) if account else "",
+        "brand": sanitize(brand),
+        "quarter": sanitize(quarter_folder(eff_date)),
+        "month": sanitize(month_year_folder(eff_date)),
+        "container": sanitize(container_folder(container_no)),
+        "filename": sanitize(filename),
+        "full_path": "/".join(components),
+    }
+
+
+async def upload_to_container_folder(
+    *,
+    account: str | None,
+    brand: str,
+    arrival_date: date | None,
+    container_no: str,
+    data: bytes,
+    filename: str,
+    content_type: str,
+) -> None:
+    """Upload `data` (raw bytes) to OneDrive under
+    {root}/{Account}/{Brand}/Q.../Month.../{Container}/{filename}.
+    Best-effort. Logged + swallowed on any failure."""
+    if not is_configured():
+        return
+    parts = build_container_path_parts(
+        account=account,
+        brand=brand,
+        arrival_date=arrival_date,
+        container_no=container_no,
+        filename=filename,
+    )
+    payload = {
+        **parts,
+        "content_type": content_type,
+        "data_base64": base64.b64encode(data).decode("ascii"),
+        # Flag tells the Logic App this payload uses the new container
+        # hierarchy (no WHPO folder) rather than the legacy vendor-files
+        # layout. Default behaviour stays the same when omitted, so the
+        # legacy callers (upload_document) keep working.
+        "hierarchy": "container",
+    }
+    await _post(payload, label=f"upload_to_container_folder({container_no}/{filename})")
+
+
 # ─── Sync actions ───────────────────────────────────────────────────────
 
 

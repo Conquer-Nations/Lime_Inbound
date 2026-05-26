@@ -26,14 +26,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.db import get_session
-from app.models import DO, Container, Customer, TallySheet, WHPO
+from app.models import DO, Account, Container, Customer, TallySheet, WHPO
 from app.schemas.tally import (
     TallySheetList,
     TallySheetRead,
     TallySheetUpdateRequest,
     VendorTallyView,
 )
-from app.services import tally_pdf, tally_sheet_sync, vendor_uploads
+from app.services import onedrive_files, tally_pdf, tally_sheet_sync, vendor_uploads
 from app.services.ocr import OCRUnavailableError
 from app.services.pod_ocr import run_pod_ocr
 from app.services.vendor_auth_service import current_vendor_required
@@ -197,16 +197,55 @@ async def upload_pod(
     # Generate the printable tally-sheet PDF and stash it next to the
     # POD file. Best-effort: a PDF generation failure shouldn't block
     # the manager — they can regenerate via PATCH.
+    generated_pdf_bytes: bytes | None = None
     try:
-        pdf_bytes = tally_pdf.generate_tally_pdf(tally, container)
+        generated_pdf_bytes = tally_pdf.generate_tally_pdf(tally, container)
         rel_pdf, _abs_pdf = vendor_uploads.save_bytes(
-            container.id, "tally_pdf", pdf_bytes, "tally.pdf", "application/pdf"
+            container.id, "tally_pdf", generated_pdf_bytes, "tally.pdf", "application/pdf"
         )
         tally.tally_pdf_storage_path = rel_pdf
         await session.commit()
         await session.refresh(tally)
     except Exception as e:
         logger.warning("tally PDF generation failed: %s", e)
+
+    # Mirror to OneDrive container folder (Account/Brand/Quarter/Month/
+    # Container/). Both POD + generated tally PDF go up. Best-effort.
+    # Resolves the brand → account chain off the eager-loaded container.
+    try:
+        brand_obj = (
+            container.do.whpo.customer
+            if container.do and container.do.whpo and container.do.whpo.customer
+            else None
+        )
+        if brand_obj is not None:
+            account_name: str | None = None
+            if brand_obj.account_id is not None:
+                acct = await session.get(Account, brand_obj.account_id)
+                if acct is not None:
+                    account_name = acct.name
+            arrival = container.actual_arrival_date or container.expected_arrival_date
+            await onedrive_files.upload_to_container_folder(
+                account=account_name,
+                brand=brand_obj.name,
+                arrival_date=arrival,
+                container_no=container.container_no,
+                data=data,
+                filename=f"POD{vendor_uploads.pick_extension(file.filename or 'pod', content_type)}",
+                content_type=content_type,
+            )
+            if generated_pdf_bytes is not None:
+                await onedrive_files.upload_to_container_folder(
+                    account=account_name,
+                    brand=brand_obj.name,
+                    arrival_date=arrival,
+                    container_no=container.container_no,
+                    data=generated_pdf_bytes,
+                    filename="tally.pdf",
+                    content_type="application/pdf",
+                )
+    except Exception as e:
+        logger.warning("tally OneDrive container-folder upload failed: %s", e)
 
     # Sync to OneDrive Excel (best-effort — Postgres is source of truth).
     # The Logic App + Office Script append a row to TallyTable in the

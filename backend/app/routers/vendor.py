@@ -7,6 +7,7 @@ from fastapi.responses import FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from datetime import datetime, timezone
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -16,6 +17,7 @@ from sqlalchemy.orm import selectinload
 from app.config import settings
 from app.db import get_session
 from app.models import (
+    Account,
     ActivityLog,
     Container,
     ContainerDocument,
@@ -946,8 +948,58 @@ async def upload_container_document(
             original_filename=doc.filename,
             content_type=doc.content_type,
         )
+        # Also mirror to the new Account/Brand/Quarter/Month/Container/
+        # hierarchy so all docs for a container live in one folder
+        # alongside the POD + tally PDF (per Tiana's spec).
+        brand = container.do.whpo.customer
+        account_name: str | None = None
+        if brand.account_id is not None:
+            acct = await session.get(Account, brand.account_id)
+            if acct is not None:
+                account_name = acct.name
+        background_tasks.add_task(
+            _mirror_doc_to_container_folder,
+            account=account_name,
+            brand=brand.name,
+            arrival_date=container.actual_arrival_date or container.expected_arrival_date,
+            container_no=container.container_no,
+            local_storage_path=doc.storage_path,
+            filename=f"{kind}{Path(doc.filename).suffix or ''}",
+            content_type=doc.content_type,
+        )
 
     return _doc_item(container.container_no, doc)
+
+
+async def _mirror_doc_to_container_folder(
+    *,
+    account: str | None,
+    brand: str,
+    arrival_date,
+    container_no: str,
+    local_storage_path: str,
+    filename: str,
+    content_type: str,
+) -> None:
+    """Background-task helper: read the saved file from disk and push it
+    to OneDrive under the Account/Brand/Quarter/Month/Container path."""
+    try:
+        abs_path = vendor_uploads.absolute_path(local_storage_path)
+        data = abs_path.read_bytes()
+    except Exception as e:
+        logger.warning(
+            "container-folder mirror: read %s failed: %s", local_storage_path, e
+        )
+        return
+    await onedrive_files.upload_to_container_folder(
+        account=account,
+        brand=brand,
+        arrival_date=arrival_date,
+        container_no=container_no,
+        data=data,
+        filename=filename,
+        content_type=content_type,
+    )
 
 
 @router.delete(
