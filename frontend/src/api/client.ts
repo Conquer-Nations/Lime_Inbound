@@ -1680,9 +1680,53 @@ export interface RateCardRow {
   min_advance: number | null
 }
 
+export interface RateCardCreate {
+  code: string
+  category: string
+  description: string
+  unit: string
+  rate?: number | null
+  taxable?: boolean
+  is_minimum?: boolean
+  is_advance?: boolean
+  note?: string | null
+  max_per_request?: number | null
+  min_advance?: number | null
+}
+
+export interface RateCardUpdate {
+  category?: string
+  description?: string
+  unit?: string
+  rate?: number | null
+  taxable?: boolean
+  is_minimum?: boolean
+  is_advance?: boolean
+  note?: string | null
+  max_per_request?: number | null
+  min_advance?: number | null
+}
+
 export const billingApi = {
-  // Rate card (manager)
+  // Rate card (manager — listing; developer — also create/update/delete)
   rateCard: () => request<RateCardRow[]>('/manager/rate-card'),
+
+  createRateCode: (payload: RateCardCreate) =>
+    request<RateCardRow>('/manager/rate-card', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+
+  updateRateCode: (code: string, payload: RateCardUpdate) =>
+    request<RateCardRow>(`/manager/rate-card/${encodeURIComponent(code)}`, {
+      method: 'PATCH',
+      body: JSON.stringify(payload),
+    }),
+
+  deleteRateCode: (code: string) =>
+    requestVoid(`/manager/rate-card/${encodeURIComponent(code)}`, {
+      method: 'DELETE',
+    }),
 
   // Invoices list (manager)
   listInvoices: (params: {

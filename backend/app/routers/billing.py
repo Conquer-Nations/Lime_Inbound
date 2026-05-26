@@ -48,7 +48,9 @@ from app.schemas.billing import (
     InvoicePreview,
     InvoiceRead,
     InvoiceStatusActionRequest,
+    RateCardCreate,
     RateCardRow,
+    RateCardUpdate,
     VendorMarkPaidRequest,
 )
 from app.services import billing_auto_charges, invoice_pdf, invoice_pricing
@@ -172,25 +174,123 @@ async def _refresh_totals(session: AsyncSession, invoice: Invoice) -> None:
 manager_router = APIRouter(prefix="/manager", tags=["manager-billing"])
 
 
+def _rate_to_row(r: RateCard) -> RateCardRow:
+    return RateCardRow(
+        code=r.code,
+        category=r.category,
+        description=r.description,
+        unit=r.unit,
+        rate=r.rate,
+        taxable=r.taxable,
+        is_minimum=r.is_minimum,
+        is_advance=r.is_advance,
+        note=r.note,
+        max_per_request=r.max_per_request,
+        min_advance=r.min_advance,
+    )
+
+
 @manager_router.get("/rate-card", response_model=list[RateCardRow])
 async def list_rate_card(session: AsyncSession = Depends(get_session)):
-    rows = await session.scalars(select(RateCard).order_by(RateCard.category, RateCard.code))
-    return [
-        RateCardRow(
-            code=r.code,
-            category=r.category,
-            description=r.description,
-            unit=r.unit,
-            rate=r.rate,
-            taxable=r.taxable,
-            is_minimum=r.is_minimum,
-            is_advance=r.is_advance,
-            note=r.note,
-            max_per_request=r.max_per_request,
-            min_advance=r.min_advance,
+    rows = await session.scalars(
+        select(RateCard).order_by(RateCard.category, RateCard.code)
+    )
+    return [_rate_to_row(r) for r in rows]
+
+
+@manager_router.post(
+    "/rate-card",
+    response_model=RateCardRow,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_rate_card_entry(
+    payload: RateCardCreate,
+    session: AsyncSession = Depends(get_session),
+):
+    """Developer surface — add a new rate code. Role gating is enforced
+    client-side (only `developer` sees the form). Matches the rest of
+    the /manager/* trust model.
+
+    Code is the primary key — must be unique. Existing code → 409."""
+    normalized_code = payload.code.strip().upper()
+    existing = await session.get(RateCard, normalized_code)
+    if existing is not None:
+        raise HTTPException(409, f"Rate code {normalized_code} already exists")
+    row = RateCard(
+        code=normalized_code,
+        category=payload.category.strip().upper(),
+        description=payload.description.strip(),
+        unit=payload.unit.strip(),
+        rate=payload.rate,
+        taxable=payload.taxable,
+        is_minimum=payload.is_minimum,
+        is_advance=payload.is_advance,
+        note=payload.note,
+        max_per_request=payload.max_per_request,
+        min_advance=payload.min_advance,
+    )
+    session.add(row)
+    await session.commit()
+    await session.refresh(row)
+    return _rate_to_row(row)
+
+
+@manager_router.patch("/rate-card/{code}", response_model=RateCardRow)
+async def update_rate_card_entry(
+    code: str,
+    payload: RateCardUpdate,
+    session: AsyncSession = Depends(get_session),
+):
+    """Developer surface — edit an existing rate code. Lines already on
+    issued invoices snapshot the rate at generation time, so changing the
+    master row only affects future auto-charge proposals + manual lines.
+    """
+    row = await session.get(RateCard, code.strip().upper())
+    if row is None:
+        raise HTTPException(404, f"Rate code {code} not found")
+    updates = payload.model_dump(exclude_unset=True)
+    if "category" in updates and updates["category"]:
+        updates["category"] = updates["category"].strip().upper()
+    if "unit" in updates and updates["unit"]:
+        updates["unit"] = updates["unit"].strip()
+    if "description" in updates and updates["description"]:
+        updates["description"] = updates["description"].strip()
+    for k, v in updates.items():
+        setattr(row, k, v)
+    await session.commit()
+    await session.refresh(row)
+    return _rate_to_row(row)
+
+
+@manager_router.delete(
+    "/rate-card/{code}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def delete_rate_card_entry(
+    code: str,
+    session: AsyncSession = Depends(get_session),
+):
+    """Developer surface — remove a rate code. Refuses if any invoice
+    line references it (lines snapshot the code, so historical invoices
+    keep working, but new charges shouldn't auto-fire). Use PATCH with a
+    note like `[deprecated]` instead if you want to retire it softly."""
+    row = await session.get(RateCard, code.strip().upper())
+    if row is None:
+        raise HTTPException(404, f"Rate code {code} not found")
+    from app.models import InvoiceLine as _IL
+
+    in_use = await session.scalar(
+        select(func.count(_IL.id)).where(_IL.code == row.code)
+    )
+    if (in_use or 0) > 0:
+        raise HTTPException(
+            409,
+            f"Rate code {row.code} is in use on {in_use} invoice line(s); "
+            "edit the description / rate instead, or mark it deprecated in the note.",
         )
-        for r in rows
-    ]
+    await session.delete(row)
+    await session.commit()
+    return None
 
 
 @manager_router.get("/invoices", response_model=list[InvoiceListItem])

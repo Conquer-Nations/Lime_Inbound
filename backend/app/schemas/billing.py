@@ -140,3 +140,36 @@ class RateCardRow(BaseModel):
     note: str | None = None
     max_per_request: float | None = None
     min_advance: float | None = None
+
+
+class RateCardCreate(BaseModel):
+    """Developer-only — add a new rate code to the master card."""
+
+    code: str = Field(..., min_length=1, max_length=20)
+    category: str = Field(..., min_length=1, max_length=40)
+    description: str = Field(..., min_length=1)
+    unit: str = Field(..., min_length=1, max_length=80)
+    rate: float | None = None
+    taxable: bool = False
+    is_minimum: bool = False
+    is_advance: bool = False
+    note: str | None = None
+    max_per_request: float | None = None
+    min_advance: float | None = None
+
+
+class RateCardUpdate(BaseModel):
+    """Developer-only — patch an existing rate code. All fields optional;
+    `code` itself cannot be renamed (it's referenced by existing invoice
+    lines as a snapshot)."""
+
+    category: str | None = Field(None, min_length=1, max_length=40)
+    description: str | None = Field(None, min_length=1)
+    unit: str | None = Field(None, min_length=1, max_length=80)
+    rate: float | None = None
+    taxable: bool | None = None
+    is_minimum: bool | None = None
+    is_advance: bool | None = None
+    note: str | None = None
+    max_per_request: float | None = None
+    min_advance: float | None = None
