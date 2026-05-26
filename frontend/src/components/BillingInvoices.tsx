@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { api, billingApi } from '../api/client'
 import type {
+  CustomerRead,
   InvoiceListItem,
   InvoicePreview,
   InvoiceRead,
@@ -63,6 +64,8 @@ function fmtDate(d: string | null | undefined): string {
 export default function BillingInvoices() {
   const [list, setList] = useState<InvoiceListItem[] | null>(null)
   const [statusFilter, setStatusFilter] = useState<'all' | InvoiceStatus>('all')
+  const [customerFilter, setCustomerFilter] = useState<number | 'all'>('all')
+  const [customers, setCustomers] = useState<CustomerRead[]>([])
   const [search, setSearch] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [selectedId, setSelectedId] = useState<number | null>(null)
@@ -71,11 +74,25 @@ export default function BillingInvoices() {
   const [generateMode, setGenerateMode] = useState<GenerateMode | null>(null)
   const [toast, setToast] = useState<string | null>(null)
 
+  // Load the customer (brand) list once for the filter dropdown.
+  useEffect(() => {
+    api
+      .listManagerCustomers()
+      .then((rows) =>
+        // Stable alphabetical so the dropdown reads predictably.
+        setCustomers([...rows].sort((a, b) => a.name.localeCompare(b.name))),
+      )
+      .catch(() => {
+        /* non-fatal — invoice list still works without filter */
+      })
+  }, [])
+
   function reloadList() {
     setError(null)
     billingApi
       .listInvoices({
         status: statusFilter === 'all' ? undefined : statusFilter,
+        customer_id: customerFilter === 'all' ? undefined : customerFilter,
       })
       .then((rows) => {
         setList(rows)
@@ -97,7 +114,7 @@ export default function BillingInvoices() {
       .finally(() => setDetailLoading(false))
   }
 
-  useEffect(reloadList, [statusFilter])
+  useEffect(reloadList, [statusFilter, customerFilter])
 
   useEffect(() => {
     if (selectedId == null) {
@@ -191,6 +208,27 @@ export default function BillingInvoices() {
           placeholder="Search invoice #, customer, WHPO, TO…"
           className="w-72 max-w-full border border-slate-200 rounded-md px-3 py-1.5 text-sm focus:outline-none focus:border-[#0093D0]"
         />
+        {/* Brand / customer picker — server-side filter. */}
+        <label className="inline-flex items-center gap-2">
+          <span className="text-[10px] uppercase tracking-[0.14em] font-bold text-slate-500">
+            Brand
+          </span>
+          <select
+            value={customerFilter === 'all' ? '' : String(customerFilter)}
+            onChange={(e) =>
+              setCustomerFilter(e.target.value ? Number(e.target.value) : 'all')
+            }
+            className="border border-slate-200 rounded-md px-2 py-1 text-sm focus:outline-none focus:border-[#0093D0] bg-white min-w-[10rem]"
+          >
+            <option value="">All brands</option>
+            {customers.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.name}
+                {c.account_name ? ` · ${c.account_name}` : ''}
+              </option>
+            ))}
+          </select>
+        </label>
         <div className="flex items-center gap-1 flex-wrap">
           {STATUS_FILTERS.map((s) => (
             <button
