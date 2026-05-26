@@ -4,6 +4,7 @@ from datetime import date, datetime, time
 
 from sqlalchemy import (
     Boolean,
+    CheckConstraint,
     Date,
     DateTime,
     Float,
@@ -55,6 +56,126 @@ class Account(Base):
     customers: Mapped[list[Customer]] = relationship(back_populates="account")
 
 
+class RateCard(Base):
+    """Master rate card — one row per billable charge code.
+
+    Ported from CN-BILLING's `src/rates.js`. Codes group into 11
+    categories (HANDLING, ORDER_PROC, PICKING, PUTAWAY, STORAGE,
+    BOL_SHIP, ACCESSORIAL, IT, MDS, LABOR, DRAYAGE).
+
+    rate=None means "enter manually at line entry" (drayage base,
+    vendor advance, custom material costs). taxable=True on CA-taxed
+    materials only (labels, boxes, seals). is_minimum codes
+    auto-apply when picking subtotal falls below floor."""
+
+    __tablename__ = "rate_card"
+
+    code: Mapped[str] = mapped_column(String(20), primary_key=True)
+    category: Mapped[str] = mapped_column(String(40), index=True)
+    description: Mapped[str] = mapped_column(Text)
+    unit: Mapped[str] = mapped_column(String(80))
+    rate: Mapped[float | None] = mapped_column(Float)
+    taxable: Mapped[bool] = mapped_column(Boolean, default=False)
+    is_minimum: Mapped[bool] = mapped_column(Boolean, default=False)
+    is_advance: Mapped[bool] = mapped_column(Boolean, default=False)
+    note: Mapped[str | None] = mapped_column(Text)
+    max_per_request: Mapped[float | None] = mapped_column(Float)
+    min_advance: Mapped[float | None] = mapped_column(Float)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
+class Invoice(Base):
+    """One invoice per WHPO (inbound) OR per Transfer Order (outbound).
+
+    Status lifecycle: draft → ready → sent → paid → void.
+
+    Snapshots subtotal, fuel, advancing (vendor invoice + 20%, PierPass
+    advance, drayage advance), operational charge, tax, total at
+    generation time so historical invoices stay stable even if rate
+    card changes.
+    """
+
+    __tablename__ = "invoices"
+    __table_args__ = (
+        CheckConstraint(
+            "(whpo_id IS NOT NULL AND outbound_order_id IS NULL) "
+            "OR (whpo_id IS NULL AND outbound_order_id IS NOT NULL)",
+            name="invoice_scope_xor",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    invoice_number: Mapped[str] = mapped_column(String(40), unique=True)
+    customer_id: Mapped[int] = mapped_column(ForeignKey("customers.id"), index=True)
+    whpo_id: Mapped[int | None] = mapped_column(ForeignKey("whpos.id"), index=True)
+    outbound_order_id: Mapped[int | None] = mapped_column(
+        ForeignKey("outbound_orders.id"), index=True
+    )
+    status: Mapped[str] = mapped_column(String(20), default="draft", index=True)
+    invoice_date: Mapped[date] = mapped_column(Date, server_default=func.current_date())
+    due_date: Mapped[date | None] = mapped_column(Date)
+    terms: Mapped[str] = mapped_column(String(20), default="Net 30")
+    subtotal: Mapped[float] = mapped_column(Float, default=0)
+    fuel_surcharge: Mapped[float] = mapped_column(Float, default=0)
+    advancing: Mapped[float] = mapped_column(Float, default=0)
+    adjustment: Mapped[float] = mapped_column(Float, default=0)
+    adjustment_note: Mapped[str | None] = mapped_column(Text)
+    operational_charge: Mapped[float] = mapped_column(Float, default=0)
+    operational_charge_breakdown: Mapped[dict | None] = mapped_column(JSONB)
+    tax: Mapped[float] = mapped_column(Float, default=0)
+    total: Mapped[float] = mapped_column(Float)
+    customer_pdf_storage_path: Mapped[str | None] = mapped_column(String(500))
+    service_log_pdf_storage_path: Mapped[str | None] = mapped_column(String(500))
+    generated_by: Mapped[str | None] = mapped_column(String(255))
+    generated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    paid_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    payment_method: Mapped[str | None] = mapped_column(String(40))
+    notes: Mapped[str | None] = mapped_column(Text)
+
+    lines: Mapped[list[InvoiceLine]] = relationship(
+        back_populates="invoice", cascade="all, delete-orphan"
+    )
+
+
+class InvoiceLine(Base):
+    """One charge line on an invoice. Either auto-applied (system
+    generated from container/scan events) or manual (entered by the
+    billing-team manager)."""
+
+    __tablename__ = "invoice_lines"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    invoice_id: Mapped[int] = mapped_column(
+        ForeignKey("invoices.id", ondelete="CASCADE"), index=True
+    )
+    code: Mapped[str] = mapped_column(String(20))
+    category: Mapped[str] = mapped_column(String(40), index=True)
+    description: Mapped[str] = mapped_column(Text)
+    unit: Mapped[str] = mapped_column(String(80))
+    quantity: Mapped[float] = mapped_column(Float)
+    unit_rate: Mapped[float] = mapped_column(Float)
+    line_total: Mapped[float] = mapped_column(Float)
+    taxable: Mapped[bool] = mapped_column(Boolean, default=False)
+    auto_applied: Mapped[bool] = mapped_column(Boolean, default=False)
+    override_reason: Mapped[str | None] = mapped_column(Text)
+    source_container_id: Mapped[int | None] = mapped_column(
+        ForeignKey("containers.id")
+    )
+    source_outbound_container_id: Mapped[int | None] = mapped_column(
+        ForeignKey("outbound_containers.id")
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    invoice: Mapped[Invoice] = relationship(back_populates="lines")
+
+
 class Customer(Base):
     """Product-owner brand — the company whose physical inventory lives on
     our floor. e.g. Lime, National Plastic, Pan America, Boviet Solar.
@@ -73,6 +194,11 @@ class Customer(Base):
     )
     contact_email: Mapped[str | None] = mapped_column(String(255))
     notes: Mapped[str | None] = mapped_column(Text)
+    # Rich customer profile from CN-BILLING (Company, Storage, Inbound,
+    # Outbound, Special Services, Drayage, Agreement). UI editor lands
+    # in billing Phase 2; storing as JSONB so we can iterate the schema
+    # without migrations.
+    profile_json: Mapped[dict | None] = mapped_column(JSONB)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     account: Mapped[Account | None] = relationship(back_populates="customers")

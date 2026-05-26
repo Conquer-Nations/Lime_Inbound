@@ -21,6 +21,17 @@ from app.routers import vendor_auth as vendor_auth_router
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
+    # One-time seed at startup: rate card. Idempotent (skips existing codes).
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+    from app.services.rate_card_seed import seed_rate_card
+    AsyncSession = async_sessionmaker(engine, expire_on_commit=False)
+    async with AsyncSession() as session:
+        try:
+            await seed_rate_card(session)
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).warning("rate_card seed at startup failed: %s", e)
+
     yield
     await engine.dispose()
 
