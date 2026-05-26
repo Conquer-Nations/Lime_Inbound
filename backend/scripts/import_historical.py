@@ -568,7 +568,10 @@ def main() -> int:
 
     print(f"\nConnecting to DB: {settings.database_url.split('@')[-1]}")
     # Use sync engine for the import — async session is overkill here.
+    # URL translation: asyncpg uses `ssl=require`, psycopg2 wants
+    # `sslmode=require`. Same conceptually, different param name.
     sync_url = settings.database_url.replace("+asyncpg", "")
+    sync_url = sync_url.replace("ssl=require", "sslmode=require")
     engine = create_engine(sync_url)
 
     with Session(engine) as session:
