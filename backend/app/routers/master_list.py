@@ -62,3 +62,19 @@ async def get_master_list(
     items = [MasterListRow(**dict(r._mapping)) for r in rows_result]
     total = (await session.execute(count_sql, params)).scalar_one()
     return MasterListResponse(items=items, total=int(total))
+
+
+@router.post("/master-list/sync-onedrive")
+async def trigger_master_sheet_sync(
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Manually fire the OneDrive Excel mirror. Same call that the
+    backend makes after every scan-finish. Useful for testing the
+    Logic App setup or backfilling the workbook with current data.
+    Returns whether the webhook accepted."""
+    from app.services import master_sheet_sync
+    ok = await master_sheet_sync.push_full_replace(session)
+    return {
+        "ok": ok,
+        "configured": master_sheet_sync.is_configured(),
+    }
