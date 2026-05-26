@@ -4,21 +4,22 @@ import { masterListApi } from '../api/client'
 import type { MasterListRow } from '../api/client'
 
 /**
- * Auto-computed mastersheet — mirrors `Lime-Inventory-Sep 2025.xlsx`
- * MASTER LIST layout. One row per inbound container reception, one row
- * per outbound container shipment, ordered by date (newest first).
+ * Master List — mirror of Tiana's Lime-Inventory-Sep 2025.xlsx.
  *
- * Container # cells link to the existing container detail page; TO #
- * cells link to the transfer-order detail page.
+ * One row per inbound container. Cols 1-13 cover inbound (invoice,
+ * commodity, container, WHPO, carrier, driver, drop/received/pickup,
+ * pallets/units/sqft). Cols 14-20 cover outbound (TO, ship date,
+ * ship to, pallets/units/sqft out). Cols 21-22 are status (scanned,
+ * LPN). Outbound cells stay blank until an outbound has actually
+ * drawn from this container.
  *
- * Read-only — the underlying SQL view computes everything from source-of-
- * truth tables. To change layout, edit migration d9e0f1a2b3c4.
+ * The OneDrive Excel mirror (Lime Master Inventory.xlsx) is kept in
+ * sync by the backend on every receipt-finish / outbound-finish.
  */
 export default function MasterList() {
   const [rows, setRows] = useState<MasterListRow[] | null>(null)
   const [total, setTotal] = useState(0)
   const [error, setError] = useState<string | null>(null)
-  const [kindFilter, setKindFilter] = useState<'all' | 'inbound' | 'outbound'>('all')
   const [scannedFilter, setScannedFilter] = useState<'all' | 'scanned' | 'pending'>('all')
   const [customer, setCustomer] = useState('')
 
@@ -44,9 +45,6 @@ export default function MasterList() {
 
   useEffect(reload, [scannedFilter, customer])
 
-  const visible =
-    rows?.filter((r) => (kindFilter === 'all' ? true : r.row_kind === kindFilter)) ?? null
-
   return (
     <div className="space-y-5">
       <header>
@@ -55,12 +53,16 @@ export default function MasterList() {
           Master List
         </div>
         <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-[#1B4676]">
-          Inbound + Outbound — auto
+          Inventory master sheet
         </h1>
-        <p className="mt-1.5 text-sm text-slate-600 max-w-2xl">
-          One row per inbound container reception, one row per outbound
-          container shipment. Auto-computed from receivings, scans and
-          shipments — the manual Lime-Inventory spreadsheet equivalent.
+        <p className="mt-1.5 text-sm text-slate-600 max-w-3xl">
+          One row per inbound container. Columns through{' '}
+          <strong>Total Sq Ft</strong> are inbound; <strong>TO No.</strong>{' '}
+          onward is outbound (blank until something has shipped from the
+          container). Same layout as the manual{' '}
+          <em>Lime-Inventory-Sep 2025.xlsx</em>; the OneDrive workbook
+          (Lime Master Inventory.xlsx) auto-mirrors this view on every
+          receipt and outbound finish.
         </p>
       </header>
 
@@ -74,7 +76,7 @@ export default function MasterList() {
         <div className="flex items-center justify-between gap-3 px-4 py-3 border-b border-slate-200 flex-wrap">
           <div>
             <h2 className="text-sm font-bold text-[#1B4676]">
-              {visible?.length ?? '…'} of {total} rows
+              {rows?.length ?? '…'} of {total} containers
             </h2>
           </div>
           <div className="flex items-center gap-2 flex-wrap">
@@ -83,16 +85,7 @@ export default function MasterList() {
               placeholder="Filter by brand (exact)…"
               value={customer}
               onChange={(e) => setCustomer(e.target.value)}
-              className="border border-slate-300 rounded-md px-2.5 py-1 text-xs w-40"
-            />
-            <PillGroup
-              value={kindFilter}
-              onChange={(v) => setKindFilter(v)}
-              options={[
-                { value: 'all', label: 'All' },
-                { value: 'inbound', label: 'Inbound' },
-                { value: 'outbound', label: 'Outbound' },
-              ]}
+              className="border border-slate-300 rounded-md px-2.5 py-1 text-xs w-44"
             />
             <PillGroup
               value={scannedFilter}
@@ -107,115 +100,151 @@ export default function MasterList() {
         </div>
 
         <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead className="bg-slate-50 text-[11px] font-semibold uppercase tracking-wider text-slate-500">
-              <tr>
-                <th className="text-left px-3 py-2">Kind</th>
-                <th className="text-left px-3 py-2">Container</th>
-                <th className="text-left px-3 py-2">Brand</th>
-                <th className="text-left px-3 py-2">WHPO / TO</th>
-                <th className="text-left px-3 py-2">Carrier / Driver</th>
-                <th className="text-left px-3 py-2">Date</th>
-                <th className="text-right px-3 py-2">Units</th>
-                <th className="text-right px-3 py-2">Pallets</th>
-                <th className="text-left px-3 py-2">Ship to</th>
-                <th className="text-left px-3 py-2">Status</th>
+          <table className="w-full text-xs">
+            <thead>
+              {/* Two-row header: section bands above, column names below.
+                  Matches the xlsx's visual grouping. */}
+              <tr className="bg-[#1B4676] text-white">
+                <th colSpan={13} className="text-left px-3 py-1.5 text-[10px] uppercase tracking-wider font-bold">
+                  Inbound
+                </th>
+                <th colSpan={7} className="text-left px-3 py-1.5 text-[10px] uppercase tracking-wider font-bold bg-[#0093D0]">
+                  Outbound
+                </th>
+                <th colSpan={2} className="text-left px-3 py-1.5 text-[10px] uppercase tracking-wider font-bold bg-slate-600">
+                  Status
+                </th>
+              </tr>
+              <tr className="bg-slate-50 text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+                <th className="text-left px-2 py-2">invoice</th>
+                <th className="text-left px-2 py-2">commodity</th>
+                <th className="text-left px-2 py-2">container</th>
+                <th className="text-left px-2 py-2">whpo</th>
+                <th className="text-left px-2 py-2">carrier</th>
+                <th className="text-left px-2 py-2">driver</th>
+                <th className="text-left px-2 py-2">drop</th>
+                <th className="text-left px-2 py-2">received</th>
+                <th className="text-left px-2 py-2">pickup</th>
+                <th className="text-right px-2 py-2">pallets</th>
+                <th className="text-right px-2 py-2">units</th>
+                <th className="text-right px-2 py-2">sqft</th>
+                <th className="text-right px-2 py-2">total sqft</th>
+                <th className="text-left px-2 py-2 border-l border-[#0093D0]/20">to no</th>
+                <th className="text-left px-2 py-2">ship date</th>
+                <th className="text-left px-2 py-2">ship to</th>
+                <th className="text-right px-2 py-2">pallets</th>
+                <th className="text-right px-2 py-2">units</th>
+                <th className="text-right px-2 py-2">sqft</th>
+                <th className="text-right px-2 py-2">total sqft</th>
+                <th className="text-left px-2 py-2 border-l border-slate-300">scanned</th>
+                <th className="text-left px-2 py-2">lpn</th>
               </tr>
             </thead>
             <tbody>
-              {visible?.length === 0 && (
+              {rows?.length === 0 && (
                 <tr>
-                  <td colSpan={10} className="text-center px-3 py-8 text-sm text-slate-400">
-                    No rows match these filters.
+                  <td colSpan={22} className="text-center px-3 py-8 text-sm text-slate-400">
+                    No containers match these filters.
                   </td>
                 </tr>
               )}
-              {visible?.map((r, i) => (
-                <Row key={`${r.row_kind}-${r.source_id}-${i}`} r={r} />
+              {rows?.map((r) => (
+                <Row key={r.container_id} r={r} />
               ))}
             </tbody>
           </table>
         </div>
       </section>
-
-      <p className="text-[11px] text-slate-400">
-        Tip: the underlying view is read-only. To add columns, edit the
-        Alembic view migration <code>d9e0f1a2b3c4</code>.
-      </p>
     </div>
   )
 }
 
 
 function Row({ r }: { r: MasterListRow }) {
-  const isInbound = r.row_kind === 'inbound'
-  const date = r.received_date ?? r.ship_date
-  const units = (isInbound ? r.units : r.outbound_units) ?? 0
-  const pallets = (isInbound ? r.pallets : r.outbound_pallets) ?? 0
-  const whpoOrTo = isInbound ? r.whpo_number : r.transfer_order_no
+  const cell = "px-2 py-2"
+  const dash = <span className="text-slate-300">—</span>
+  const fmtN = (v: number | null) => (v == null || v === 0 ? dash : v.toLocaleString())
+  const fmtF = (v: number | null) =>
+    v == null || v === 0 ? dash : Number.isInteger(v) ? v.toLocaleString() : v.toFixed(1)
+  const fmtT = (v: string | null) => (v ? v : dash)
+
   return (
     <tr className="border-t border-slate-100 hover:bg-[#0093D0]/5">
-      <td className="px-3 py-2">
-        <span
-          className={`text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded ${
-            isInbound
-              ? 'bg-emerald-100 text-emerald-800'
-              : 'bg-indigo-100 text-indigo-800'
-          }`}
+      {/* Inbound cells */}
+      <td className={`${cell} font-mono text-slate-700`}>{fmtT(r.invoice)}</td>
+      <td className={`${cell} text-slate-700`}>{fmtT(r.commodity)}</td>
+      <td className={`${cell} font-mono`}>
+        <Link
+          to={`/manager/containers/${encodeURIComponent(r.container_no)}`}
+          className="text-[#1B4676] hover:text-[#0093D0] hover:underline font-semibold"
         >
-          {r.row_kind}
-        </span>
+          {r.container_no}
+        </Link>
       </td>
-      <td className="px-3 py-2 font-mono">
-        {isInbound ? (
-          <Link
-            to={`/manager/containers/${encodeURIComponent(r.container_no)}`}
-            className="text-[#1B4676] hover:text-[#0093D0] hover:underline font-semibold"
-          >
-            {r.container_no}
-          </Link>
+      <td className={`${cell} font-mono`}>{fmtT(r.whpo_load_no)}</td>
+      <td className={`${cell} text-slate-700`}>{fmtT(r.carrier_broker)}</td>
+      <td className={`${cell} text-slate-700`}>{fmtT(r.driver_name)}</td>
+      <td className={`${cell} text-slate-600 whitespace-nowrap`}>
+        {fmtT(r.drop_container)}
+      </td>
+      <td className={`${cell} text-slate-600 whitespace-nowrap`}>
+        {fmtT(r.received_date)}
+      </td>
+      <td className={`${cell} text-slate-600 whitespace-nowrap`}>
+        {fmtT(r.pickup_container)}
+      </td>
+      <td className={`${cell} text-right font-mono tabular-nums`}>
+        {fmtN(r.pallets)}
+      </td>
+      <td className={`${cell} text-right font-mono tabular-nums`}>
+        {fmtN(r.units)}
+      </td>
+      <td className={`${cell} text-right font-mono tabular-nums`}>
+        {fmtF(r.sqft)}
+      </td>
+      <td className={`${cell} text-right font-mono tabular-nums`}>
+        {fmtF(r.total_sqft)}
+      </td>
+
+      {/* Outbound cells */}
+      <td className={`${cell} font-mono border-l border-[#0093D0]/20`}>
+        {r.to_no ? (
+          // Strip commas + slashes from links since to_no may aggregate
+          // multiple comma-separated TOs.
+          r.to_no.split(',').map((t, i) => (
+            <span key={i}>
+              {i > 0 && <span className="text-slate-400">, </span>}
+              <Link
+                to={`/manager/outbound-orders/${encodeURIComponent(t.trim())}`}
+                className="text-[#1B4676] hover:text-[#0093D0] hover:underline"
+              >
+                {t.trim()}
+              </Link>
+            </span>
+          ))
         ) : (
-          <span className="text-slate-700">{r.container_no}</span>
+          dash
         )}
       </td>
-      <td className="px-3 py-2 text-slate-700">
-        {r.customer_name || <span className="text-slate-300">—</span>}
+      <td className={`${cell} text-slate-600 whitespace-nowrap`}>{fmtT(r.ship_date)}</td>
+      <td className={`${cell} text-slate-700 max-w-[160px] truncate`}>
+        {fmtT(r.ship_to)}
       </td>
-      <td className="px-3 py-2 font-mono text-xs">
-        {whpoOrTo ? (
-          isInbound ? (
-            <span className="text-slate-700">{whpoOrTo}</span>
-          ) : (
-            <Link
-              to={`/manager/outbound-orders/${encodeURIComponent(whpoOrTo)}`}
-              className="text-[#1B4676] hover:text-[#0093D0] hover:underline"
-            >
-              {whpoOrTo}
-            </Link>
-          )
-        ) : (
-          <span className="text-slate-300">—</span>
-        )}
+      <td className={`${cell} text-right font-mono tabular-nums`}>
+        {fmtN(r.pallets_out)}
       </td>
-      <td className="px-3 py-2 text-xs text-slate-700">
-        {r.carrier_or_broker || <span className="text-slate-300">—</span>}
-        {r.driver_name && (
-          <div className="text-[10px] text-slate-400">{r.driver_name}</div>
-        )}
+      <td className={`${cell} text-right font-mono tabular-nums`}>
+        {fmtN(r.units_out)}
       </td>
-      <td className="px-3 py-2 text-xs text-slate-600 whitespace-nowrap">
-        {date ?? <span className="text-slate-300">—</span>}
+      <td className={`${cell} text-right font-mono tabular-nums`}>
+        {fmtF(r.sqft_out)}
       </td>
-      <td className="px-3 py-2 text-right font-mono text-sm tabular-nums">
-        {units || <span className="text-slate-300">—</span>}
+      <td className={`${cell} text-right font-mono tabular-nums`}>
+        {fmtF(r.total_sqft_out)}
       </td>
-      <td className="px-3 py-2 text-right font-mono text-sm tabular-nums">
-        {pallets || <span className="text-slate-300">—</span>}
-      </td>
-      <td className="px-3 py-2 text-xs text-slate-700 max-w-[180px] truncate">
-        {!isInbound && r.ship_to ? r.ship_to : <span className="text-slate-300">—</span>}
-      </td>
-      <td className="px-3 py-2">
+
+      {/* Status */}
+      <td className={`${cell} border-l border-slate-300`}>
         <span
           className={`text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded ${
             r.scanned
@@ -225,13 +254,12 @@ function Row({ r }: { r: MasterListRow }) {
         >
           {r.scanned ? 'scanned' : 'pending'}
         </span>
-        {r.status && (
-          <div className="text-[10px] text-slate-400 mt-0.5">{r.status}</div>
-        )}
       </td>
+      <td className={`${cell} font-mono text-[#1B4676]`}>{fmtT(r.lpn)}</td>
     </tr>
   )
 }
+
 
 function PillGroup<T extends string>({
   value,

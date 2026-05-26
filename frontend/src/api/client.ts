@@ -1381,26 +1381,40 @@ export const inventoryReportsApi = {
 
 // ─── Master list (auto-computed inbound + outbound) ──────────────────────
 
+/** Mirrors `vw_master_list` (v2 — one row per inbound container).
+ *  Outbound fields are null until shipment activity touches the
+ *  container. Column order matches Tiana's Lime-Inventory-Sep 2025.xlsx. */
 export interface MasterListRow {
-  row_kind: 'inbound' | 'outbound'
-  source_id: number
+  container_id: number
   container_no: string
   customer_name: string | null
-  invoice_no: string | null
-  whpo_number: string | null
-  expected_arrival_date: string | null
-  received_date: string | null
-  units: number | null
-  pallets: number | null
-  carrier_or_broker: string | null
+
+  // Inbound (cols 1-13 in the xlsx)
+  invoice: string | null
+  commodity: string | null
+  whpo_load_no: string | null
+  carrier_broker: string | null
   driver_name: string | null
-  transfer_order_no: string | null
+  drop_container: string | null
+  received_date: string | null
+  pickup_container: string | null
+  pallets: number
+  units: number
+  sqft: number | null
+  total_sqft: number | null
+
+  // Outbound (cols 14-20)
+  to_no: string | null
   ship_date: string | null
   ship_to: string | null
-  outbound_units: number | null
-  outbound_pallets: number | null
+  pallets_out: number | null
+  units_out: number | null
+  sqft_out: number | null
+  total_sqft_out: number | null
+
+  // Status (cols 21-22)
   scanned: boolean
-  status: string | null
+  lpn: string | null
 }
 
 export interface MasterListResponse {

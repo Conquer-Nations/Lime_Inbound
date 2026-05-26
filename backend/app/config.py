@@ -64,6 +64,15 @@ class Settings(BaseSettings):
     # onedrive_vendor_files_url (which expects the legacy layout, so
     # files will land in the wrong place — set it!).
     onedrive_container_files_url: str = ""
+
+    # Master Inventory sheet mirror (full replace). Backend fires this
+    # whenever inbound or outbound activity changes the data so the
+    # OneDrive workbook always reflects current state. Office Script in
+    # the Logic App clears MasterTable + bulk-appends from
+    # triggerBody().rows. Unset → silent no-op (Postgres view stays
+    # source of truth either way).
+    onedrive_master_sheet_webhook_url: str = ""
+    onedrive_master_sheet_ops_url: str = ""
     # Root folder name inside OneDrive — change here if you rename the tree.
     onedrive_vendor_files_root: str = "Vendor Files"
 

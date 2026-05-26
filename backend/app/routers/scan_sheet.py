@@ -562,6 +562,15 @@ async def _finish_outbound_sheet(
     except Exception as e:
         logger.warning("outbound scan-sheet OneDrive push errored on finish: %s", e)
 
+    # Mirror the master sheet — outbound scans on this container changed
+    # units_out / pallets_out / to_no for the rows in the master view
+    # that reference the inbound containers whose serials shipped here.
+    try:
+        from app.services import master_sheet_sync
+        await master_sheet_sync.push_full_replace(session)
+    except Exception as e:
+        logger.warning("master sheet sync errored on outbound finish: %s", e)
+
     return FinishSheetResponse(
         receipt_id=receipt.id,
         container_no=oc.container_no,
@@ -947,6 +956,15 @@ async def finish_sheet(
         await scan_sheet_onedrive.push_scan_sheet(detail)
     except Exception as e:
         logger.warning("scan-sheet OneDrive push errored on finish: %s", e)
+
+    # Mirror the master sheet (inbound + outbound view) to OneDrive.
+    # Inbound finish changes units_in / pallets / scanned for this
+    # container, which is one row in the master view.
+    try:
+        from app.services import master_sheet_sync
+        await master_sheet_sync.push_full_replace(session)
+    except Exception as e:
+        logger.warning("master sheet sync errored on inbound finish: %s", e)
 
     return FinishSheetResponse(
         receipt_id=receipt.id,

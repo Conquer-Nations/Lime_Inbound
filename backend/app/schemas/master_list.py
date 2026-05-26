@@ -1,4 +1,8 @@
-"""Schemas for the auto-computed inbound + outbound mastersheet."""
+"""Schemas for the master-list endpoint and OneDrive Excel mirror.
+
+Shape mirrors `Lime-Inventory-Sep 2025.xlsx`: one row per inbound
+container with the outbound columns joined in. Outbound fields are
+NULL until something has shipped from the container."""
 from __future__ import annotations
 
 from datetime import date
@@ -7,38 +11,41 @@ from pydantic import BaseModel
 
 
 class MasterListRow(BaseModel):
-    """Mirrors `vw_master_list`. One row per inbound container reception
-    OR per outbound container shipment. Container # links the two halves
-    in the UI (no FK enforcement — outbound containers can be truck
-    plates not present on the inbound side)."""
+    """Mirrors `vw_master_list` (24 columns). 22 of them match the
+    xlsx column order verbatim; the leading container_id +
+    customer_name are application-side helpers (for drilldown links +
+    brand filtering)."""
 
-    row_kind: str  # 'inbound' | 'outbound'
-    source_id: int
+    container_id: int
     container_no: str
     customer_name: str | None = None
 
-    # Inbound-only fields
-    invoice_no: str | None = None
-    whpo_number: str | None = None
-    expected_arrival_date: date | None = None
-    received_date: date | None = None
-    units: int | None = None
-    pallets: int | None = None
-
-    # Both
-    carrier_or_broker: str | None = None
+    # Inbound (cols 1-13 in the xlsx)
+    invoice: str | None = None
+    commodity: str | None = None
+    whpo_load_no: str | None = None
+    carrier_broker: str | None = None
     driver_name: str | None = None
+    drop_container: date | None = None
+    received_date: date | None = None
+    pickup_container: date | None = None
+    pallets: int = 0
+    units: int = 0
+    sqft: float | None = None
+    total_sqft: float | None = None
 
-    # Outbound-only fields
-    transfer_order_no: str | None = None
+    # Outbound (cols 14-20 in the xlsx)
+    to_no: str | None = None
     ship_date: date | None = None
     ship_to: str | None = None
-    outbound_units: int | None = None
-    outbound_pallets: int | None = None
+    pallets_out: int | None = None
+    units_out: int | None = None
+    sqft_out: float | None = None
+    total_sqft_out: float | None = None
 
-    # Status pill
+    # Status (cols 21-22)
     scanned: bool = False
-    status: str | None = None
+    lpn: str | None = None
 
 
 class MasterListResponse(BaseModel):
