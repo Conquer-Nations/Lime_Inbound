@@ -4,6 +4,7 @@ import { useAuth } from '../auth/AuthContext'
 import { api } from '../api/client'
 import AccountAdmin from '../components/AccountAdmin'
 import BillingInvoices from '../components/BillingInvoices'
+import BillingOrderHistory from '../components/BillingOrderHistory'
 import BillingRateCard from '../components/BillingRateCard'
 import DashboardTab from '../components/DashboardTab'
 import InboundView from '../components/InboundView'
@@ -34,6 +35,7 @@ type Tab =
   | 'master_list'
   | 'warehouse_inventory'
   | 'invoices'
+  | 'order_history'
   | 'rate_card'
 
 // ERP module structure — mirrors how Dynamics / SAP / Odoo group screens.
@@ -91,6 +93,7 @@ const NAV_CATEGORIES: NavCategory[] = [
     icon: 'invoicing',
     items: [
       { key: 'invoices', label: 'Invoices' },
+      { key: 'order_history', label: 'Order History' },
       { key: 'rate_card', label: 'Rate Card' },
     ],
   },
@@ -178,6 +181,7 @@ export default function ManagerPage() {
         {tab === 'master_list' && <MasterList />}
         {tab === 'warehouse_inventory' && <WarehouseInventory />}
         {tab === 'invoices' && <BillingInvoices />}
+        {tab === 'order_history' && <BillingOrderHistory />}
         {tab === 'rate_card' && <BillingRateCard />}
         {tab === 'exceptions' && (
           <ExceptionsTab
