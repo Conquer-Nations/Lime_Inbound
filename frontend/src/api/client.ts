@@ -608,6 +608,9 @@ export const api = {
       body: JSON.stringify(payload),
     }),
 
+  deleteCustomer: (id: number) =>
+    requestVoid(`/manager/customers/${id}`, { method: 'DELETE' }),
+
   listSkus: (params?: { customer_id?: number; q?: string }) => {
     const qs = new URLSearchParams()
     if (params?.customer_id != null) qs.set('customer_id', String(params.customer_id))

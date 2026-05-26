@@ -80,6 +80,22 @@ export default function AccountAdmin() {
     }
   }
 
+  async function handleBrandDelete(brand: CustomerRead) {
+    if (
+      !confirm(
+        `Delete brand "${brand.name}"?\nFails if any WHPOs, Transfer Orders, or SKUs still reference it.`,
+      )
+    )
+      return
+    try {
+      await api.deleteCustomer(brand.id)
+      showToast(`Deleted ${brand.name}`)
+      reload()
+    } catch (e: unknown) {
+      setError(String((e as { detail?: string })?.detail ?? e))
+    }
+  }
+
   return (
     <div className="space-y-5">
       {error && (
@@ -251,7 +267,7 @@ export default function AccountAdmin() {
                     <td className="px-3 py-2 font-mono text-xs text-slate-600">
                       {c.contact_email ?? '—'}
                     </td>
-                    <td className="px-3 py-2 text-right">
+                    <td className="px-3 py-2 text-right space-x-3">
                       <button
                         type="button"
                         onClick={() => {
@@ -261,6 +277,13 @@ export default function AccountAdmin() {
                         className="text-xs font-bold text-[#1B4676] hover:text-[#0093D0]"
                       >
                         Edit
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleBrandDelete(c)}
+                        className="text-xs font-bold text-rose-600 hover:text-rose-800"
+                      >
+                        Delete
                       </button>
                     </td>
                   </tr>

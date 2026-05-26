@@ -1747,6 +1747,64 @@ async def update_customer(
     return _customer_to_read(c, acct.name if acct else None)
 
 
+@router.delete("/customers/{customer_id}", status_code=204)
+async def delete_customer(
+    customer_id: int,
+    session: AsyncSession = Depends(get_session),
+):
+    """Delete a brand. Refuses (409) if anything still references the
+    brand — WHPOs, Transfer Orders, or SKUs. Manager has to clean those
+    up first OR re-assign them to a different brand. Account-level rows
+    (Account, Floor, Lot) are not affected."""
+    from sqlalchemy import delete as sql_delete
+    from app.models import OutboundOrder
+
+    c = await session.get(Customer, customer_id)
+    if c is None:
+        raise HTTPException(404, f"Brand {customer_id} not found")
+
+    # Block delete when dependents exist. Surfaces a clear message so the
+    # manager can fix the data instead of breaking joins.
+    whpo_count = await session.scalar(
+        select(func.count(WHPO.id)).where(WHPO.customer_id == customer_id)
+    ) or 0
+    to_count = await session.scalar(
+        select(func.count(OutboundOrder.id)).where(OutboundOrder.customer_id == customer_id)
+    ) or 0
+    sku_count = await session.scalar(
+        select(func.count(SKU.id)).where(SKU.customer_id == customer_id)
+    ) or 0
+
+    if whpo_count + to_count + sku_count > 0:
+        parts = []
+        if whpo_count:
+            parts.append(f"{whpo_count} WHPO{'s' if whpo_count > 1 else ''}")
+        if to_count:
+            parts.append(f"{to_count} Transfer Order{'s' if to_count > 1 else ''}")
+        if sku_count:
+            parts.append(f"{sku_count} SKU{'s' if sku_count > 1 else ''}")
+        raise HTTPException(
+            409,
+            detail=(
+                f"Can't delete '{c.name}' — still referenced by "
+                f"{', '.join(parts)}. Reassign or delete those first."
+            ),
+        )
+
+    name = c.name
+    await session.execute(sql_delete(Customer).where(Customer.id == customer_id))
+    session.add(
+        ActivityLog(
+            actor="manager",
+            kind="customer_deleted",
+            ref_type="customer",
+            ref_id=customer_id,
+            message=f"Brand '{name}' deleted",
+        )
+    )
+    await session.commit()
+
+
 @router.get("/skus", response_model=list[SKURead])
 async def list_skus(
     customer_id: int | None = None,
