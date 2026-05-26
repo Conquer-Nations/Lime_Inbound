@@ -1424,6 +1424,71 @@ function DirectionChooser({
             </span>
           </div>
         </button>
+
+        {/* Invoices entry — sibling to Container Inventory. Vendors land
+            on /vendor/invoices to see issued/paid invoices and download
+            PDFs. Read-only — generation happens on the manager side. */}
+        <a
+          href="/vendor/invoices"
+          className="group mt-4 w-full text-left rounded-2xl border border-slate-200 bg-white hover:border-[#0093D0]/50 hover:shadow-[0_24px_60px_-20px_rgba(15,23,42,0.18)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#0093D0] focus-visible:ring-offset-2 transition-all duration-200 overflow-hidden flex"
+          style={{
+            boxShadow:
+              '0 1px 2px 0 rgba(15,23,42,0.04), 0 8px 24px -8px rgba(15,23,42,0.08)',
+          }}
+        >
+          <div className="p-5 sm:p-6 flex items-center gap-5 w-full">
+            <div
+              className="w-10 h-10 rounded-md bg-[#0093D0]/10 flex items-center justify-center text-[#0093D0] shrink-0"
+              aria-hidden
+            >
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth={2}
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                className="w-5 h-5"
+              >
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                <polyline points="14 2 14 8 20 8" />
+                <line x1="9" x2="15" y1="13" y2="13" />
+                <line x1="9" x2="15" y1="17" y2="17" />
+              </svg>
+            </div>
+            <div className="leading-tight flex-1">
+              <div className="text-[10.5px] uppercase tracking-[0.18em] font-bold text-[#1B4676]">
+                Invoices
+              </div>
+              <div className="text-sm font-semibold text-[#1B4676]">
+                Past invoices &amp; PDF downloads
+              </div>
+              <div className="text-xs text-slate-500 mt-0.5">
+                One per inbound WHPO and one per outbound Transfer Order.
+              </div>
+            </div>
+            <span
+              className="hidden sm:inline-flex items-center gap-1 text-sm font-bold text-[#0093D0] group-hover:translate-x-1 transition-transform"
+              aria-hidden
+            >
+              <span>Open</span>
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth={2}
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                className="w-4 h-4"
+              >
+                <path d="M5 12h14" />
+                <path d="m12 5 7 7-7 7" />
+              </svg>
+            </span>
+          </div>
+        </a>
       </div>
     </VendorPortalShell>
   )
