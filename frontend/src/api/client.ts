@@ -1560,4 +1560,237 @@ export const tallyApi = {
     request<VendorTallyView>(`/vendor/container/${encodeURIComponent(container_no)}/tally`),
 }
 
+// ─── Billing (invoices + rate card) ───────────────────────────────────────
+
+export type InvoiceStatus = 'draft' | 'ready' | 'sent' | 'paid' | 'void'
+
+export interface InvoiceLineRead {
+  id: number
+  code: string
+  category: string
+  description: string
+  unit: string
+  quantity: number
+  unit_rate: number
+  line_total: number
+  taxable: boolean
+  auto_applied: boolean
+  override_reason: string | null
+  source_container_id: number | null
+  source_outbound_container_id: number | null
+}
+
+export interface InvoiceListItem {
+  id: number
+  invoice_number: string
+  status: InvoiceStatus
+  customer_id: number
+  customer_name: string | null
+  whpo_number: string | null
+  transfer_order_no: string | null
+  invoice_date: string
+  due_date: string | null
+  total: number
+  generated_at: string
+  sent_at: string | null
+  paid_at: string | null
+}
+
+export interface OperationalChargeItem {
+  label: string
+  monthly: number
+}
+
+export interface OperationalChargeBreakdown {
+  tier_label: string
+  items: OperationalChargeItem[]
+  total: number
+}
+
+export interface InvoiceRead {
+  id: number
+  invoice_number: string
+  status: InvoiceStatus
+  customer_id: number
+  customer_name: string | null
+  whpo_id: number | null
+  whpo_number: string | null
+  outbound_order_id: number | null
+  transfer_order_no: string | null
+  invoice_date: string
+  due_date: string | null
+  terms: string
+  subtotal: number
+  fuel_surcharge: number
+  advancing: number
+  adjustment: number
+  adjustment_note: string | null
+  operational_charge: number
+  operational_charge_breakdown: OperationalChargeBreakdown | null
+  tax: number
+  total: number
+  notes: string | null
+  generated_at: string
+  sent_at: string | null
+  paid_at: string | null
+  payment_method: string | null
+  lines: InvoiceLineRead[]
+}
+
+export interface InvoicePreview {
+  scope: 'inbound' | 'outbound'
+  customer_id: number
+  customer_name: string | null
+  whpo_number: string | null
+  transfer_order_no: string | null
+  proposed_lines: InvoiceLineRead[]
+  operational_charge: number
+  operational_charge_breakdown: OperationalChargeBreakdown | null
+  subtotal: number
+  fuel_surcharge: number
+  advancing: number
+  tax: number
+  total: number
+}
+
+export interface RateCardRow {
+  code: string
+  category: string
+  description: string
+  unit: string
+  rate: number | null
+  taxable: boolean
+  is_minimum: boolean
+  is_advance: boolean
+  note: string | null
+  max_per_request: number | null
+  min_advance: number | null
+}
+
+export const billingApi = {
+  // Rate card (manager)
+  rateCard: () => request<RateCardRow[]>('/manager/rate-card'),
+
+  // Invoices list (manager)
+  listInvoices: (params: {
+    status?: InvoiceStatus
+    customer_id?: number
+    limit?: number
+    offset?: number
+  } = {}) => {
+    const q = new URLSearchParams()
+    if (params.status) q.set('status', params.status)
+    if (params.customer_id != null) q.set('customer_id', String(params.customer_id))
+    if (params.limit != null) q.set('limit', String(params.limit))
+    if (params.offset != null) q.set('offset', String(params.offset))
+    const qs = q.toString()
+    return request<InvoiceListItem[]>(`/manager/invoices${qs ? `?${qs}` : ''}`)
+  },
+
+  // Invoice detail (manager)
+  getInvoice: (id: number) => request<InvoiceRead>(`/manager/invoices/${id}`),
+
+  // Preview proposed inbound charges for a WHPO
+  previewInbound: (whpo_number: string) =>
+    request<InvoicePreview>(
+      `/manager/whpos/${encodeURIComponent(whpo_number)}/invoice-preview`,
+      { method: 'POST' },
+    ),
+
+  // Generate (commit) inbound invoice for a WHPO
+  generateInbound: (whpo_number: string) =>
+    request<InvoiceRead>(
+      `/manager/whpos/${encodeURIComponent(whpo_number)}/invoice`,
+      { method: 'POST' },
+    ),
+
+  // Preview proposed outbound charges for a TO
+  previewOutbound: (transfer_order_no: string) =>
+    request<InvoicePreview>(
+      `/manager/outbound-orders/${encodeURIComponent(transfer_order_no)}/invoice-preview`,
+      { method: 'POST' },
+    ),
+
+  // Generate (commit) outbound invoice for a TO
+  generateOutbound: (transfer_order_no: string) =>
+    request<InvoiceRead>(
+      `/manager/outbound-orders/${encodeURIComponent(transfer_order_no)}/invoice`,
+      { method: 'POST' },
+    ),
+
+  // Add a manual line to a draft/ready invoice
+  addLine: (
+    invoice_id: number,
+    payload: {
+      code: string
+      quantity: number
+      unit_rate_override?: number | null
+      override_reason?: string | null
+    },
+  ) =>
+    request<InvoiceRead>(`/manager/invoices/${invoice_id}/lines`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+
+  // Remove a line from a draft/ready invoice
+  removeLine: (invoice_id: number, line_id: number) =>
+    request<InvoiceRead>(`/manager/invoices/${invoice_id}/lines/${line_id}`, {
+      method: 'DELETE',
+    }),
+
+  markSent: (
+    invoice_id: number,
+    payload?: { payment_method?: string | null; notes?: string | null },
+  ) =>
+    request<InvoiceRead>(`/manager/invoices/${invoice_id}/send`, {
+      method: 'POST',
+      body: JSON.stringify(payload ?? {}),
+    }),
+
+  markPaid: (
+    invoice_id: number,
+    payload?: { payment_method?: string | null; notes?: string | null },
+  ) =>
+    request<InvoiceRead>(`/manager/invoices/${invoice_id}/paid`, {
+      method: 'POST',
+      body: JSON.stringify(payload ?? {}),
+    }),
+
+  markVoid: (invoice_id: number, payload?: { notes?: string | null }) =>
+    request<InvoiceRead>(`/manager/invoices/${invoice_id}/void`, {
+      method: 'POST',
+      body: JSON.stringify(payload ?? {}),
+    }),
+
+  /** Absolute URL of the invoice PDF (customer-facing by default).
+   *  Opens inline in the browser. Service-log variant is for the
+   *  manager AP backup; not exposed to vendors. */
+  pdfUrl: (invoice_id: number, type: 'customer' | 'servicelog' = 'customer'): string =>
+    `${(import.meta.env.VITE_API_BASE as string | undefined) ?? '/api'}/manager/invoices/${invoice_id}/pdf?type=${type}`,
+
+  // Vendor surface — scoped server-side via JWT
+  vendorListInvoices: () => request<InvoiceListItem[]>('/vendor/invoices'),
+
+  /** Vendor PDF URL — only works for sent/paid invoices in their scope.
+   *  Browser uses the Bearer token in headers? No — vendor PDFs require
+   *  the Authorization header, so vendors can't use a direct URL. Use
+   *  fetchVendorPdfBlob() instead to download via fetch + blob. */
+  vendorFetchPdf: async (invoice_id: number): Promise<Blob> => {
+    const token = readVendorToken()
+    const headers: Record<string, string> = {}
+    if (token) headers.Authorization = `Bearer ${token}`
+    const res = await fetch(`${BASE}/vendor/invoices/${invoice_id}/pdf`, { headers })
+    if (!res.ok) {
+      let detail = res.statusText
+      try {
+        const body = await res.json()
+        detail = typeof body.detail === 'string' ? body.detail : JSON.stringify(body.detail)
+      } catch { /* ignore */ }
+      throw new ApiError(res.status, detail)
+    }
+    return await res.blob()
+  },
+}
+
 export { ApiError }

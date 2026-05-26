@@ -3,6 +3,8 @@ import { Link } from 'react-router-dom'
 import { useAuth } from '../auth/AuthContext'
 import { api } from '../api/client'
 import AccountAdmin from '../components/AccountAdmin'
+import BillingInvoices from '../components/BillingInvoices'
+import BillingRateCard from '../components/BillingRateCard'
 import DashboardTab from '../components/DashboardTab'
 import InboundView from '../components/InboundView'
 import ManagerSidebar from '../components/ManagerSidebar'
@@ -31,6 +33,8 @@ type Tab =
   | 'tally'
   | 'master_list'
   | 'warehouse_inventory'
+  | 'invoices'
+  | 'rate_card'
 
 // ERP module structure — mirrors how Dynamics / SAP / Odoo group screens.
 // Each category collapses in the sidebar. Add new top-level groups
@@ -79,6 +83,15 @@ const NAV_CATEGORIES: NavCategory[] = [
     items: [
       { key: 'warehouse_inventory', label: 'Inventory & Aging' },
       { key: 'lots', label: 'Floor Map' },
+    ],
+  },
+  {
+    key: 'invoicing',
+    label: 'Invoicing',
+    icon: 'invoicing',
+    items: [
+      { key: 'invoices', label: 'Invoices' },
+      { key: 'rate_card', label: 'Rate Card' },
     ],
   },
   {
@@ -164,6 +177,8 @@ export default function ManagerPage() {
         {tab === 'tally' && <TallySheetsAdmin />}
         {tab === 'master_list' && <MasterList />}
         {tab === 'warehouse_inventory' && <WarehouseInventory />}
+        {tab === 'invoices' && <BillingInvoices />}
+        {tab === 'rate_card' && <BillingRateCard />}
         {tab === 'exceptions' && (
           <ExceptionsTab
             data={exceptions}
