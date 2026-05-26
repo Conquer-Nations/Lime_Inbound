@@ -1345,6 +1345,7 @@ export interface TallySheetRead {
   pod_filename: string
   pod_content_type: string
   pod_file_size: number
+  has_pdf?: boolean
   ocr_from_location: string | null
   ocr_to_location: string | null
   ocr_engine: string | null
@@ -1440,6 +1441,12 @@ export const tallyApi = {
       `/manager/tally-sheets/${id}?deleted_by=${encodeURIComponent(deletedBy)}`,
       { method: 'DELETE' }
     ),
+
+  /** Absolute URL of the generated tally-sheet PDF. Browser opens it
+   *  inline (or downloads, depending on browser settings). The endpoint
+   *  regenerates the PDF on the fly when the cached file is missing. */
+  pdfUrl: (id: number): string =>
+    `${(import.meta.env.VITE_API_BASE as string | undefined) ?? '/api'}/manager/tally-sheets/${id}/pdf`,
 
   /** Vendor-scoped read — only their containers; no billing fields. */
   vendorView: (container_no: string) =>

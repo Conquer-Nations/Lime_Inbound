@@ -26,6 +26,9 @@ class TallySheetRead(BaseModel):
     pod_filename: str
     pod_content_type: str
     pod_file_size: int
+    # True when a generated PDF is on disk; frontend uses this to show
+    # the Download button.
+    has_pdf: bool = False
 
     # OCR results
     ocr_from_location: str | None = None

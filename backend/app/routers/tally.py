@@ -20,6 +20,7 @@ from datetime import datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
+from fastapi.responses import FileResponse, Response
 from sqlalchemy import desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -32,7 +33,7 @@ from app.schemas.tally import (
     TallySheetUpdateRequest,
     VendorTallyView,
 )
-from app.services import tally_sheet_sync, vendor_uploads
+from app.services import tally_pdf, tally_sheet_sync, vendor_uploads
 from app.services.ocr import OCRUnavailableError
 from app.services.pod_ocr import run_pod_ocr
 from app.services.vendor_auth_service import current_vendor_required
@@ -61,6 +62,7 @@ def _to_read(t: TallySheet, container_no: str) -> TallySheetRead:
         pod_filename=t.pod_filename,
         pod_content_type=t.pod_content_type,
         pod_file_size=t.pod_file_size,
+        has_pdf=bool(t.tally_pdf_storage_path),
         ocr_from_location=t.ocr_from_location,
         ocr_to_location=t.ocr_to_location,
         ocr_engine=t.ocr_engine,
@@ -192,6 +194,20 @@ async def upload_pod(
     await session.commit()
     await session.refresh(tally)
 
+    # Generate the printable tally-sheet PDF and stash it next to the
+    # POD file. Best-effort: a PDF generation failure shouldn't block
+    # the manager — they can regenerate via PATCH.
+    try:
+        pdf_bytes = tally_pdf.generate_tally_pdf(tally, container)
+        rel_pdf, _abs_pdf = vendor_uploads.save_bytes(
+            container.id, "tally_pdf", pdf_bytes, "tally.pdf", "application/pdf"
+        )
+        tally.tally_pdf_storage_path = rel_pdf
+        await session.commit()
+        await session.refresh(tally)
+    except Exception as e:
+        logger.warning("tally PDF generation failed: %s", e)
+
     # Sync to OneDrive Excel (best-effort — Postgres is source of truth).
     # The Logic App + Office Script append a row to TallyTable in the
     # `Lime Tally Sheets.xlsx` workbook for billing. Skipped silently
@@ -258,6 +274,67 @@ async def get_tally_sheet(
     return _to_read(item[0], item[1])
 
 
+@router.get("/tally-sheets/{tally_id}/pdf")
+async def get_tally_pdf(
+    tally_id: int,
+    session: AsyncSession = Depends(get_session),
+):
+    """Return the generated tally-sheet PDF. Regenerates on the fly if
+    the cached file is missing (e.g. older row from before this feature)."""
+    row = await session.execute(
+        select(TallySheet).where(TallySheet.id == tally_id)
+    )
+    tally = row.scalar_one_or_none()
+    if tally is None:
+        raise HTTPException(404, f"Tally {tally_id} not found")
+
+    # If we already have the PDF on disk, stream it directly.
+    if tally.tally_pdf_storage_path:
+        try:
+            abs_path = vendor_uploads.absolute_path(tally.tally_pdf_storage_path)
+            if abs_path.is_file():
+                return FileResponse(
+                    str(abs_path),
+                    media_type="application/pdf",
+                    filename=f"tally-{tally.matched_container_no}-{tally.id}.pdf",
+                )
+        except Exception as e:
+            logger.warning("tally PDF read failed (%s) — regenerating", e)
+
+    # No cached PDF — generate on the fly. Eager-load container for the header.
+    container = await session.scalar(
+        select(Container)
+        .where(Container.id == tally.container_id)
+        .options(selectinload(Container.do).selectinload(DO.whpo).selectinload(WHPO.customer))
+    )
+    try:
+        pdf_bytes = tally_pdf.generate_tally_pdf(tally, container)
+    except Exception as e:
+        logger.exception("tally PDF on-the-fly generation failed")
+        raise HTTPException(500, f"PDF generation failed: {e}")
+
+    # Persist for next time.
+    try:
+        if container is not None:
+            rel_pdf, _ = vendor_uploads.save_bytes(
+                container.id, "tally_pdf", pdf_bytes, "tally.pdf", "application/pdf"
+            )
+            tally.tally_pdf_storage_path = rel_pdf
+            await session.commit()
+    except Exception as e:
+        logger.warning("tally PDF persist after on-the-fly gen failed: %s", e)
+
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": (
+                f'inline; filename="tally-{tally.matched_container_no}-{tally.id}.pdf"'
+            )
+        },
+    )
+
+
 @router.delete("/tally-sheets/{tally_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_tally_sheet(
     tally_id: int,
@@ -278,21 +355,22 @@ async def delete_tally_sheet(
         raise HTTPException(404, f"Tally {tally_id} not found")
 
     pod_storage_path = tally.pod_storage_path
+    tally_pdf_path = tally.tally_pdf_storage_path
     container_no = tally.matched_container_no
 
     await session.delete(tally)
     await session.commit()
 
-    # Best-effort cleanup of the file + Excel mirror. If either fails we
-    # still consider the DB delete authoritative — log + swallow.
-    if pod_storage_path:
+    # Best-effort cleanup of the files + Excel mirror. If anything fails
+    # we still consider the DB delete authoritative — log + swallow.
+    for path in (pod_storage_path, tally_pdf_path):
+        if not path:
+            continue
         try:
-            vendor_uploads.delete_storage_file(pod_storage_path)
+            vendor_uploads.delete_storage_file(path)
         except Exception as e:
             logger.warning(
-                "tally delete: POD file %s removal failed: %s",
-                pod_storage_path,
-                e,
+                "tally delete: file %s removal failed: %s", path, e
             )
 
     try:
@@ -336,6 +414,33 @@ async def update_tally_sheet(
         setattr(tally, k, v)
     await session.commit()
     await session.refresh(tally)
+
+    # Regenerate the tally PDF (corrections must be reflected). Eager-
+    # load the container with WHPO + customer so the PDF header has the
+    # right WHPO/DO/customer text.
+    try:
+        container = await session.scalar(
+            select(Container)
+            .where(Container.id == tally.container_id)
+            .options(selectinload(Container.do).selectinload(DO.whpo).selectinload(WHPO.customer))
+        )
+        if container is not None:
+            pdf_bytes = tally_pdf.generate_tally_pdf(tally, container)
+            # Reuse the same filename so the old PDF is overwritten.
+            rel_pdf, _abs_pdf = vendor_uploads.save_bytes(
+                container.id, "tally_pdf", pdf_bytes, "tally.pdf", "application/pdf"
+            )
+            # Clean up stale prior PDF file if its path differs (uuid suffix).
+            if tally.tally_pdf_storage_path and tally.tally_pdf_storage_path != rel_pdf:
+                try:
+                    vendor_uploads.delete_storage_file(tally.tally_pdf_storage_path)
+                except Exception:
+                    pass
+            tally.tally_pdf_storage_path = rel_pdf
+            await session.commit()
+            await session.refresh(tally)
+    except Exception as e:
+        logger.warning("tally PDF regeneration failed: %s", e)
 
     # Re-sync OneDrive: delete stale row + append the corrected one. Both
     # best-effort. If only ONEDRIVE_TALLY_WEBHOOK_URL is set (no ops URL),

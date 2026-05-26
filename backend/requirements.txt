@@ -44,6 +44,9 @@ rapidocr-onnxruntime>=1.4.0
 # pypdfium2: render PDF picking tickets to images before sending to the
 # vision LLM. Pure wheel, no system deps (~6MB).
 pypdfium2>=4.30.0
+# reportlab: generate billing-grade Tally Sheet PDFs from each POD upload.
+# Pure-Python (no Cairo), wheels available for App Service Linux.
+reportlab>=4.2.0
 
 # ─── Auth / crypto ─────────────────────────────────────────────────────
 bcrypt>=4.2.0

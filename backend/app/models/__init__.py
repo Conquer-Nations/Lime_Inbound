@@ -302,6 +302,10 @@ class TallySheet(Base):
     pod_file_size: Mapped[int] = mapped_column(Integer)
     pod_storage_path: Mapped[str] = mapped_column(String(500))
 
+    # Path to the auto-generated tally-sheet PDF (one per tally row).
+    # Nullable so legacy rows pre-PDF-feature aren't broken.
+    tally_pdf_storage_path: Mapped[str | None] = mapped_column(String(500))
+
     # OCR results — nullable so manager can still file the tally when OCR
     # fails or returns garbage. They can correct via PUT later.
     ocr_from_location: Mapped[str | None] = mapped_column(String(500))
