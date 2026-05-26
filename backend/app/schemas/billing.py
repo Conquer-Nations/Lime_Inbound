@@ -37,6 +37,7 @@ class InvoiceListItem(BaseModel):
     generated_at: datetime
     sent_at: datetime | None = None
     paid_at: datetime | None = None
+    vendor_marked_paid_at: datetime | None = None
 
 
 class InvoiceRead(BaseModel):
@@ -66,6 +67,10 @@ class InvoiceRead(BaseModel):
     sent_at: datetime | None = None
     paid_at: datetime | None = None
     payment_method: str | None = None
+    # Vendor self-pay fields
+    vendor_payment_reference: str | None = None
+    vendor_marked_paid_at: datetime | None = None
+    vendor_marked_paid_by: str | None = None
     lines: list[InvoiceLineRead]
 
 
@@ -103,6 +108,23 @@ class InvoiceStatusActionRequest(BaseModel):
     to be recorded."""
 
     payment_method: str | None = None
+    notes: str | None = None
+
+
+class VendorMarkPaidRequest(BaseModel):
+    """Body for POST /vendor/invoices/{id}/mark-paid. Vendor self-reports
+    that they have submitted payment; manager then verifies."""
+
+    payment_method: str | None = Field(
+        None,
+        max_length=40,
+        description="ACH, Check, Wire, Zelle, etc.",
+    )
+    payment_reference: str | None = Field(
+        None,
+        max_length=120,
+        description="Check #, ACH reference, Zelle confirmation, etc.",
+    )
     notes: str | None = None
 
 

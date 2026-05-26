@@ -19,7 +19,11 @@ import VendorPortalChrome from '../components/VendorPortalChrome'
 const STATUS_PILL: Record<InvoiceStatus, { label: string; cls: string }> = {
   draft: { label: 'Draft', cls: 'bg-slate-100 text-slate-700' },
   ready: { label: 'Ready', cls: 'bg-amber-100 text-amber-800' },
-  sent: { label: 'Sent — unpaid', cls: 'bg-[#0093D0]/15 text-[#1B4676]' },
+  sent: { label: 'Unpaid', cls: 'bg-[#0093D0]/15 text-[#1B4676]' },
+  payment_submitted: {
+    label: 'Payment submitted',
+    cls: 'bg-orange-100 text-orange-800 border border-orange-200',
+  },
   paid: { label: 'Paid', cls: 'bg-emerald-100 text-emerald-800' },
   void: { label: 'Void', cls: 'bg-rose-100 text-rose-700' },
 }
@@ -43,12 +47,16 @@ export default function VendorInvoicesPage() {
 
   const [items, setItems] = useState<InvoiceListItem[] | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [toast, setToast] = useState<string | null>(null)
   const [search, setSearch] = useState('')
-  const [statusFilter, setStatusFilter] = useState<'all' | 'sent' | 'paid'>('all')
+  const [statusFilter, setStatusFilter] = useState<
+    'all' | 'sent' | 'payment_submitted' | 'paid'
+  >('all')
   const [downloading, setDownloading] = useState<number | null>(null)
+  const [marking, setMarking] = useState<InvoiceListItem | null>(null)
 
-  useEffect(() => {
-    if (!isLoggedIn) return
+  function reload() {
+    setError(null)
     billingApi
       .vendorListInvoices()
       .then(setItems)
@@ -56,7 +64,17 @@ export default function VendorInvoicesPage() {
         const detail = (e as { detail?: string })?.detail
         setError(detail || (e as Error)?.message || String(e))
       })
+  }
+
+  useEffect(() => {
+    if (!isLoggedIn) return
+    reload()
   }, [isLoggedIn])
+
+  function showToast(msg: string) {
+    setToast(msg)
+    setTimeout(() => setToast(null), 4000)
+  }
 
   const filtered = useMemo(() => {
     if (!items) return null
@@ -78,10 +96,13 @@ export default function VendorInvoicesPage() {
     const outstanding = all
       .filter((r) => r.status === 'sent')
       .reduce((sum, r) => sum + r.total, 0)
+    const submitted = all
+      .filter((r) => r.status === 'payment_submitted')
+      .reduce((sum, r) => sum + r.total, 0)
     const paidYtd = all
       .filter((r) => r.status === 'paid')
       .reduce((sum, r) => sum + r.total, 0)
-    return { outstanding, paidYtd, total: all.length }
+    return { outstanding, submitted, paidYtd, total: all.length }
   }, [items])
 
   async function downloadPdf(inv: InvoiceListItem) {
@@ -126,11 +147,16 @@ export default function VendorInvoicesPage() {
         </header>
 
         {/* Stat tiles */}
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
           <StatTile
-            label="Outstanding (sent, unpaid)"
+            label="Unpaid"
             value={fmtMoney(totals.outstanding)}
             tone="cyan"
+          />
+          <StatTile
+            label="Payment submitted"
+            value={fmtMoney(totals.submitted)}
+            tone="orange"
           />
           <StatTile
             label="Paid"
@@ -168,18 +194,25 @@ export default function VendorInvoicesPage() {
             className="w-72 max-w-full border border-slate-200 rounded-md px-3 py-1.5 text-sm focus:outline-none focus:border-[#0093D0]"
           />
           <div className="flex items-center gap-1 flex-wrap">
-            {(['all', 'sent', 'paid'] as const).map((s) => (
+            {(
+              [
+                ['all', 'All'],
+                ['sent', 'Unpaid'],
+                ['payment_submitted', 'Payment submitted'],
+                ['paid', 'Paid'],
+              ] as const
+            ).map(([key, label]) => (
               <button
-                key={s}
+                key={key}
                 type="button"
-                onClick={() => setStatusFilter(s)}
+                onClick={() => setStatusFilter(key)}
                 className={`text-[11px] uppercase tracking-wider font-semibold px-2.5 py-1 rounded-full border transition ${
-                  statusFilter === s
+                  statusFilter === key
                     ? 'bg-[#1B4676] text-white border-[#1B4676]'
                     : 'bg-white text-slate-700 border-slate-200 hover:border-[#0093D0]'
                 }`}
               >
-                {s === 'all' ? 'All' : s === 'sent' ? 'Outstanding' : 'Paid'}
+                {label}
               </button>
             ))}
           </div>
@@ -283,22 +316,44 @@ export default function VendorInvoicesPage() {
                       <td className="px-4 py-2.5 text-right font-mono font-bold text-slate-800">
                         {fmtMoney(inv.total)}
                       </td>
-                      <td className="px-4 py-2.5 text-right">
-                        <button
-                          type="button"
-                          onClick={() => downloadPdf(inv)}
-                          disabled={downloading === inv.id}
-                          className="inline-flex items-center gap-1 text-xs font-semibold text-[#0093D0] hover:text-[#1B4676] disabled:opacity-50"
-                        >
-                          {downloading === inv.id ? (
-                            <span>Opening…</span>
-                          ) : (
-                            <>
-                              <DocIcon className="w-3.5 h-3.5" />
-                              <span>View PDF</span>
-                            </>
+                      <td className="px-4 py-2.5 text-right whitespace-nowrap">
+                        <div className="inline-flex items-center gap-3">
+                          {inv.status === 'sent' && (
+                            <button
+                              type="button"
+                              onClick={() => setMarking(inv)}
+                              className="inline-flex items-center gap-1 text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white rounded px-2.5 py-1 transition"
+                              title="I have paid this invoice"
+                            >
+                              <CheckIcon className="w-3.5 h-3.5" />
+                              <span>Mark as paid</span>
+                            </button>
                           )}
-                        </button>
+                          {inv.status === 'payment_submitted' && (
+                            <span
+                              className="inline-flex items-center gap-1 text-[11px] font-semibold text-orange-700"
+                              title="Awaiting verification from Conquer Nation"
+                            >
+                              <ClockIcon className="w-3.5 h-3.5" />
+                              <span>Awaiting verification</span>
+                            </span>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => downloadPdf(inv)}
+                            disabled={downloading === inv.id}
+                            className="inline-flex items-center gap-1 text-xs font-semibold text-[#0093D0] hover:text-[#1B4676] disabled:opacity-50"
+                          >
+                            {downloading === inv.id ? (
+                              <span>Opening…</span>
+                            ) : (
+                              <>
+                                <DocIcon className="w-3.5 h-3.5" />
+                                <span>View PDF</span>
+                              </>
+                            )}
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   )
@@ -308,7 +363,167 @@ export default function VendorInvoicesPage() {
           </div>
         )}
       </div>
+
+      {marking && (
+        <VendorMarkPaidModal
+          invoice={marking}
+          onClose={() => setMarking(null)}
+          onSubmitted={() => {
+            setMarking(null)
+            showToast(
+              'Payment submission recorded — Conquer Nation will verify shortly.',
+            )
+            reload()
+          }}
+          onError={(msg) => setError(msg)}
+        />
+      )}
+
+      {toast && (
+        <div className="fixed bottom-4 right-4 bg-emerald-700 text-white px-4 py-2.5 rounded-md shadow-lg z-50 flex items-center gap-2 max-w-md">
+          <CheckIcon className="w-4 h-4 shrink-0" />
+          <span className="text-sm">{toast}</span>
+        </div>
+      )}
     </VendorPortalChrome>
+  )
+}
+
+// ─── Mark-as-paid modal (vendor self-report) ───────────────────────────
+
+function VendorMarkPaidModal({
+  invoice,
+  onClose,
+  onSubmitted,
+  onError,
+}: {
+  invoice: InvoiceListItem
+  onClose: () => void
+  onSubmitted: () => void
+  onError: (msg: string) => void
+}) {
+  const [paymentMethod, setPaymentMethod] = useState('ACH')
+  const [paymentReference, setPaymentReference] = useState('')
+  const [notes, setNotes] = useState('')
+  const [busy, setBusy] = useState(false)
+
+  async function submit() {
+    setBusy(true)
+    try {
+      await billingApi.vendorMarkPaid(invoice.id, {
+        payment_method: paymentMethod.trim() || null,
+        payment_reference: paymentReference.trim() || null,
+        notes: notes.trim() || null,
+      })
+      onSubmitted()
+    } catch (e) {
+      const err = e as { detail?: string } | string
+      onError(typeof err === 'object' && err.detail ? err.detail : String(err))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div
+      className="fixed inset-0 z-50 bg-black/30 flex items-center justify-center p-4"
+      onClick={onClose}
+    >
+      <div
+        className="bg-white rounded-xl shadow-2xl w-full max-w-lg overflow-hidden"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="px-5 py-4 border-b border-slate-200 flex items-center justify-between">
+          <div>
+            <h2 className="text-lg font-bold text-[#1B4676]">Mark invoice as paid</h2>
+            <p className="text-xs text-slate-500 mt-0.5 font-mono">
+              {invoice.invoice_number} · {fmtMoney(invoice.total)}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="text-slate-500 hover:text-slate-700 text-xl leading-none"
+          >
+            ×
+          </button>
+        </div>
+        <div className="px-5 py-4 space-y-3">
+          <p className="text-sm text-slate-600">
+            Submit your payment details so Conquer Nation can verify
+            receipt. The invoice stays in <em>Payment submitted</em> until
+            verification clears it to <em>Paid</em>.
+          </p>
+          <div className="grid grid-cols-2 gap-3">
+            <label className="block">
+              <span className="text-xs uppercase tracking-wider font-semibold text-slate-500">
+                Method
+              </span>
+              <select
+                value={paymentMethod}
+                onChange={(e) => setPaymentMethod(e.target.value)}
+                className="mt-1 w-full border border-slate-200 rounded-md px-3 py-2 text-sm focus:outline-none focus:border-[#0093D0] bg-white"
+              >
+                <option>ACH</option>
+                <option>Wire</option>
+                <option>Check</option>
+                <option>Zelle</option>
+                <option>Credit card</option>
+                <option>Other</option>
+              </select>
+            </label>
+            <label className="block">
+              <span className="text-xs uppercase tracking-wider font-semibold text-slate-500">
+                Reference / Check #
+              </span>
+              <input
+                type="text"
+                value={paymentReference}
+                onChange={(e) => setPaymentReference(e.target.value)}
+                placeholder="e.g. CHK 10432 or ACH-9F1A"
+                className="mt-1 w-full border border-slate-200 rounded-md px-3 py-2 text-sm font-mono focus:outline-none focus:border-[#0093D0]"
+              />
+            </label>
+          </div>
+          <label className="block">
+            <span className="text-xs uppercase tracking-wider font-semibold text-slate-500">
+              Notes (optional)
+            </span>
+            <textarea
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              rows={2}
+              placeholder="Anything Conquer Nation should know — wired today, includes credit, etc."
+              className="mt-1 w-full border border-slate-200 rounded-md px-3 py-2 text-sm focus:outline-none focus:border-[#0093D0]"
+            />
+          </label>
+        </div>
+        <div className="px-5 py-3 border-t border-slate-200 bg-slate-50 flex items-center justify-end gap-2">
+          <button
+            type="button"
+            onClick={onClose}
+            className="text-sm text-slate-700 hover:bg-slate-100 px-3 py-1.5 rounded"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={submit}
+            disabled={busy}
+            className="text-sm bg-emerald-600 hover:bg-emerald-700 text-white font-semibold px-4 py-1.5 rounded disabled:opacity-50 inline-flex items-center gap-2"
+          >
+            {busy ? (
+              <span>Submitting…</span>
+            ) : (
+              <>
+                <CheckIcon className="w-4 h-4" />
+                <span>Submit payment</span>
+              </>
+            )}
+          </button>
+        </div>
+      </div>
+    </div>
   )
 }
 
@@ -319,14 +534,16 @@ function StatTile({
 }: {
   label: string
   value: string
-  tone: 'cyan' | 'emerald' | 'slate'
+  tone: 'cyan' | 'emerald' | 'slate' | 'orange'
 }) {
   const ring =
     tone === 'cyan'
       ? 'border-[#0093D0]/30 text-[#1B4676]'
       : tone === 'emerald'
         ? 'border-emerald-300 text-emerald-800'
-        : 'border-slate-200 text-slate-700'
+        : tone === 'orange'
+          ? 'border-orange-300 text-orange-800'
+          : 'border-slate-200 text-slate-700'
   return (
     <div
       className={`bg-white rounded-xl border ${ring} px-4 py-3`}
@@ -362,6 +579,43 @@ function DocIcon({ className }: { className?: string }) {
       <polyline points="14 2 14 8 20 8" />
       <line x1="9" x2="15" y1="13" y2="13" />
       <line x1="9" x2="15" y1="17" y2="17" />
+    </svg>
+  )
+}
+
+function CheckIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2.25}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+      aria-hidden
+    >
+      <polyline points="20 6 9 17 4 12" />
+    </svg>
+  )
+}
+
+function ClockIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+      aria-hidden
+    >
+      <circle cx="12" cy="12" r="10" />
+      <polyline points="12 6 12 12 16 14" />
     </svg>
   )
 }

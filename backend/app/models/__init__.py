@@ -135,6 +135,14 @@ class Invoice(Base):
     sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     paid_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     payment_method: Mapped[str | None] = mapped_column(String(40))
+    # Vendor self-pay fields: status `payment_submitted` is set when the
+    # vendor clicks Mark-as-paid in their portal. Manager then verifies
+    # and flips to `paid`.
+    vendor_payment_reference: Mapped[str | None] = mapped_column(String(120))
+    vendor_marked_paid_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
+    vendor_marked_paid_by: Mapped[str | None] = mapped_column(String(255))
     notes: Mapped[str | None] = mapped_column(Text)
 
     lines: Mapped[list[InvoiceLine]] = relationship(

@@ -49,6 +49,7 @@ from app.schemas.billing import (
     InvoiceRead,
     InvoiceStatusActionRequest,
     RateCardRow,
+    VendorMarkPaidRequest,
 )
 from app.services import billing_auto_charges, invoice_pdf, invoice_pricing
 from app.services import operational_charge as op_charge
@@ -94,6 +95,7 @@ def _list_item_to_read(inv: Invoice, customer_name: str | None,
         generated_at=inv.generated_at,
         sent_at=inv.sent_at,
         paid_at=inv.paid_at,
+        vendor_marked_paid_at=inv.vendor_marked_paid_at,
     )
 
 
@@ -126,6 +128,9 @@ def _to_read(inv: Invoice, customer_name: str | None,
         sent_at=inv.sent_at,
         paid_at=inv.paid_at,
         payment_method=inv.payment_method,
+        vendor_payment_reference=inv.vendor_payment_reference,
+        vendor_marked_paid_at=inv.vendor_marked_paid_at,
+        vendor_marked_paid_by=inv.vendor_marked_paid_by,
         lines=[_line_to_read(line) for line in (inv.lines or [])],
     )
 
@@ -633,6 +638,10 @@ async def mark_invoice_paid(
     payload: InvoiceStatusActionRequest | None = None,
     session: AsyncSession = Depends(get_session),
 ):
+    """Manager verifies payment receipt. Terminal — invoice moves to
+    Order History. Works from any non-void status (most commonly from
+    `payment_submitted` after the vendor self-reports, but also handles
+    out-of-band cases where the manager records payment directly)."""
     invoice = await session.get(Invoice, invoice_id)
     if invoice is None:
         raise HTTPException(404, f"Invoice {invoice_id} not found")
@@ -643,7 +652,9 @@ async def mark_invoice_paid(
     if payload and payload.payment_method:
         invoice.payment_method = payload.payment_method
     if payload and payload.notes:
-        invoice.notes = payload.notes
+        # Append rather than overwrite; vendor notes may already live here.
+        prefix = (invoice.notes + "\n") if invoice.notes else ""
+        invoice.notes = f"{prefix}[manager] {payload.notes}"
     await session.commit()
     return await _load_invoice_read(session, invoice.id)
 
@@ -670,6 +681,12 @@ async def void_invoice(
 vendor_router = APIRouter(prefix="/vendor", tags=["vendor-billing"])
 
 
+# Vendor-visible invoice statuses. Drafts and `ready` stay internal;
+# `void` is hidden. `payment_submitted` is included so the vendor sees
+# their own self-reported payment in-flight state.
+_VENDOR_VISIBLE_STATUSES = ("sent", "payment_submitted", "paid")
+
+
 @vendor_router.get("/invoices", response_model=list[InvoiceListItem])
 async def list_my_invoices(
     vendor: dict = Depends(current_vendor_required),
@@ -686,12 +703,70 @@ async def list_my_invoices(
         .outerjoin(WHPO, WHPO.id == Invoice.whpo_id)
         .outerjoin(OutboundOrder, OutboundOrder.id == Invoice.outbound_order_id)
         .where(Invoice.customer_id.in_(customer_ids))
-        # Don't expose drafts — vendor sees an invoice once it's at least 'sent'.
-        .where(Invoice.status.in_(("sent", "paid")))
+        .where(Invoice.status.in_(_VENDOR_VISIBLE_STATUSES))
         .order_by(desc(Invoice.generated_at))
     )
     rows = (await session.execute(q)).all()
     return [_list_item_to_read(inv, name, whpo_no, to_no) for (inv, name, whpo_no, to_no) in rows]
+
+
+@vendor_router.get("/invoices/{invoice_id}", response_model=InvoiceRead)
+async def get_my_invoice(
+    invoice_id: int,
+    vendor: dict = Depends(current_vendor_required),
+    session: AsyncSession = Depends(get_session),
+):
+    """Vendor reads ONE of their own invoices (same JWT-scope check as
+    the listing). Exposes lines + totals; the manager-only fields like
+    adjustment / operational charge are visible because they're already
+    on the customer-facing PDF."""
+    customer_ids = await vendor_customer_ids(session, vendor)
+    inv = await session.get(Invoice, invoice_id)
+    if inv is None or inv.customer_id not in customer_ids:
+        raise HTTPException(404, "Invoice not found")
+    if inv.status not in _VENDOR_VISIBLE_STATUSES:
+        raise HTTPException(404, "Invoice not found")
+    return await _load_invoice_read(session, invoice_id)
+
+
+@vendor_router.post("/invoices/{invoice_id}/mark-paid", response_model=InvoiceRead)
+async def vendor_mark_invoice_paid(
+    invoice_id: int,
+    payload: VendorMarkPaidRequest,
+    vendor: dict = Depends(current_vendor_required),
+    session: AsyncSession = Depends(get_session),
+):
+    """Vendor self-reports that they have submitted payment for an
+    invoice. Status flips `sent` → `payment_submitted`. Manager then
+    verifies receipt and flips `payment_submitted` → `paid`.
+
+    Idempotent-ish: re-submitting on `payment_submitted` updates the
+    captured payment ref / method / notes but doesn't move state.
+    """
+    customer_ids = await vendor_customer_ids(session, vendor)
+    inv = await session.get(Invoice, invoice_id)
+    if inv is None or inv.customer_id not in customer_ids:
+        raise HTTPException(404, "Invoice not found")
+    if inv.status not in ("sent", "payment_submitted"):
+        raise HTTPException(
+            409,
+            f"Invoice {inv.invoice_number} cannot be marked paid by vendor "
+            f"(current status: {inv.status})",
+        )
+    inv.status = "payment_submitted"
+    inv.vendor_marked_paid_at = datetime.utcnow()
+    # JWT puts the vendor email in `sub`; fall back to None if missing.
+    inv.vendor_marked_paid_by = (vendor.get("sub") if isinstance(vendor, dict) else None) or None
+    if payload.payment_method:
+        inv.payment_method = payload.payment_method
+    if payload.payment_reference:
+        inv.vendor_payment_reference = payload.payment_reference
+    if payload.notes:
+        # Vendor notes append to whatever the manager already had.
+        prefix = (inv.notes + "\n") if inv.notes else ""
+        inv.notes = f"{prefix}[vendor] {payload.notes}"
+    await session.commit()
+    return await _load_invoice_read(session, inv.id)
 
 
 @vendor_router.get("/invoices/{invoice_id}/pdf")
@@ -707,7 +782,7 @@ async def get_my_invoice_pdf(
     inv = await session.get(Invoice, invoice_id)
     if inv is None or inv.customer_id not in customer_ids:
         raise HTTPException(404, "Invoice not found")
-    if inv.status not in ("sent", "paid"):
+    if inv.status not in _VENDOR_VISIBLE_STATUSES:
         raise HTTPException(404, "Invoice not found")
     customer = await session.get(Customer, inv.customer_id)
     lines = (

@@ -29,16 +29,21 @@ const STATUS_FILTERS: { key: 'all' | InvoiceStatus; label: string }[] = [
   { key: 'draft', label: 'Draft' },
   { key: 'ready', label: 'Ready' },
   { key: 'sent', label: 'Sent' },
+  { key: 'payment_submitted', label: 'Verify' },
   { key: 'paid', label: 'Paid' },
   { key: 'void', label: 'Void' },
 ]
 
-const STATUS_PILL: Record<InvoiceStatus, string> = {
-  draft: 'bg-slate-100 text-slate-700',
-  ready: 'bg-amber-100 text-amber-800',
-  sent: 'bg-[#0093D0]/15 text-[#1B4676]',
-  paid: 'bg-emerald-100 text-emerald-800',
-  void: 'bg-rose-100 text-rose-700',
+const STATUS_PILL: Record<InvoiceStatus, { cls: string; label: string }> = {
+  draft: { cls: 'bg-slate-100 text-slate-700', label: 'Draft' },
+  ready: { cls: 'bg-amber-100 text-amber-800', label: 'Ready' },
+  sent: { cls: 'bg-[#0093D0]/15 text-[#1B4676]', label: 'Sent — awaiting payment' },
+  payment_submitted: {
+    cls: 'bg-orange-100 text-orange-800 border border-orange-200',
+    label: 'Payment submitted — verify',
+  },
+  paid: { cls: 'bg-emerald-100 text-emerald-800', label: 'Paid' },
+  void: { cls: 'bg-rose-100 text-rose-700', label: 'Void' },
 }
 
 function fmtMoney(n: number): string {
@@ -236,9 +241,9 @@ export default function BillingInvoices() {
                     {inv.invoice_number}
                   </span>
                   <span
-                    className={`${STATUS_PILL[inv.status]} px-2 py-0.5 rounded-full text-[10px] uppercase tracking-[0.12em] font-bold`}
+                    className={`${STATUS_PILL[inv.status].cls} px-2 py-0.5 rounded-full text-[10px] uppercase tracking-[0.12em] font-bold`}
                   >
-                    {inv.status}
+                    {STATUS_PILL[inv.status].label}
                   </span>
                 </div>
                 <div className="mt-1 text-sm text-slate-700 font-semibold truncate">
@@ -396,9 +401,9 @@ function InvoiceDetailPanel({
             </div>
           </div>
           <span
-            className={`${STATUS_PILL[invoice.status]} px-3 py-1 rounded-full text-[11px] uppercase tracking-[0.14em] font-bold`}
+            className={`${STATUS_PILL[invoice.status].cls} px-3 py-1 rounded-full text-[11px] uppercase tracking-[0.14em] font-bold`}
           >
-            {invoice.status}
+            {STATUS_PILL[invoice.status].label}
           </span>
         </div>
         <div className="mt-2 text-xs text-slate-500 flex items-center gap-3 flex-wrap">
@@ -424,6 +429,68 @@ function InvoiceDetailPanel({
           )}
         </div>
       </div>
+
+      {/* Vendor payment submission callout — shows when vendor has self-
+          reported payment and we're awaiting manager verification. */}
+      {invoice.status === 'payment_submitted' && (
+        <div className="px-5 py-3 border-b border-orange-200 bg-orange-50">
+          <div className="flex items-start gap-3">
+            <span
+              className="inline-flex w-8 h-8 rounded-full bg-orange-200 text-orange-800 items-center justify-center shrink-0"
+              aria-hidden
+            >
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth={2}
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                className="w-4 h-4"
+              >
+                <circle cx="12" cy="12" r="10" />
+                <line x1="12" x2="12" y1="8" y2="12" />
+                <line x1="12" x2="12.01" y1="16" y2="16" />
+              </svg>
+            </span>
+            <div className="flex-1 min-w-0">
+              <div className="text-sm font-bold text-orange-900">
+                Vendor reported payment — awaiting verification
+              </div>
+              <div className="text-xs text-orange-800 mt-1 grid sm:grid-cols-2 gap-x-4 gap-y-0.5">
+                {invoice.vendor_marked_paid_by && (
+                  <span>
+                    <span className="text-orange-700/70">Submitted by:</span>{' '}
+                    <span className="font-mono">{invoice.vendor_marked_paid_by}</span>
+                  </span>
+                )}
+                {invoice.vendor_marked_paid_at && (
+                  <span>
+                    <span className="text-orange-700/70">When:</span>{' '}
+                    {fmtDate(invoice.vendor_marked_paid_at)}
+                  </span>
+                )}
+                {invoice.payment_method && (
+                  <span>
+                    <span className="text-orange-700/70">Method:</span>{' '}
+                    {invoice.payment_method}
+                  </span>
+                )}
+                {invoice.vendor_payment_reference && (
+                  <span>
+                    <span className="text-orange-700/70">Reference:</span>{' '}
+                    <span className="font-mono">{invoice.vendor_payment_reference}</span>
+                  </span>
+                )}
+              </div>
+              <div className="text-[11px] text-orange-700/80 mt-1.5">
+                Confirm the payment has landed before clicking{' '}
+                <strong>Verify &amp; mark paid</strong>.
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Lines */}
       <div className="px-5 py-4">
@@ -601,7 +668,7 @@ function InvoiceDetailPanel({
               disabled={busyAction !== null}
               className="text-xs bg-emerald-600 hover:bg-emerald-700 text-white font-semibold px-3 py-1.5 rounded disabled:opacity-50"
             >
-              Mark paid
+              {invoice.status === 'payment_submitted' ? 'Verify & mark paid' : 'Mark paid'}
             </button>
           ) : null}
           {invoice.status !== 'void' && invoice.status !== 'paid' ? (

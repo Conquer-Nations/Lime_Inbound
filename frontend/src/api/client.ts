@@ -1562,7 +1562,16 @@ export const tallyApi = {
 
 // ─── Billing (invoices + rate card) ───────────────────────────────────────
 
-export type InvoiceStatus = 'draft' | 'ready' | 'sent' | 'paid' | 'void'
+// Lifecycle:
+//   draft → sent → payment_submitted → paid → void
+//                   └ vendor self-mark    └ manager verifies receipt
+export type InvoiceStatus =
+  | 'draft'
+  | 'ready'
+  | 'sent'
+  | 'payment_submitted'
+  | 'paid'
+  | 'void'
 
 export interface InvoiceLineRead {
   id: number
@@ -1594,6 +1603,7 @@ export interface InvoiceListItem {
   generated_at: string
   sent_at: string | null
   paid_at: string | null
+  vendor_marked_paid_at: string | null
 }
 
 export interface OperationalChargeItem {
@@ -1634,6 +1644,9 @@ export interface InvoiceRead {
   sent_at: string | null
   paid_at: string | null
   payment_method: string | null
+  vendor_payment_reference: string | null
+  vendor_marked_paid_at: string | null
+  vendor_marked_paid_by: string | null
   lines: InvoiceLineRead[]
 }
 
@@ -1771,6 +1784,24 @@ export const billingApi = {
 
   // Vendor surface — scoped server-side via JWT
   vendorListInvoices: () => request<InvoiceListItem[]>('/vendor/invoices'),
+
+  vendorGetInvoice: (invoice_id: number) =>
+    request<InvoiceRead>(`/vendor/invoices/${invoice_id}`),
+
+  /** Vendor self-reports payment. Status flips `sent` →
+   *  `payment_submitted`; manager must verify before it becomes `paid`. */
+  vendorMarkPaid: (
+    invoice_id: number,
+    payload: {
+      payment_method?: string | null
+      payment_reference?: string | null
+      notes?: string | null
+    },
+  ) =>
+    request<InvoiceRead>(`/vendor/invoices/${invoice_id}/mark-paid`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
 
   /** Vendor PDF URL — only works for sent/paid invoices in their scope.
    *  Browser uses the Bearer token in headers? No — vendor PDFs require
