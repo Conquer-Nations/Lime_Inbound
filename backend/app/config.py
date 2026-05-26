@@ -133,10 +133,14 @@ class Settings(BaseSettings):
 
     # OpenRouter API key (https://openrouter.ai). Same vision-LLM approach as
     # the OCR-Driver-POD project. When set, takes precedence over the direct
-    # Gemini path. The default model is the fully-free Gemini Flash variant —
-    # no quota concerns and no card needed.
+    # Gemini path.
+    #
+    # The earlier `google/gemini-2.0-flash-exp:free` was deprecated by
+    # OpenRouter in 2026 (returns 404 "No endpoints found"). If Gemma 4
+    # also gets pulled later, `curl https://openrouter.ai/api/v1/models`
+    # filtered to free + image-input modality finds a current replacement.
     openrouter_api_key: str = ""
-    openrouter_model: str = "google/gemini-2.0-flash-exp:free"
+    openrouter_model: str = "google/gemma-4-31b-it:free"
 
     # OneDrive scan-sheet sync. Logic App URL that runs the `ScanSheetAppend`
     # Office Script on `Lime Scan Data.xlsx` — creates (or replaces) a sheet
