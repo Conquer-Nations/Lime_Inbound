@@ -190,8 +190,18 @@ async def upload_to_container_folder(
 ) -> None:
     """Upload `data` (raw bytes) to OneDrive under
     {root}/{Account}/{Brand}/Q.../Month.../{Container}/{filename}.
-    Best-effort. Logged + swallowed on any failure."""
-    if not is_configured():
+    Best-effort. Logged + swallowed on any failure.
+
+    Routes to the dedicated `onedrive_container_files_url` Logic App
+    when set (the one whose Office Script handles the new hierarchy).
+    Falls back to the legacy vendor-files Logic App when unset — but
+    that one expects the old WHPO-based layout, so the file will land
+    in the wrong spot. Always set the env var in App Service config."""
+    target_url = (
+        settings.onedrive_container_files_url
+        or settings.onedrive_vendor_files_url
+    )
+    if not target_url:
         return
     parts = build_container_path_parts(
         account=account,
@@ -204,13 +214,31 @@ async def upload_to_container_folder(
         **parts,
         "content_type": content_type,
         "data_base64": base64.b64encode(data).decode("ascii"),
-        # Flag tells the Logic App this payload uses the new container
-        # hierarchy (no WHPO folder) rather than the legacy vendor-files
-        # layout. Default behaviour stays the same when omitted, so the
-        # legacy callers (upload_document) keep working.
         "hierarchy": "container",
     }
-    await _post(payload, label=f"upload_to_container_folder({container_no}/{filename})")
+    try:
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            res = await client.post(target_url, json=payload)
+            if res.status_code >= 400:
+                logger.warning(
+                    "onedrive container upload %s/%s: HTTP %s — %s",
+                    container_no,
+                    filename,
+                    res.status_code,
+                    res.text[:300],
+                )
+            else:
+                logger.info(
+                    "onedrive container upload ok: %s",
+                    parts.get("full_path"),
+                )
+    except Exception as e:  # noqa: BLE001
+        logger.warning(
+            "onedrive container upload %s/%s failed: %r",
+            container_no,
+            filename,
+            e,
+        )
 
 
 # ─── Sync actions ───────────────────────────────────────────────────────

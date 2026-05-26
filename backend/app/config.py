@@ -54,6 +54,16 @@ class Settings(BaseSettings):
     #   /Vendor Files/{Company}/{YYYY}/{MM - Month}/WHPO {whpo}/{container}/{kind}.{ext}
     # Leave blank to disable the mirror (files still save locally + Postgres).
     onedrive_vendor_files_url: str = ""
+
+    # Container-folder hierarchy uploads (Account/Brand/Quarter/Month/
+    # Container/). Tiana's new spec — POD + tally PDF + license + truck
+    # photos all live together in one folder per container. Uses a
+    # separate Logic App because the Office Script reads `full_path`
+    # directly rather than walking the legacy {Company}/{YYYY}/{Month}/
+    # WHPO/.../ chain. If unset, falls back to the legacy
+    # onedrive_vendor_files_url (which expects the legacy layout, so
+    # files will land in the wrong place — set it!).
+    onedrive_container_files_url: str = ""
     # Root folder name inside OneDrive — change here if you rename the tree.
     onedrive_vendor_files_root: str = "Vendor Files"
 
