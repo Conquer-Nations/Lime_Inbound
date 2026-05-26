@@ -7,6 +7,7 @@ from sqlalchemy import text
 from app.config import settings
 from app.db import engine
 from app.routers import audit as audit_router
+from app.routers import billing as billing_router
 from app.routers import manager as manager_router
 from app.routers import ocr as ocr_router
 from app.routers import operator as operator_router
@@ -66,6 +67,10 @@ app.include_router(tally_router.vendor_router)
 app.include_router(master_list_router.router)
 # Warehouse inventory reports — container aging + remaining-inventory drilldown
 app.include_router(inventory_reports_router.router)
+# Billing — manager (full CRUD on invoices) + vendor (read-only on their
+# own invoices). Auto-charge proposers + rate-card-backed manual lines.
+app.include_router(billing_router.manager_router)
+app.include_router(billing_router.vendor_router)
 
 
 @app.get("/health")
