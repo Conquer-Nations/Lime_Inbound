@@ -1190,111 +1190,6 @@ function ModeChooser({
 
 // ─── Direction chooser (INBOUND vs OUTBOUND) ──────────────────────────
 
-function VendorPortalShell({
-  breadcrumb,
-  children,
-  onBack,
-}: {
-  breadcrumb: string
-  children: React.ReactNode
-  onBack?: () => void
-}) {
-  const { user, signOut } = useVendorAuth()
-  const nav = useNavigate()
-  const handleSignOut = () => {
-    signOut()
-    nav('/vendor', { replace: true })
-  }
-  const initial = user?.full_name?.[0]?.toUpperCase() ?? '?'
-  return (
-    <div className="min-h-screen bg-slate-50 text-slate-800 antialiased relative overflow-hidden">
-      <div
-        aria-hidden
-        className="fixed inset-0 pointer-events-none"
-        style={{
-          backgroundImage:
-            'linear-gradient(rgba(27,70,118,0.05) 1px, transparent 1px), linear-gradient(90deg, rgba(27,70,118,0.05) 1px, transparent 1px)',
-          backgroundSize: '56px 56px',
-          maskImage: 'radial-gradient(ellipse at top, black 35%, transparent 80%)',
-          WebkitMaskImage: 'radial-gradient(ellipse at top, black 35%, transparent 80%)',
-        }}
-      />
-      <header
-        className="relative z-20 text-white"
-        style={{ background: 'linear-gradient(180deg, #0B1828 0%, #14233A 100%)' }}
-      >
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <BrandMark className="h-12 text-white" />
-            <div className="leading-tight">
-              <div className="text-base font-extrabold tracking-[0.16em]">CONQUER NATION</div>
-              <div className="text-[10px] uppercase tracking-[0.28em] text-[#0093D0]">
-                Vendor Portal
-              </div>
-            </div>
-          </div>
-          <div className="flex items-center gap-3 sm:gap-4">
-            {user && (
-              <div className="hidden md:flex items-center gap-2 text-sm text-white/95">
-                <span className="w-8 h-8 rounded-full bg-white/10 ring-1 ring-white/20 flex items-center justify-center text-xs font-bold uppercase">
-                  {initial}
-                </span>
-                <div className="leading-tight">
-                  <div className="text-sm font-semibold">{user.full_name}</div>
-                  <div className="text-[10.5px] uppercase tracking-wider text-white/60">
-                    {user.company}
-                  </div>
-                </div>
-              </div>
-            )}
-            <button
-              type="button"
-              onClick={handleSignOut}
-              className="inline-flex items-center gap-2 rounded-full bg-white/8 hover:bg-white/15 border border-white/15 hover:border-white/30 px-4 py-1.5 text-sm font-semibold transition focus:outline-none focus-visible:ring-2 focus-visible:ring-[#0093D0] focus-visible:ring-offset-2 focus-visible:ring-offset-[#0B1828]"
-            >
-              <LogOutIcon className="w-4 h-4" />
-              <span>Sign out</span>
-            </button>
-          </div>
-        </div>
-      </header>
-      <div
-        className="h-px"
-        style={{
-          background:
-            'linear-gradient(90deg, transparent, rgba(0,147,208,0.65) 30%, rgba(0,147,208,0.65) 70%, transparent)',
-        }}
-        aria-hidden
-      />
-      <nav aria-label="Breadcrumb" className="relative z-10 border-b border-slate-200 bg-white">
-        <ol className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3 flex items-center gap-2 text-sm text-slate-500">
-          <li className="flex items-center gap-2">
-            <LayoutDashboardIcon className="w-4 h-4 text-[#0093D0]" />
-            {onBack ? (
-              <button
-                type="button"
-                onClick={onBack}
-                className="hover:text-[#1B4676] hover:underline"
-              >
-                Vendor Portal
-              </button>
-            ) : (
-              <span>Vendor Portal</span>
-            )}
-          </li>
-          <li aria-hidden>
-            <ChevronRightIcon className="w-4 h-4 text-slate-300" />
-          </li>
-          <li aria-current="page" className="text-[#1B4676] font-semibold">
-            {breadcrumb}
-          </li>
-        </ol>
-      </nav>
-      <main className="relative z-10">{children}</main>
-    </div>
-  )
-}
-
 function DirectionChooser({
   onChoose,
 }: {
@@ -1333,7 +1228,7 @@ function DirectionChooser({
   }, [])
 
   return (
-    <VendorPortalShell breadcrumb="Choose direction">
+    <VendorPortalChrome breadcrumbCurrent="Choose direction">
       <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-12 sm:py-16">
         <div className="max-w-3xl">
           <div className="inline-flex items-center gap-2 px-2.5 py-1 rounded-full bg-[#0093D0]/10 border border-[#0093D0]/25 text-[#1B4676] text-[11px] font-semibold tracking-[0.14em] uppercase mb-5">
@@ -1387,7 +1282,7 @@ function DirectionChooser({
           />
         </div>
       </div>
-    </VendorPortalShell>
+    </VendorPortalChrome>
   )
 }
 
@@ -1482,7 +1377,7 @@ function DirectionTile({
 
 function OutboundComingSoon({ onBack }: { onBack: () => void }) {
   return (
-    <VendorPortalShell breadcrumb="Outbound — coming soon" onBack={onBack}>
+    <VendorPortalChrome breadcrumbCurrent="Outbound — coming soon" onBack={onBack}>
       <div className="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 py-16 text-center">
         <div className="inline-flex items-center gap-2 px-2.5 py-1 rounded-full bg-amber-100 border border-amber-200 text-amber-800 text-[11px] font-semibold tracking-[0.14em] uppercase mb-6">
           <span className="w-1.5 h-1.5 rounded-full bg-amber-500" aria-hidden />
@@ -1505,7 +1400,7 @@ function OutboundComingSoon({ onBack }: { onBack: () => void }) {
           ← Back to direction picker
         </button>
       </div>
-    </VendorPortalShell>
+    </VendorPortalChrome>
   )
 }
 
