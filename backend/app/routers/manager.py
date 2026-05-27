@@ -2230,7 +2230,7 @@ async def delete_outbound_order(
     serials_deleted = (
         await session.execute(
             _delete(_OutboundLineSerial).where(
-                _OutboundLineSerial.line_id.in_(line_ids_q)
+                _OutboundLineSerial.outbound_line_id.in_(line_ids_q)
             )
         )
     ).rowcount or 0
