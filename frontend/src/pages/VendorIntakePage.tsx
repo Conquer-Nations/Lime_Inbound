@@ -1335,184 +1335,118 @@ function DirectionChooser({
   return (
     <VendorPortalShell breadcrumb="Choose direction">
       <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-12 sm:py-16">
-        <div className="max-w-3xl">
-          <div className="inline-flex items-center gap-2 px-2.5 py-1 rounded-full bg-[#0093D0]/10 border border-[#0093D0]/25 text-[#1B4676] text-[11px] font-semibold tracking-[0.14em] uppercase mb-5">
-            <span className="w-1.5 h-1.5 rounded-full bg-[#0093D0]" aria-hidden />
-            Vendor Portal
+        {/* Page header — H1 on the left, compact inventory quick-link
+            pills on the top right. Keeps inventory entry points visible
+            without scrolling AND without displacing the primary INBOUND/
+            OUTBOUND action tiles below. Sidebar still surfaces these too. */}
+        <div className="flex items-start justify-between gap-6 flex-wrap-reverse">
+          <div className="max-w-3xl flex-1 min-w-0">
+            <div className="inline-flex items-center gap-2 px-2.5 py-1 rounded-full bg-[#0093D0]/10 border border-[#0093D0]/25 text-[#1B4676] text-[11px] font-semibold tracking-[0.14em] uppercase mb-5">
+              <span className="w-1.5 h-1.5 rounded-full bg-[#0093D0]" aria-hidden />
+              Vendor Portal
+            </div>
+            <h1 className="text-3xl sm:text-4xl lg:text-[2.75rem] font-bold tracking-tight text-[#1B4676] leading-[1.1]">
+              What are you doing today?
+            </h1>
+            <p className="mt-4 text-base sm:text-lg text-slate-600 max-w-2xl leading-relaxed">
+              Pick the direction of your shipment. Inbound means a shipment is
+              arriving at Conquer Nation. Outbound means we ship items from the
+              warehouse to your customer.
+            </p>
           </div>
-          <h1 className="text-3xl sm:text-4xl lg:text-[2.75rem] font-bold tracking-tight text-[#1B4676] leading-[1.1]">
-            What are you doing today?
-          </h1>
-          <p className="mt-4 text-base sm:text-lg text-slate-600 max-w-2xl leading-relaxed">
-            Pick the direction of your shipment. Inbound means a shipment is
-            arriving at Conquer Nation. Outbound means we ship items from the
-            warehouse to your customer.
-          </p>
+
+          {/* Inventory quick-link pills — shown on the top right of the
+              hub. Compact so they don't push INBOUND/OUTBOUND below the
+              fold. The full sidebar links to the same destinations. */}
+          <div className="flex flex-col gap-2 shrink-0 w-full sm:w-auto">
+            <button
+              type="button"
+              onClick={() => onChoose('out_inventory')}
+              className="group inline-flex items-center gap-2 rounded-full border border-[#1B4676]/20 bg-white px-3.5 py-2 text-sm font-semibold text-[#1B4676] hover:bg-[#1B4676]/5 hover:border-[#1B4676]/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#1B4676] focus-visible:ring-offset-2 transition shadow-sm"
+              title="Container inventory dashboard"
+            >
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth={2}
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                className="w-4 h-4 text-[#1B4676]"
+                aria-hidden
+              >
+                <rect width="7" height="7" x="3" y="3" rx="1" />
+                <rect width="7" height="7" x="14" y="3" rx="1" />
+                <rect width="7" height="7" x="14" y="14" rx="1" />
+                <rect width="7" height="7" x="3" y="14" rx="1" />
+              </svg>
+              <span>Container inventory</span>
+              {!inventoryBusy && inventory && (
+                <span className="text-[11px] font-mono text-slate-500 ml-1">
+                  {inventory.container_count}
+                </span>
+              )}
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth={2}
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                className="w-3.5 h-3.5 ml-0.5 text-slate-400 group-hover:text-[#1B4676] group-hover:translate-x-0.5 transition-transform"
+                aria-hidden
+              >
+                <path d="M5 12h14" />
+                <path d="m12 5 7 7-7 7" />
+              </svg>
+            </button>
+            <Link
+              to="/vendor/master-list"
+              className="group inline-flex items-center gap-2 rounded-full border border-[#0093D0]/30 bg-white px-3.5 py-2 text-sm font-semibold text-[#0093D0] hover:bg-[#0093D0]/5 hover:border-[#0093D0]/50 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#0093D0] focus-visible:ring-offset-2 transition shadow-sm"
+              title="Master inventory sheet — every brand under your account"
+            >
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth={2}
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                className="w-4 h-4 text-[#0093D0]"
+                aria-hidden
+              >
+                <path d="M3 3h18v18H3z" />
+                <path d="M3 9h18" />
+                <path d="M3 15h18" />
+                <path d="M9 3v18" />
+                <path d="M15 3v18" />
+              </svg>
+              <span>Master sheet</span>
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth={2}
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                className="w-3.5 h-3.5 ml-0.5 text-slate-400 group-hover:text-[#0093D0] group-hover:translate-x-0.5 transition-transform"
+                aria-hidden
+              >
+                <path d="M5 12h14" />
+                <path d="m12 5 7 7-7 7" />
+              </svg>
+            </Link>
+          </div>
         </div>
 
-        {/* Container inventory summary — live across all your inbound
-            containers. Placed AT THE TOP of the hub: stock check is the
-            most-frequent visit reason for returning vendors, so it
-            should be the first thing they see after sign-in (above the
-            inbound/outbound action tiles). */}
-        <button
-          type="button"
-          onClick={() => onChoose('out_inventory')}
-          className="group mt-10 w-full text-left rounded-2xl border border-slate-200 bg-white hover:border-[#1B4676]/50 hover:shadow-[0_24px_60px_-20px_rgba(15,23,42,0.18)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#1B4676] focus-visible:ring-offset-2 transition-all duration-200 overflow-hidden"
-          style={{
-            boxShadow:
-              '0 1px 2px 0 rgba(15,23,42,0.04), 0 8px 24px -8px rgba(15,23,42,0.08)',
-          }}
-        >
-          <div className="p-5 sm:p-6 flex flex-col sm:flex-row sm:items-center gap-5">
-            <div className="flex items-center gap-3">
-              <div
-                className="w-10 h-10 rounded-md bg-[#1B4676]/10 flex items-center justify-center text-[#1B4676]"
-                aria-hidden
-              >
-                <svg
-                  xmlns="http://www.w3.org/2000/svg"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth={2}
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  className="w-5 h-5"
-                >
-                  <rect width="7" height="7" x="3" y="3" rx="1" />
-                  <rect width="7" height="7" x="14" y="3" rx="1" />
-                  <rect width="7" height="7" x="14" y="14" rx="1" />
-                  <rect width="7" height="7" x="3" y="14" rx="1" />
-                </svg>
-              </div>
-              <div className="leading-tight">
-                <div className="text-[10.5px] uppercase tracking-[0.18em] font-bold text-[#1B4676]">
-                  Container inventory
-                </div>
-                <div className="text-sm font-semibold text-[#1B4676]">
-                  {inventoryBusy
-                    ? 'Loading…'
-                    : inventory
-                    ? `${inventory.container_count} container${inventory.container_count === 1 ? '' : 's'} on hand`
-                    : 'Open the dashboard'}
-                </div>
-              </div>
-            </div>
 
-            <div className="sm:ml-auto grid grid-cols-3 gap-3 sm:gap-5">
-              <SummaryStat
-                label="Inbound"
-                value={inventory ? inventory.total_inbound : null}
-                tone="slate"
-              />
-              <SummaryStat
-                label="Outbound"
-                value={inventory ? inventory.total_outbound : null}
-                tone="navy"
-              />
-              <SummaryStat
-                label="Pending"
-                value={inventory ? inventory.total_pending : null}
-                tone="yellow"
-              />
-            </div>
-
-            <span
-              className="hidden sm:inline-flex items-center gap-1 text-sm font-bold text-[#1B4676] group-hover:translate-x-1 transition-transform"
-              aria-hidden
-            >
-              <span>Open</span>
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth={2}
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                className="w-4 h-4"
-              >
-                <path d="M5 12h14" />
-                <path d="m12 5 7 7-7 7" />
-              </svg>
-            </span>
-          </div>
-        </button>
-
-        {/* Master inventory sheet — full row-per-container view across
-            every brand the JWT can access. TQL logins see Lime + Pan
-            American Wire + Boviet Solar + National Plastic on the same
-            sheet (filterable). Direct-brand logins see only their brand. */}
-        <Link
-          to="/vendor/master-list"
-          className="group mt-4 block w-full text-left rounded-2xl border border-slate-200 bg-white hover:border-[#0093D0]/50 hover:shadow-[0_24px_60px_-20px_rgba(15,23,42,0.18)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#0093D0] focus-visible:ring-offset-2 transition-all duration-200 overflow-hidden"
-          style={{
-            boxShadow:
-              '0 1px 2px 0 rgba(15,23,42,0.04), 0 8px 24px -8px rgba(15,23,42,0.08)',
-          }}
-        >
-          <div className="p-5 sm:p-6 flex flex-col sm:flex-row sm:items-center gap-5">
-            <div className="flex items-center gap-3">
-              <div
-                className="w-10 h-10 rounded-md bg-[#0093D0]/10 flex items-center justify-center text-[#0093D0]"
-                aria-hidden
-              >
-                <svg
-                  xmlns="http://www.w3.org/2000/svg"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth={2}
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  className="w-5 h-5"
-                >
-                  <path d="M3 3h18v18H3z" />
-                  <path d="M3 9h18" />
-                  <path d="M3 15h18" />
-                  <path d="M9 3v18" />
-                  <path d="M15 3v18" />
-                </svg>
-              </div>
-              <div className="leading-tight">
-                <div className="text-[10.5px] uppercase tracking-[0.18em] font-bold text-[#0093D0]">
-                  Master inventory sheet
-                </div>
-                <div className="text-sm font-semibold text-[#1B4676]">
-                  Full inbound + outbound row per container, across every
-                  brand under your account.
-                </div>
-              </div>
-            </div>
-            <span
-              className="sm:ml-auto hidden sm:inline-flex items-center gap-1 text-sm font-bold text-[#0093D0] group-hover:translate-x-1 transition-transform"
-              aria-hidden
-            >
-              <span>Open</span>
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth={2}
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                className="w-4 h-4"
-              >
-                <path d="M5 12h14" />
-                <path d="m12 5 7 7-7 7" />
-              </svg>
-            </span>
-          </div>
-        </Link>
-
-        {/* Inbound / Outbound action tiles — primary verbs (submit / update
-            / view shipments + transfer orders). Moved BELOW the inventory
-            tiles per Tiana 2026-05-27: returning vendors hit inventory
-            views more often than they submit fresh shipments, so visibility
-            of inventory > visibility of the action chooser. */}
-        <div className="mt-10 grid grid-cols-1 sm:grid-cols-2 gap-6">
+        {/* INBOUND / OUTBOUND — primary action tiles. Inventory tiles
+            moved out of the scroll flow into header pills above. */}
+        <div className="mt-12 grid grid-cols-1 sm:grid-cols-2 gap-6">
           <DirectionTile
             label="INBOUND"
             tagline="Shipments arriving at our dock"
