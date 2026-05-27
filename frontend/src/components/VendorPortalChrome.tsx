@@ -142,36 +142,94 @@ export default function VendorPortalChrome({
         />
       </header>
 
-      {/* Breadcrumb */}
+      {/* Breadcrumb row — breadcrumb on the left, inventory quick-link
+          pills floated to the top-right when signed in. Pills live in
+          the chrome (not the page) so they're available across every
+          vendor page from the same fixed location. */}
       <nav
         aria-label="Breadcrumb"
         className="relative z-10 border-b border-slate-200 bg-white/80 backdrop-blur"
       >
-        <ol className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3 flex items-center gap-2 text-sm text-slate-500">
-          <li className="flex items-center gap-2">
-            {onBack ? (
-              <button
-                type="button"
-                onClick={onBack}
-                className="inline-flex items-center gap-2 hover:text-[#0B1828] transition group focus:outline-none focus-visible:ring-2 focus-visible:ring-[#0093D0] rounded-sm"
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3 flex items-center justify-between gap-3 flex-wrap">
+          <ol className="flex items-center gap-2 text-sm text-slate-500">
+            <li className="flex items-center gap-2">
+              {onBack ? (
+                <button
+                  type="button"
+                  onClick={onBack}
+                  className="inline-flex items-center gap-2 hover:text-[#0B1828] transition group focus:outline-none focus-visible:ring-2 focus-visible:ring-[#0093D0] rounded-sm"
+                >
+                  <LayoutDashboardIcon className="w-4 h-4 text-[#0093D0]" />
+                  <span className="group-hover:underline">Vendor Portal</span>
+                </button>
+              ) : (
+                <span className="inline-flex items-center gap-2">
+                  <LayoutDashboardIcon className="w-4 h-4 text-[#0093D0]" />
+                  <span>Vendor Portal</span>
+                </span>
+              )}
+            </li>
+            <li aria-hidden>
+              <ChevronRightIcon className="w-4 h-4 text-slate-300" />
+            </li>
+            <li aria-current="page" className="text-[#0B1828] font-semibold">
+              {breadcrumbCurrent}
+            </li>
+          </ol>
+
+          {isLoggedIn && (
+            <div className="flex items-center gap-2">
+              <Link
+                to="/vendor-intake?mode=out_inventory"
+                title="Container inventory dashboard"
+                className="group inline-flex items-center gap-2 rounded-full border border-[#1B4676]/20 bg-white px-3 py-1.5 text-xs font-semibold text-[#1B4676] hover:bg-[#1B4676]/5 hover:border-[#1B4676]/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#1B4676] focus-visible:ring-offset-2 transition shadow-sm"
               >
-                <LayoutDashboardIcon className="w-4 h-4 text-[#0093D0]" />
-                <span className="group-hover:underline">Vendor Portal</span>
-              </button>
-            ) : (
-              <span className="inline-flex items-center gap-2">
-                <LayoutDashboardIcon className="w-4 h-4 text-[#0093D0]" />
-                <span>Vendor Portal</span>
-              </span>
-            )}
-          </li>
-          <li aria-hidden>
-            <ChevronRightIcon className="w-4 h-4 text-slate-300" />
-          </li>
-          <li aria-current="page" className="text-[#0B1828] font-semibold">
-            {breadcrumbCurrent}
-          </li>
-        </ol>
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth={2}
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  className="w-3.5 h-3.5 text-[#1B4676]"
+                  aria-hidden
+                >
+                  <rect width="7" height="7" x="3" y="3" rx="1" />
+                  <rect width="7" height="7" x="14" y="3" rx="1" />
+                  <rect width="7" height="7" x="14" y="14" rx="1" />
+                  <rect width="7" height="7" x="3" y="14" rx="1" />
+                </svg>
+                <span className="hidden sm:inline">Container inventory</span>
+                <span className="sm:hidden">Inventory</span>
+              </Link>
+              <Link
+                to="/vendor/master-list"
+                title="Master inventory sheet"
+                className="group inline-flex items-center gap-2 rounded-full border border-[#0093D0]/30 bg-white px-3 py-1.5 text-xs font-semibold text-[#0093D0] hover:bg-[#0093D0]/5 hover:border-[#0093D0]/50 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#0093D0] focus-visible:ring-offset-2 transition shadow-sm"
+              >
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth={2}
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  className="w-3.5 h-3.5 text-[#0093D0]"
+                  aria-hidden
+                >
+                  <path d="M3 3h18v18H3z" />
+                  <path d="M3 9h18" />
+                  <path d="M3 15h18" />
+                  <path d="M9 3v18" />
+                  <path d="M15 3v18" />
+                </svg>
+                <span>Master sheet</span>
+              </Link>
+            </div>
+          )}
+        </div>
       </nav>
 
       {isLoggedIn ? (

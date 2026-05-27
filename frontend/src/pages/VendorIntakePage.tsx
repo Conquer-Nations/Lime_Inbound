@@ -1335,112 +1335,19 @@ function DirectionChooser({
   return (
     <VendorPortalShell breadcrumb="Choose direction">
       <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-12 sm:py-16">
-        {/* Page header — H1 on the left, compact inventory quick-link
-            pills on the top right. Keeps inventory entry points visible
-            without scrolling AND without displacing the primary INBOUND/
-            OUTBOUND action tiles below. Sidebar still surfaces these too. */}
-        <div className="flex items-start justify-between gap-6 flex-wrap-reverse">
-          <div className="max-w-3xl flex-1 min-w-0">
-            <div className="inline-flex items-center gap-2 px-2.5 py-1 rounded-full bg-[#0093D0]/10 border border-[#0093D0]/25 text-[#1B4676] text-[11px] font-semibold tracking-[0.14em] uppercase mb-5">
-              <span className="w-1.5 h-1.5 rounded-full bg-[#0093D0]" aria-hidden />
-              Vendor Portal
-            </div>
-            <h1 className="text-3xl sm:text-4xl lg:text-[2.75rem] font-bold tracking-tight text-[#1B4676] leading-[1.1]">
-              What are you doing today?
-            </h1>
-            <p className="mt-4 text-base sm:text-lg text-slate-600 max-w-2xl leading-relaxed">
-              Pick the direction of your shipment. Inbound means a shipment is
-              arriving at Conquer Nation. Outbound means we ship items from the
-              warehouse to your customer.
-            </p>
+        <div className="max-w-3xl">
+          <div className="inline-flex items-center gap-2 px-2.5 py-1 rounded-full bg-[#0093D0]/10 border border-[#0093D0]/25 text-[#1B4676] text-[11px] font-semibold tracking-[0.14em] uppercase mb-5">
+            <span className="w-1.5 h-1.5 rounded-full bg-[#0093D0]" aria-hidden />
+            Vendor Portal
           </div>
-
-          {/* Inventory quick-link pills — shown on the top right of the
-              hub. Compact so they don't push INBOUND/OUTBOUND below the
-              fold. The full sidebar links to the same destinations. */}
-          <div className="flex flex-col gap-2 shrink-0 w-full sm:w-auto">
-            <button
-              type="button"
-              onClick={() => onChoose('out_inventory')}
-              className="group inline-flex items-center gap-2 rounded-full border border-[#1B4676]/20 bg-white px-3.5 py-2 text-sm font-semibold text-[#1B4676] hover:bg-[#1B4676]/5 hover:border-[#1B4676]/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#1B4676] focus-visible:ring-offset-2 transition shadow-sm"
-              title="Container inventory dashboard"
-            >
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth={2}
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                className="w-4 h-4 text-[#1B4676]"
-                aria-hidden
-              >
-                <rect width="7" height="7" x="3" y="3" rx="1" />
-                <rect width="7" height="7" x="14" y="3" rx="1" />
-                <rect width="7" height="7" x="14" y="14" rx="1" />
-                <rect width="7" height="7" x="3" y="14" rx="1" />
-              </svg>
-              <span>Container inventory</span>
-              {!inventoryBusy && inventory && (
-                <span className="text-[11px] font-mono text-slate-500 ml-1">
-                  {inventory.container_count}
-                </span>
-              )}
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth={2}
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                className="w-3.5 h-3.5 ml-0.5 text-slate-400 group-hover:text-[#1B4676] group-hover:translate-x-0.5 transition-transform"
-                aria-hidden
-              >
-                <path d="M5 12h14" />
-                <path d="m12 5 7 7-7 7" />
-              </svg>
-            </button>
-            <Link
-              to="/vendor/master-list"
-              className="group inline-flex items-center gap-2 rounded-full border border-[#0093D0]/30 bg-white px-3.5 py-2 text-sm font-semibold text-[#0093D0] hover:bg-[#0093D0]/5 hover:border-[#0093D0]/50 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#0093D0] focus-visible:ring-offset-2 transition shadow-sm"
-              title="Master inventory sheet — every brand under your account"
-            >
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth={2}
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                className="w-4 h-4 text-[#0093D0]"
-                aria-hidden
-              >
-                <path d="M3 3h18v18H3z" />
-                <path d="M3 9h18" />
-                <path d="M3 15h18" />
-                <path d="M9 3v18" />
-                <path d="M15 3v18" />
-              </svg>
-              <span>Master sheet</span>
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth={2}
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                className="w-3.5 h-3.5 ml-0.5 text-slate-400 group-hover:text-[#0093D0] group-hover:translate-x-0.5 transition-transform"
-                aria-hidden
-              >
-                <path d="M5 12h14" />
-                <path d="m12 5 7 7-7 7" />
-              </svg>
-            </Link>
-          </div>
+          <h1 className="text-3xl sm:text-4xl lg:text-[2.75rem] font-bold tracking-tight text-[#1B4676] leading-[1.1]">
+            What are you doing today?
+          </h1>
+          <p className="mt-4 text-base sm:text-lg text-slate-600 max-w-2xl leading-relaxed">
+            Pick the direction of your shipment. Inbound means a shipment is
+            arriving at Conquer Nation. Outbound means we ship items from the
+            warehouse to your customer.
+          </p>
         </div>
 
 
