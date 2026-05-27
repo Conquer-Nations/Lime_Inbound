@@ -51,14 +51,50 @@ from app.config import settings  # noqa: E402
 from app.models import (  # noqa: E402
     Account,
     Container,
+    ContainerLine,
     Customer,
     DO,
     OutboundContainer,
+    OutboundLine,
     OutboundOrder,
+    SKU,
     WHPO,
 )
 
 ISO6346 = re.compile(r"^[A-Z]{4}\d{7}$")
+
+# Source-data normalization tables. Derived from analysis of the Jan-2026
+# Lime mastersheet — see HANDOFF.md "Historical import" notes.
+LPN_ALIAS = {
+    3473: 3743,   # Typo: 3473 was supposed to be 3743 (per Tiana, 2026-05-26)
+}
+COMMODITY_ALIAS = {
+    "GLIDER": "GLIDERS",
+    "GLIDERS ": "GLIDERS",
+}
+# When we encounter an LPN not yet in the SKU table, we auto-seed it with
+# these defaults inferred from sibling rows in the same commodity.
+# Format: LPN (int) → (description, product_type, units_per_pallet, sqft/unit)
+# These come from observed averages in HISTORICAL DATA.xlsx.
+LPN_AUTOSEED_TEMPLATE = {
+    "N-E-BIKE":  {"items_per_pallet": 3,  "sqft_per_unit": 7.8,  "description_fmt": "Lime N-E-Bike (LPN-{lpn})"},
+    "GLIDERS":   {"items_per_pallet": 2,  "sqft_per_unit": 10.2, "description_fmt": "Lime Glider (LPN-{lpn})"},
+    "SCOOTERS":  {"items_per_pallet": 10, "sqft_per_unit": 2.0,  "description_fmt": "Lime Scooter (LPN-{lpn})"},
+}
+
+
+def lpn_to_sku_code(lpn_value: Any) -> str | None:
+    """Source data has 4-digit LPN integers. Platform's SKU master uses
+    LPN-NNNNNN (6 digits, zero-padded). Returns None if unparseable
+    (e.g. 'BROGHT BACK', 'EMPTY P/U', '3742/3743')."""
+    if lpn_value is None:
+        return None
+    try:
+        n = int(float(str(lpn_value).strip()))
+    except (TypeError, ValueError):
+        return None
+    n = LPN_ALIAS.get(n, n)
+    return f"LPN-{n:06d}"
 
 
 # ─── Helpers ────────────────────────────────────────────────────────
@@ -118,11 +154,20 @@ def load_rows(xlsx_path: Path) -> list[dict[str, Any]]:
         container = _norm(raw.get("CONTAINER"))
         if container:
             container = container.upper().replace(" ", "")
+        commodity = _norm(raw.get("COMMODITY"))
+        # Normalize commodity typos ("GLIDER" → "GLIDERS", trailing space)
+        if commodity:
+            commodity = COMMODITY_ALIAS.get(commodity, commodity).upper()
+        # Normalize SCANNED ("YES " → "YES", " " → None, "PENDING" → None)
+        scanned_raw = _norm(raw.get("SCANNED"))
+        scanned = scanned_raw.upper() if scanned_raw else None
+        scanned_bool = scanned == "YES"
+
         rows.append(
             {
                 "_excel_row": len(rows) + 2,  # +1 header, +1 zero-index
                 "invoice": _norm(raw.get("invoice")),
-                "commodity": _norm(raw.get("COMMODITY")),
+                "commodity": commodity,
                 "container_no": container,
                 "whpo_number": _norm(raw.get("WHPO / LOAD #")),
                 "carrier": _norm(raw.get("CARRIER / BROKER")),
@@ -139,11 +184,59 @@ def load_rows(xlsx_path: Path) -> list[dict[str, Any]]:
                 "units_out": _to_int(raw.get("UNITS.1")),
                 "sqft_out": _to_int(raw.get("SQ FT.1")),
                 "total_sqft_out": _to_int(raw.get("TOTAL SQ FT.1")),
-                "scanned": _norm(raw.get("SCANNED")),
-                "lpn": _norm(raw.get("LPN")),
+                "scanned": scanned_bool,
+                "sku_code": lpn_to_sku_code(raw.get("LPN")),
+                "lpn_raw": _norm(raw.get("LPN")),
             }
         )
     return rows
+
+
+def backfill_sku_by_container(rows: list[dict[str, Any]]) -> int:
+    """In the source data, LPN is only stamped on the inbound leg of a
+    container. Outbound legs (same container_no, different TO row) share
+    the same physical contents but have a blank LPN. Walk rows once,
+    build a {container_no → sku_code} index from inbound legs, then
+    back-fill sku_code on every row missing one for the same container.
+    Returns count of rows that received an inherited SKU."""
+    inbound_sku: dict[str, str] = {}
+    for r in rows:
+        if r["sku_code"] and r["received_date"]:
+            inbound_sku.setdefault(r["container_no"], r["sku_code"])
+    filled = 0
+    for r in rows:
+        if not r["sku_code"] and r["container_no"] in inbound_sku:
+            r["sku_code"] = inbound_sku[r["container_no"]]
+            r["_sku_inherited"] = True
+            filled += 1
+    return filled
+
+
+# When neither the row nor any sibling row for the same container has an
+# LPN, fall back to the primary SKU for the commodity. Loses model-year
+# variant info (e.g. could be LPN-003176 OR LPN-004003 for N-E-BIKE) but
+# preserves qty info for billing accuracy. Per Tiana 2026-05-26.
+COMMODITY_PRIMARY_SKU = {
+    "GLIDERS":  "LPN-003176",
+    "N-E-BIKE": "LPN-003174",
+    "SCOOTERS": "LPN-003743",
+}
+
+
+def backfill_sku_by_commodity(rows: list[dict[str, Any]]) -> int:
+    """Last-resort fallback: rows whose commodity is known but for which
+    no row in the entire dataset ever recorded an LPN for the container.
+    Maps each commodity to its primary SKU. Returns count of rows that
+    received a commodity-default SKU."""
+    filled = 0
+    for r in rows:
+        if not r["sku_code"] and r["commodity"]:
+            default = COMMODITY_PRIMARY_SKU.get(r["commodity"])
+            if default:
+                r["sku_code"] = default
+                r["_sku_commodity_default"] = True
+                filled += 1
+    return filled
 
 
 def validate(rows: list[dict[str, Any]]) -> tuple[list[dict], list[dict]]:
@@ -164,12 +257,71 @@ def validate(rows: list[dict[str, Any]]) -> tuple[list[dict], list[dict]]:
             r["_skip_reason"] = "no WHPO number"
             skipped.append(r)
             continue
+        # WHPO must be 8-digit numeric (platform business rule). Strings
+        # like "NEED PO" are unmappable.
+        if not r["whpo_number"].isdigit():
+            r["_skip_reason"] = f"non-numeric WHPO: {r['whpo_number']!r}"
+            skipped.append(r)
+            continue
         if not r["commodity"]:
             r["_skip_reason"] = "no commodity (cannot infer brand)"
             skipped.append(r)
             continue
         ok.append(r)
     return ok, skipped
+
+
+def resolve_or_create_skus(
+    session: Session, rows: list[dict[str, Any]], customer_id: int, commit: bool
+) -> dict[str, int]:
+    """Look up each distinct sku_code in the SKU table. Auto-seed any
+    that don't exist using the LPN_AUTOSEED_TEMPLATE shape for the row's
+    commodity. Returns a {sku_code: sku_id} map. When commit=False, new
+    SKUs are added to the session but the caller's transaction handles
+    rollback."""
+    needed: dict[str, str] = {}  # sku_code → commodity hint
+    for r in rows:
+        if r["sku_code"] and r["sku_code"] not in needed:
+            needed[r["sku_code"]] = r["commodity"] or "UNKNOWN"
+
+    existing = {
+        s.sku: s.id
+        for s in session.execute(
+            select(SKU).where(SKU.customer_id == customer_id, SKU.sku.in_(needed.keys()))
+        ).scalars()
+    }
+
+    auto_seeded: list[str] = []
+    for sku_code, commodity in needed.items():
+        if sku_code in existing:
+            continue
+        template = LPN_AUTOSEED_TEMPLATE.get(commodity, {
+            "items_per_pallet": 1,
+            "sqft_per_unit": 20.0,
+            "description_fmt": f"Lime {commodity} ({{lpn}})",
+        })
+        lpn_digits = sku_code.split("-")[-1]
+        s = SKU(
+            customer_id=customer_id,
+            sku=sku_code,
+            description=template["description_fmt"].format(lpn=lpn_digits),
+            product_type=commodity,
+            sqft_per_unit=template["sqft_per_unit"],
+            items_per_pallet=template["items_per_pallet"],
+            pallet_sqft=20.0,
+            pallet_mode="logical",
+            stackable=False,
+            unit="each",
+            source="manager_admin",
+        )
+        session.add(s)
+        session.flush()
+        existing[sku_code] = s.id
+        auto_seeded.append(sku_code)
+
+    if auto_seeded:
+        print(f"  ↪ auto-seeded {len(auto_seeded)} new SKU(s): {', '.join(sorted(auto_seeded))}")
+    return existing
 
 
 # ─── DB stage builders (don't actually insert in dry-run) ───────────
@@ -201,6 +353,12 @@ def stage_inserts(
         c for (c,) in session.execute(select(OutboundContainer.container_no)).all()
     }
 
+    existing_sku_codes = {
+        s for (s,) in session.execute(
+            select(SKU.sku).where(SKU.customer_id == customer.id)
+        ).all()
+    }
+
     plan = {
         "customer_id": customer.id,
         "customer_name": customer.name,
@@ -212,8 +370,14 @@ def stage_inserts(
         "existing_outbound_orders": [],
         "new_outbound_containers": [],
         "existing_outbound_containers": [],
+        "new_skus": set(),
+        "existing_skus": set(),
+        "container_lines_to_insert": 0,
+        "outbound_lines_to_insert": 0,
+        "rows_missing_sku": 0,
         "carrier_counts": Counter(),
     }
+    seen_to_sku: set[tuple[str, str]] = set()
     for r in rows:
         plan["carrier_counts"][r["carrier"] or "(blank)"] += 1
         if r["whpo_number"] in existing_whpos:
@@ -233,6 +397,21 @@ def stage_inserts(
                 plan["existing_outbound_containers"].append(r["container_no"])
             else:
                 plan["new_outbound_containers"].append(r["container_no"])
+        # SKU + line accounting
+        if r["sku_code"]:
+            if r["sku_code"] in existing_sku_codes:
+                plan["existing_skus"].add(r["sku_code"])
+            else:
+                plan["new_skus"].add(r["sku_code"])
+            if r["received_date"] and r["units_in"]:
+                plan["container_lines_to_insert"] += 1
+            if r["to_number"] and r["units_out"]:
+                key = (r["to_number"], r["sku_code"])
+                if key not in seen_to_sku:
+                    plan["outbound_lines_to_insert"] += 1
+                    seen_to_sku.add(key)
+        else:
+            plan["rows_missing_sku"] += 1
 
     # Dedupe — WHPOs and TOs can appear on multiple rows (multi-container
     # loads). We only want one row in the table.
@@ -251,6 +430,15 @@ def apply_inserts(
     customer = session.scalar(select(Customer).where(Customer.name == customer_name))
     assert customer is not None  # validated upstream
 
+    # Resolve LPN→SKU mapping (auto-seeds new SKUs as a side effect).
+    sku_map = resolve_or_create_skus(session, rows, customer.id, commit=True)
+
+    # Containers map for outbound line `source_container_no` (FIFO hint).
+    container_no_to_id: dict[str, int] = {}
+
+    # Track container_id per container_no for line insertion later.
+    new_container_ids: dict[str, int] = {}
+
     # Pre-load existing key sets so each row is O(1).
     existing_whpos: dict[str, int] = {
         w: i for (i, w) in session.execute(select(WHPO.id, WHPO.whpo_number)).all()
@@ -258,8 +446,8 @@ def apply_inserts(
     existing_dos: dict[int, int] = {
         w: i for (i, w) in session.execute(select(DO.id, DO.whpo_id)).all()
     }
-    existing_containers = {
-        c for (c,) in session.execute(select(Container.container_no)).all()
+    existing_containers: dict[str, int] = {
+        c: i for (i, c) in session.execute(select(Container.id, Container.container_no)).all()
     }
     existing_tos: dict[str, int] = {
         t: i
@@ -270,10 +458,12 @@ def apply_inserts(
     existing_out_containers = {
         c for (c,) in session.execute(select(OutboundContainer.container_no)).all()
     }
-    # DO# generator — find max existing internal DO# and continue.
-    max_do = session.scalar(select(DO.do_number)) or "DO-HIST-000000"
-    # We use a separate prefix "DO-HIST-" so we never collide with the
-    # production "DO-2026-####" sequence the runtime uses.
+    # Track which (outbound_order_id, sku_id) combos already have a line
+    # in this import run — avoids duplicates if the same TO appears on
+    # multiple rows.
+    seen_outbound_lines: set[tuple[int, int]] = set()
+    # DO# generator — internal "DO-HIST-####" prefix so we never collide
+    # with the production "DO-2026-####" sequence the runtime uses.
     do_seq = 1
 
     for r in rows:
@@ -321,7 +511,8 @@ def apply_inserts(
         do_id = existing_dos[whpo_id]
 
         # 3. Container (skip if exists)
-        if r["container_no"] not in existing_containers:
+        container_id = existing_containers.get(r["container_no"])
+        if container_id is None:
             received_dt = (
                 datetime.combine(r["received_date"], time(0, 0)).replace(
                     tzinfo=timezone.utc
@@ -333,14 +524,32 @@ def apply_inserts(
                 container_no=r["container_no"],
                 do_id=do_id,
                 actual_arrival_date=r["received_date"],
-                status="finished" if r["scanned"] == "YES" else "expected",
-                finished_at=received_dt if r["scanned"] == "YES" else None,
+                status="finished" if r["scanned"] else "expected",
+                finished_at=received_dt if r["scanned"] else None,
                 driver_name=r["driver_name"],
                 carrier=r["carrier"],
             )
             session.add(container)
             session.flush()
-            existing_containers.add(r["container_no"])
+            container_id = container.id
+            existing_containers[r["container_no"]] = container_id
+
+        # 3b. ContainerLine (one per row that has inbound qty + SKU).
+        # Only the inbound leg of a row (RECEIVED DATE + UNITS populated)
+        # represents stock arriving. Outbound legs share the same container
+        # number but are recorded via OutboundLine below.
+        if r["received_date"] and r["units_in"] and r["sku_code"]:
+            sku_id = sku_map.get(r["sku_code"])
+            session.add(
+                ContainerLine(
+                    container_id=container_id,
+                    sku_id=sku_id,
+                    sku_raw=r["sku_code"],
+                    qty=r["units_in"],
+                    line_index=1,
+                    product_type=r["commodity"],
+                )
+            )
 
         # 4. OutboundOrder (skip if exists)
         to_id = existing_tos.get(r["to_number"]) if r["to_number"] else None
@@ -361,6 +570,28 @@ def apply_inserts(
             session.flush()
             to_id = order.id
             existing_tos[r["to_number"]] = to_id
+
+        # 4b. OutboundLine (SKU + qty shipped). One per (TO, SKU) combo
+        # per row. The historical data has 1 row = 1 outbound shipment, so
+        # we don't need to aggregate across rows.
+        if r["to_number"] and to_id is not None and r["units_out"] and r["sku_code"]:
+            sku_id = sku_map.get(r["sku_code"])
+            key = (to_id, sku_id) if sku_id else (to_id, hash(r["sku_code"]))
+            if key not in seen_outbound_lines:
+                session.add(
+                    OutboundLine(
+                        outbound_order_id=to_id,
+                        line_no=1,
+                        sku_id=sku_id,
+                        sku_raw=r["sku_code"],
+                        description=r["commodity"],
+                        order_qty=r["units_out"],
+                        unit="EA",
+                        serial_specific=False,
+                        source_container_no=r["container_no"],
+                    )
+                )
+                seen_outbound_lines.add(key)
 
         # 5. OutboundContainer (one per BIC shipped, links inbound→outbound)
         if (
@@ -424,6 +655,17 @@ def print_report(rows_ok: list[dict], rows_skipped: list[dict], plan: dict) -> N
     print("\n── Outbound Containers (BIC→TO links) ──")
     print(f"  will insert: {len(plan['new_outbound_containers'])}")
     print(f"  already in DB: {len(plan['existing_outbound_containers'])}")
+
+    print("\n── SKU master ──")
+    print(f"  will auto-seed: {len(plan['new_skus'])} {sorted(plan['new_skus']) if plan['new_skus'] else ''}")
+    print(f"  already in DB: {len(plan['existing_skus'])} {sorted(plan['existing_skus']) if plan['existing_skus'] else ''}")
+
+    print("\n── Container lines (inbound SKU+qty) ──")
+    print(f"  will insert: {plan['container_lines_to_insert']}")
+    print(f"  rows skipped (no parseable LPN): {plan['rows_missing_sku']}")
+
+    print("\n── Outbound lines (TO SKU+qty shipped) ──")
+    print(f"  will insert: {plan['outbound_lines_to_insert']}")
 
     print("\n── Drayage carriers used (top 10) ──")
     for c, n in plan["carrier_counts"].most_common(10):
@@ -522,8 +764,8 @@ def main() -> int:
     parser.add_argument("xlsx", type=Path, help="Path to the historical xlsx")
     parser.add_argument(
         "--customer",
-        default="Lime Mobility",
-        help="Customer/brand name to attach every row to (default: Lime Mobility)",
+        default="Lime",
+        help="Customer/brand name to attach every row to (default: Lime)",
     )
     parser.add_argument(
         "--commit",
@@ -553,6 +795,12 @@ def main() -> int:
 
     print(f"Loading {args.xlsx} …")
     rows = load_rows(args.xlsx)
+    inherited = backfill_sku_by_container(rows)
+    if inherited:
+        print(f"Back-filled SKU on {inherited} rows from their container's inbound peer.")
+    commodity_default = backfill_sku_by_commodity(rows)
+    if commodity_default:
+        print(f"Back-filled SKU on {commodity_default} rows from commodity primary mapping (GLIDERS→003176, N-E-BIKE→003174, SCOOTERS→003743).")
     rows_ok, rows_skipped = validate(rows)
     print(f"Parsed {len(rows)} rows ({len(rows_ok)} importable, {len(rows_skipped)} skipped).")
 
