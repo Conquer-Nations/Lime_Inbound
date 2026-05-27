@@ -838,8 +838,13 @@ async def wipe_transactional_data(
     containers, lines, lot assignments, receipts, pallets, scans, exceptions,
     activity log) AND clear every row from the OneDrive Excel InboundTable.
 
-    Preserves master data: customers, seeded SKUs, floors, lots. Also
-    preserves the VendorUsers Excel sheet (real accounts).
+    Preserves master data: customers, SKUs (source IN ('seed',
+    'manager_admin') — anything seeded OR intentionally created via the
+    Manager > SKU admin), floors, lots. Also preserves the VendorUsers
+    Excel sheet (real accounts). Exception-resolved SKUs
+    (source='manager_resolve') ARE wiped — those are auto-generated from
+    the unknown-SKU exception flow and tied to specific shipments that
+    are now gone.
 
     Use for development reset / pre-production cleanup. Atomic across both
     stores so they can't drift.
@@ -895,7 +900,7 @@ async def wipe_transactional_data(
         )
     )
     await session.execute(
-        _text("DELETE FROM skus WHERE source IS DISTINCT FROM 'seed'")
+        _text("DELETE FROM skus WHERE source NOT IN ('seed', 'manager_admin')")
     )
     await session.commit()
 
