@@ -7,6 +7,7 @@ import OperatorPage from './pages/OperatorPage'
 import ManagerPage from './pages/ManagerPage'
 import VendorIntakePage from './pages/VendorIntakePage'
 import VendorInvoicesPage from './pages/VendorInvoicesPage'
+import VendorMasterListPage from './pages/VendorMasterListPage'
 import VendorLoginPage from './pages/VendorLoginPage'
 import VendorRegisterPage from './pages/VendorRegisterPage'
 import VendorForgotPasswordPage from './pages/VendorForgotPasswordPage'
@@ -48,6 +49,7 @@ export default function App() {
             <Route path="/vendor" element={<VendorWelcomePage />} />
             <Route path="/vendor-intake" element={<VendorIntakePage />} />
             <Route path="/vendor/invoices" element={<VendorInvoicesPage />} />
+            <Route path="/vendor/master-list" element={<VendorMasterListPage />} />
             <Route path="/vendor/login" element={<VendorLoginPage />} />
             <Route path="/vendor/register" element={<VendorRegisterPage />} />
             <Route

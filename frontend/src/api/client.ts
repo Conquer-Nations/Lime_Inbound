@@ -1480,6 +1480,31 @@ export const masterListApi = {
   },
 }
 
+// Vendor-facing variant. Backend filters rows to brands the JWT can
+// access — direct-brand login sees one brand; account-level login (e.g.
+// TQL Trading Inc.) sees every brand under that account.
+export const vendorMasterListApi = {
+  list: (params: {
+    customer?: string
+    since?: string
+    until?: string
+    scanned?: boolean
+    limit?: number
+    offset?: number
+  } = {}): Promise<MasterListResponse> => {
+    const q = new URLSearchParams()
+    if (params.customer) q.set('customer', params.customer)
+    if (params.since) q.set('since', params.since)
+    if (params.until) q.set('until', params.until)
+    if (params.scanned !== undefined) q.set('scanned', String(params.scanned))
+    if (params.limit != null) q.set('limit', String(params.limit))
+    if (params.offset != null) q.set('offset', String(params.offset))
+    const qs = q.toString()
+    return request<MasterListResponse>(`/vendor/master-list${qs ? `?${qs}` : ''}`)
+  },
+  brands: (): Promise<string[]> => request<string[]>('/vendor/master-list/brands'),
+}
+
 // ─── Tally sheets (POD-driven billing audit) ─────────────────────────────
 
 export interface TallySheetRead {

@@ -6,7 +6,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Up
 from fastapi.responses import FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -78,7 +78,10 @@ router = APIRouter(prefix="/vendor", tags=["vendor"])
 # helper there resolves both direct-brand matches (vendor.company ==
 # customer.name) AND account-level matches (vendor.company is an
 # Account name; customer rolls up to it via account_id).
-from app.services.vendor_scoping import enforce_company_match as _enforce_company_match
+from app.services.vendor_scoping import (
+    enforce_company_match as _enforce_company_match,
+    vendor_customer_ids,
+)
 
 
 async def _whpo_for_vendor(
@@ -1173,3 +1176,115 @@ async def get_vendor_calendar(
         window_end=data["window_end"],
         days=[CalendarDay(**d) for d in data["days"]],
     )
+
+
+@router.get("/master-list")
+async def vendor_master_list(
+    customer: str | None = None,
+    since: date | None = None,
+    until: date | None = None,
+    scanned: bool | None = None,
+    limit: int = 500,
+    offset: int = 0,
+    session: AsyncSession = Depends(get_session),
+    vendor: dict = Depends(current_vendor_required),
+):
+    """Vendor-facing mastersheet. Same shape as /manager/master-list but
+    automatically scoped to the brands the JWT can see.
+
+    Scoping pattern (see services/vendor_scoping.py):
+      - A direct-brand login (vendor.company == 'Lime') sees only Lime rows.
+      - An account-level login (vendor.company == 'TQL Trading Inc.') sees
+        every brand rolling up to that Account — e.g. Lime + Pan American
+        Wire + Boviet Solar + National Plastic for TQL.
+
+    The optional `customer` query param further narrows the result (used
+    by the dropdown to focus on one brand at a time). Anything outside
+    the scope is silently dropped — the vendor never sees other tenants'
+    customer names even via the dropdown.
+    """
+    from sqlalchemy import select as _select, bindparam, text as _text
+    from app.models import Customer as _Customer
+    from app.schemas.master_list import (
+        MasterListResponse as _MasterListResponse,
+        MasterListRow as _MasterListRow,
+    )
+
+    allowed_customer_ids = await vendor_customer_ids(session, vendor)
+    if not allowed_customer_ids:
+        return _MasterListResponse(items=[], total=0)
+
+    allowed_names_q = await session.scalars(
+        _select(_Customer.name).where(_Customer.id.in_(allowed_customer_ids))
+    )
+    allowed_names = [n for n in allowed_names_q.all() if n]
+    if not allowed_names:
+        return _MasterListResponse(items=[], total=0)
+
+    # If the caller passed `customer`, it must be one of the allowed names.
+    # Otherwise we silently ignore it — never trust the client to broaden
+    # scope. Same pattern as the existing vendor invoice endpoint.
+    if customer:
+        match = next(
+            (n for n in allowed_names if n.casefold() == customer.casefold()),
+            None,
+        )
+        if match is None:
+            return _MasterListResponse(items=[], total=0)
+        effective_names = [match]
+    else:
+        effective_names = allowed_names
+
+    where: list[str] = ["customer_name IN :brand_list"]
+    params: dict[str, object] = {"brand_list": tuple(effective_names)}
+    if since:
+        where.append("COALESCE(received_date, ship_date) >= :since")
+        params["since"] = since
+    if until:
+        where.append("COALESCE(received_date, ship_date) <= :until")
+        params["until"] = until
+    if scanned is not None:
+        where.append("scanned = :scanned")
+        params["scanned"] = scanned
+    where_clause = "WHERE " + " AND ".join(where)
+
+    rows_sql = _text(
+        f"""
+        SELECT * FROM vw_master_list
+        {where_clause}
+        ORDER BY COALESCE(received_date, ship_date) DESC NULLS LAST,
+                 container_no
+        LIMIT :limit OFFSET :offset
+        """
+    ).bindparams(bindparam("brand_list", expanding=True))
+    count_sql = _text(
+        f"SELECT COUNT(*) FROM vw_master_list {where_clause}"
+    ).bindparams(bindparam("brand_list", expanding=True))
+
+    rows_result = await session.execute(
+        rows_sql, {**params, "limit": limit, "offset": offset}
+    )
+    items = [_MasterListRow(**dict(r._mapping)) for r in rows_result]
+    total = (await session.execute(count_sql, params)).scalar_one()
+    return _MasterListResponse(items=items, total=int(total))
+
+
+@router.get("/master-list/brands")
+async def vendor_master_list_brands(
+    session: AsyncSession = Depends(get_session),
+    vendor: dict = Depends(current_vendor_required),
+) -> list[str]:
+    """List of brand names this vendor can filter by — drives the dropdown
+    on the vendor mastersheet page. Same scoping rule as /master-list."""
+    from sqlalchemy import select as _select
+    from app.models import Customer as _Customer
+
+    allowed_customer_ids = await vendor_customer_ids(session, vendor)
+    if not allowed_customer_ids:
+        return []
+    names_q = await session.scalars(
+        _select(_Customer.name)
+        .where(_Customer.id.in_(allowed_customer_ids))
+        .order_by(_Customer.name)
+    )
+    return [n for n in names_q.all() if n]

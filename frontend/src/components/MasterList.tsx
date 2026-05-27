@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { api, masterListApi } from '../api/client'
-import type { CustomerRead, MasterListRow } from '../api/client'
+import type { CustomerRead, MasterListResponse, MasterListRow } from '../api/client'
 
 /**
  * Master List — mirror of Tiana's Lime-Inventory-Sep 2025.xlsx.
@@ -15,42 +15,82 @@ import type { CustomerRead, MasterListRow } from '../api/client'
  *
  * The OneDrive Excel mirror (Lime Master Inventory.xlsx) is kept in
  * sync by the backend on every receipt-finish / outbound-finish.
+ *
+ * Renders identically for the manager portal and the vendor portal —
+ * the parent passes different `loadRows` / `loadBrands` functions to
+ * scope the data. The vendor variant hits the JWT-scoped endpoints so
+ * a TQL login auto-sees only the 4 brands rolling up to TQL.
  */
-export default function MasterList() {
+export interface MasterListVariantProps {
+  /** Fetcher for the row data (one of masterListApi.list /
+   *  vendorMasterListApi.list). */
+  loadRows?: (params: {
+    customer?: string
+    scanned?: boolean
+    limit?: number
+  }) => Promise<MasterListResponse>
+  /** Fetcher for the brand-filter dropdown options. Returns the names
+   *  in alphabetical order. Optional — if missing, the dropdown stays
+   *  empty (defaults to "All brands"). */
+  loadBrands?: () => Promise<string[]>
+}
+
+export default function MasterList(props: MasterListVariantProps = {}) {
   const [rows, setRows] = useState<MasterListRow[] | null>(null)
   const [total, setTotal] = useState(0)
   const [error, setError] = useState<string | null>(null)
   const [scannedFilter, setScannedFilter] = useState<'all' | 'scanned' | 'pending'>('all')
   const [customer, setCustomer] = useState('')
-  const [brands, setBrands] = useState<CustomerRead[]>([])
+  const [brands, setBrands] = useState<{ name: string }[]>([])
 
-  // Load the brand list once on mount so the filter dropdown is populated.
-  // Brands = Customer rows (Lime, Pan American Wire, Boviet Solar, …).
+  const loadRowsFn = props.loadRows ?? ((p) => masterListApi.list(p))
+
+  // Load brands once. The vendor variant passes a custom loadBrands that
+  // hits /vendor/master-list/brands; the manager variant falls back to
+  // the global customer list.
   useEffect(() => {
+    if (props.loadBrands) {
+      props.loadBrands()
+        .then((names) =>
+          setBrands(
+            names
+              .filter(Boolean)
+              .sort((a, b) => a.localeCompare(b))
+              .map((name) => ({ name })),
+          ),
+        )
+        .catch(() => {})
+      return
+    }
     api
       .listManagerCustomers()
-      .then((rows) => setBrands(rows.sort((a, b) => a.name.localeCompare(b.name))))
+      .then((rows: CustomerRead[]) =>
+        setBrands(
+          rows
+            .map((r) => ({ name: r.name }))
+            .sort((a, b) => a.name.localeCompare(b.name)),
+        ),
+      )
       .catch(() => {
         /* fail-soft — dropdown stays at default and the user can still
            pick "All brands" or type via the URL once we ship a free-text
            fallback. Not surfacing the error inline because the master
            sheet itself still loads fine. */
       })
-  }, [])
+  }, [props.loadBrands])
 
   function reload() {
     setError(null)
-    masterListApi
-      .list({
-        customer: customer.trim() || undefined,
-        scanned:
-          scannedFilter === 'scanned'
-            ? true
-            : scannedFilter === 'pending'
-            ? false
-            : undefined,
-        limit: 500,
-      })
+    loadRowsFn({
+      customer: customer.trim() || undefined,
+      scanned:
+        scannedFilter === 'scanned'
+          ? true
+          : scannedFilter === 'pending'
+          ? false
+          : undefined,
+      limit: 500,
+    })
       .then((r) => {
         setRows(r.items)
         setTotal(r.total)
@@ -103,7 +143,7 @@ export default function MasterList() {
             >
               <option value="">All brands</option>
               {brands.map((b) => (
-                <option key={b.id} value={b.name}>
+                <option key={b.name} value={b.name}>
                   {b.name}
                 </option>
               ))}

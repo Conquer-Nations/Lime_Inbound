@@ -1410,6 +1410,73 @@ function DirectionChooser({
           </div>
         </button>
 
+        {/* Master inventory sheet — full row-per-container view across
+            every brand the JWT can access. TQL logins see Lime + Pan
+            American Wire + Boviet Solar + National Plastic on the same
+            sheet (filterable). Direct-brand logins see only their brand. */}
+        <Link
+          to="/vendor/master-list"
+          className="group mt-4 block w-full text-left rounded-2xl border border-slate-200 bg-white hover:border-[#0093D0]/50 hover:shadow-[0_24px_60px_-20px_rgba(15,23,42,0.18)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#0093D0] focus-visible:ring-offset-2 transition-all duration-200 overflow-hidden"
+          style={{
+            boxShadow:
+              '0 1px 2px 0 rgba(15,23,42,0.04), 0 8px 24px -8px rgba(15,23,42,0.08)',
+          }}
+        >
+          <div className="p-5 sm:p-6 flex flex-col sm:flex-row sm:items-center gap-5">
+            <div className="flex items-center gap-3">
+              <div
+                className="w-10 h-10 rounded-md bg-[#0093D0]/10 flex items-center justify-center text-[#0093D0]"
+                aria-hidden
+              >
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth={2}
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  className="w-5 h-5"
+                >
+                  <path d="M3 3h18v18H3z" />
+                  <path d="M3 9h18" />
+                  <path d="M3 15h18" />
+                  <path d="M9 3v18" />
+                  <path d="M15 3v18" />
+                </svg>
+              </div>
+              <div className="leading-tight">
+                <div className="text-[10.5px] uppercase tracking-[0.18em] font-bold text-[#0093D0]">
+                  Master inventory sheet
+                </div>
+                <div className="text-sm font-semibold text-[#1B4676]">
+                  Full inbound + outbound row per container, across every
+                  brand under your account.
+                </div>
+              </div>
+            </div>
+            <span
+              className="sm:ml-auto hidden sm:inline-flex items-center gap-1 text-sm font-bold text-[#0093D0] group-hover:translate-x-1 transition-transform"
+              aria-hidden
+            >
+              <span>Open</span>
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth={2}
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                className="w-4 h-4"
+              >
+                <path d="M5 12h14" />
+                <path d="m12 5 7 7-7 7" />
+              </svg>
+            </span>
+          </div>
+        </Link>
+
         {/* Activity calendar — your inbound + outbound over the next 2 weeks. */}
         <div className="mt-12">
           <div className="flex items-baseline justify-between mb-4">
