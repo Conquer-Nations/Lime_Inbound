@@ -1350,31 +1350,15 @@ function DirectionChooser({
           </p>
         </div>
 
-        <div className="mt-12 grid grid-cols-1 sm:grid-cols-2 gap-6">
-          <DirectionTile
-            label="INBOUND"
-            tagline="Shipments arriving at our dock"
-            description="Submit a new shipment, add driver / truck details, update an existing shipment, or look up a WHPO already on file."
-            onClick={() => onChoose('choose')}
-            accent="cyan"
-          />
-          <DirectionTile
-            label="OUTBOUND"
-            tagline="Orders leaving the warehouse"
-            description="Place a Transfer Order, attach driver / truck info, update an existing order, or look up one already on file."
-            onClick={() => onChoose('out_choose')}
-            accent="navy"
-          />
-        </div>
-
         {/* Container inventory summary — live across all your inbound
-            containers. Clicking opens the full per-container dashboard.
-            Placed ABOVE the calendar — vendors most often check stock
-            before doing anything else. */}
+            containers. Placed AT THE TOP of the hub: stock check is the
+            most-frequent visit reason for returning vendors, so it
+            should be the first thing they see after sign-in (above the
+            inbound/outbound action tiles). */}
         <button
           type="button"
           onClick={() => onChoose('out_inventory')}
-          className="group mt-12 w-full text-left rounded-2xl border border-slate-200 bg-white hover:border-[#1B4676]/50 hover:shadow-[0_24px_60px_-20px_rgba(15,23,42,0.18)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#1B4676] focus-visible:ring-offset-2 transition-all duration-200 overflow-hidden"
+          className="group mt-10 w-full text-left rounded-2xl border border-slate-200 bg-white hover:border-[#1B4676]/50 hover:shadow-[0_24px_60px_-20px_rgba(15,23,42,0.18)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#1B4676] focus-visible:ring-offset-2 transition-all duration-200 overflow-hidden"
           style={{
             boxShadow:
               '0 1px 2px 0 rgba(15,23,42,0.04), 0 8px 24px -8px rgba(15,23,42,0.08)',
@@ -1522,6 +1506,28 @@ function DirectionChooser({
             </span>
           </div>
         </Link>
+
+        {/* Inbound / Outbound action tiles — primary verbs (submit / update
+            / view shipments + transfer orders). Moved BELOW the inventory
+            tiles per Tiana 2026-05-27: returning vendors hit inventory
+            views more often than they submit fresh shipments, so visibility
+            of inventory > visibility of the action chooser. */}
+        <div className="mt-10 grid grid-cols-1 sm:grid-cols-2 gap-6">
+          <DirectionTile
+            label="INBOUND"
+            tagline="Shipments arriving at our dock"
+            description="Submit a new shipment, add driver / truck details, update an existing shipment, or look up a WHPO already on file."
+            onClick={() => onChoose('choose')}
+            accent="cyan"
+          />
+          <DirectionTile
+            label="OUTBOUND"
+            tagline="Orders leaving the warehouse"
+            description="Place a Transfer Order, attach driver / truck info, update an existing order, or look up one already on file."
+            onClick={() => onChoose('out_choose')}
+            accent="navy"
+          />
+        </div>
 
         {/* Activity calendar — your inbound + outbound over the next 2 weeks. */}
         <div className="mt-12">
