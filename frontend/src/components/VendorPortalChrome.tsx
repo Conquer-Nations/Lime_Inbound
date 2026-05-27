@@ -1,7 +1,15 @@
 import { type ReactNode } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useVendorAuth } from '../auth/VendorAuthContext'
+import { isAuditor } from '../pages/AuditPage'
 import BrandMark from './BrandMark'
+import VendorSidebar, {
+  BoxIcon,
+  FileTextIcon,
+  GridIcon,
+  HistoryIcon,
+  HomeIcon,
+} from './VendorSidebar'
 
 interface Props {
   breadcrumbCurrent: string
@@ -166,7 +174,43 @@ export default function VendorPortalChrome({
         </ol>
       </nav>
 
-      <main className="relative z-10">{children}</main>
+      {isLoggedIn ? (
+        <div className="relative z-10 flex min-h-[calc(100vh-13rem)]">
+          <VendorSidebar
+            links={[
+              {
+                label: 'Home',
+                to: '/vendor-intake',
+                icon: <HomeIcon className="w-5 h-5" />,
+              },
+              {
+                label: 'Container inventory',
+                to: '/vendor-intake?mode=out_inventory',
+                icon: <BoxIcon className="w-5 h-5" />,
+              },
+              {
+                label: 'Master inventory',
+                to: '/vendor/master-list',
+                icon: <GridIcon className="w-5 h-5" />,
+              },
+              {
+                label: 'Invoices',
+                to: '/vendor/invoices',
+                icon: <FileTextIcon className="w-5 h-5" />,
+              },
+              {
+                label: 'Audit log',
+                to: '/vendor/audit',
+                icon: <HistoryIcon className="w-5 h-5" />,
+                visible: () => isAuditor(user?.email),
+              },
+            ]}
+          />
+          <main className="flex-1 min-w-0">{children}</main>
+        </div>
+      ) : (
+        <main className="relative z-10">{children}</main>
+      )}
 
       <footer
         className="relative z-10 text-white/80 mt-12"

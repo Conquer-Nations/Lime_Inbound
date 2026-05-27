@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Link, Navigate, useNavigate } from 'react-router-dom'
+import { Link, Navigate, useNavigate, useSearchParams } from 'react-router-dom'
 import { api, ApiError, SCAN_SHEETS_ENABLED } from '../api/client'
 import { useVendorAuth } from '../auth/VendorAuthContext'
 import Spinner from '../components/Spinner'
@@ -87,7 +87,53 @@ export default function VendorIntakePage() {
     vendorSignOut()
     nav('/vendor', { replace: true })
   }
-  const [mode, setMode] = useState<Mode>('direction')
+  // Honor ?mode= query param on mount + when the URL changes (e.g. the
+  // sidebar's Container inventory link sets ?mode=out_inventory). Falls
+  // back to 'direction' (the top-level chooser) when no param is given.
+  // Only a small allowlist of modes is honored from the URL — internal-
+  // only modes still go through setMode().
+  const [searchParams, setSearchParams] = useSearchParams()
+  const URL_MODES: ReadonlySet<Mode> = new Set<Mode>([
+    'direction',
+    'choose',
+    'out_choose',
+    'out_inventory',
+  ])
+  const initialMode: Mode = (() => {
+    const m = searchParams.get('mode')
+    return m && (URL_MODES as Set<string>).has(m) ? (m as Mode) : 'direction'
+  })()
+  const [mode, setModeRaw] = useState<Mode>(initialMode)
+  // Keep ?mode= in sync when the user picks tiles inside the page, so a
+  // refresh / back-button restores their place. Strip the param when we
+  // return to the default chooser so URLs stay clean.
+  const setMode = (m: Mode) => {
+    setModeRaw(m)
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev)
+        if ((URL_MODES as Set<string>).has(m) && m !== 'direction') {
+          next.set('mode', m)
+        } else {
+          next.delete('mode')
+        }
+        return next
+      },
+      { replace: true },
+    )
+  }
+  // React when the URL changes externally (e.g. sidebar Link click).
+  useEffect(() => {
+    const m = searchParams.get('mode')
+    if (m && (URL_MODES as Set<string>).has(m) && m !== mode) {
+      setModeRaw(m as Mode)
+    } else if (!m && mode !== 'direction') {
+      // Only revert if we were on a URL-driven mode; preserve internal
+      // submode choices that don't have a URL slot.
+      if ((URL_MODES as Set<string>).has(mode)) setModeRaw('direction')
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams])
   const [form, setForm] = useState<FormState>(EMPTY_FORM)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
