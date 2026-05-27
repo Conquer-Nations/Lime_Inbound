@@ -923,12 +923,28 @@ async def wipe_transactional_data(
         n = await session.scalar(_text(f"SELECT count(*) FROM {tbl}"))
         counts[tbl] = n
 
+    # Step 4: refresh the per-brand Master Inventory workbook. Without
+    # this, every brand sheet shows stale rows from before the wipe —
+    # the InboundTable + outbound mirrors got cleared above but the
+    # Master workbook is a separate OneDrive file driven by its own
+    # webhook. Best-effort: a Logic App outage shouldn't fail the wipe.
+    master_sheet_pushed = False
+    try:
+        from app.services import master_sheet_sync as _master_sheet_sync
+        if _master_sheet_sync.is_configured():
+            master_sheet_pushed = await _master_sheet_sync.push_full_replace(session)
+    except Exception as e:  # noqa: BLE001
+        logging.getLogger(__name__).warning(
+            "master_sheet_sync.push_full_replace failed during wipe-transactional: %s", e
+        )
+
     return {
         "excel_rows_deleted": excel_deleted,
         "outbound_excel_rows_deleted": outbound_rows_deleted,
         "container_inventory_rows_deleted": inventory_rows_deleted,
         "scan_worksheets_deleted": scan_sheets_deleted,
         "outbound_scan_worksheets_deleted": outbound_scan_sheets_deleted,
+        "master_sheet_pushed": master_sheet_pushed,
         "postgres_rows_remaining": counts,
         "next_do_number": "DO-2026-0001",
         "next_po_number": "PO-2026-0001",
