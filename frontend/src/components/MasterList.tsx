@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { masterListApi } from '../api/client'
-import type { MasterListRow } from '../api/client'
+import { api, masterListApi } from '../api/client'
+import type { CustomerRead, MasterListRow } from '../api/client'
 
 /**
  * Master List — mirror of Tiana's Lime-Inventory-Sep 2025.xlsx.
@@ -22,6 +22,21 @@ export default function MasterList() {
   const [error, setError] = useState<string | null>(null)
   const [scannedFilter, setScannedFilter] = useState<'all' | 'scanned' | 'pending'>('all')
   const [customer, setCustomer] = useState('')
+  const [brands, setBrands] = useState<CustomerRead[]>([])
+
+  // Load the brand list once on mount so the filter dropdown is populated.
+  // Brands = Customer rows (Lime, Pan American Wire, Boviet Solar, …).
+  useEffect(() => {
+    api
+      .listManagerCustomers()
+      .then((rows) => setBrands(rows.sort((a, b) => a.name.localeCompare(b.name))))
+      .catch(() => {
+        /* fail-soft — dropdown stays at default and the user can still
+           pick "All brands" or type via the URL once we ship a free-text
+           fallback. Not surfacing the error inline because the master
+           sheet itself still loads fine. */
+      })
+  }, [])
 
   function reload() {
     setError(null)
@@ -80,13 +95,19 @@ export default function MasterList() {
             </h2>
           </div>
           <div className="flex items-center gap-2 flex-wrap">
-            <input
-              type="text"
-              placeholder="Filter by brand (exact)…"
+            <select
               value={customer}
               onChange={(e) => setCustomer(e.target.value)}
-              className="border border-slate-300 rounded-md px-2.5 py-1 text-xs w-44"
-            />
+              className="border border-slate-300 rounded-md px-2.5 py-1 text-xs w-44 bg-white text-[#1B4676] focus:border-[#0093D0] focus:ring-2 focus:ring-[#0093D0]/20 focus:outline-none transition"
+              aria-label="Filter by brand"
+            >
+              <option value="">All brands</option>
+              {brands.map((b) => (
+                <option key={b.id} value={b.name}>
+                  {b.name}
+                </option>
+              ))}
+            </select>
             <PillGroup
               value={scannedFilter}
               onChange={(v) => setScannedFilter(v)}
