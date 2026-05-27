@@ -6,6 +6,8 @@ from datetime import date
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
+import logging
+
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -2141,3 +2143,159 @@ async def get_outbound_erp_detail(
         return await get_outbound_order_detail(session, transfer_order_no)
     except NotFound as e:
         raise HTTPException(status_code=404, detail=str(e))
+
+
+@router.delete("/outbound-orders/{transfer_order_no}", status_code=200)
+async def delete_outbound_order(
+    transfer_order_no: str,
+    session: AsyncSession = Depends(get_session),
+):
+    """Destructive: delete a Transfer Order and every child row
+    (outbound_scans, outbound_line_serials, outbound_lines,
+    outbound_containers, the order itself), then clear its rows from the
+    OneDrive Excel mirror and refresh the per-brand Master Inventory.
+
+    Refuses (HTTP 409) if an Invoice is linked to this TO — bill state
+    must be cleaned up first. Manager voids the invoice → retries delete.
+
+    Front-end gates this to developer / manager roles. Backend leaves the
+    endpoint open for now (matches the rest of /manager/*) but writes an
+    ActivityLog row so the audit trail captures who initiated the delete
+    when staff SSO lands.
+    """
+    from sqlalchemy import select as _select, delete as _delete
+    from app.models import (
+        Invoice as _Invoice,
+        OutboundContainer as _OutboundContainer,
+        OutboundLine as _OutboundLine,
+        OutboundLineSerial as _OutboundLineSerial,
+        OutboundOrder as _OutboundOrder,
+        OutboundScan as _OutboundScan,
+    )
+    from app.services import master_sheet_sync, outbound_sheet_sync
+
+    to_no = (transfer_order_no or "").strip()
+    if not to_no:
+        raise HTTPException(status_code=400, detail="transfer_order_no required")
+
+    order = (
+        await session.execute(
+            _select(_OutboundOrder).where(_OutboundOrder.transfer_order_no == to_no)
+        )
+    ).scalar_one_or_none()
+    if order is None:
+        raise HTTPException(status_code=404, detail=f"TO {to_no} not found")
+
+    # Block delete if an Invoice references this TO — protects the
+    # billing audit trail. Manager must void the invoice first.
+    invoice_count = await session.scalar(
+        _select(func.count(_Invoice.id)).where(_Invoice.outbound_order_id == order.id)
+    )
+    if invoice_count:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"TO {to_no} has {invoice_count} invoice(s) attached. Void the "
+                f"invoice(s) under Manager > Invoicing before deleting the TO."
+            ),
+        )
+
+    # Snapshot for the audit log before the cascade.
+    snapshot = {
+        "transfer_order_no": order.transfer_order_no,
+        "customer_id": order.customer_id,
+        "po_number": getattr(order, "po_number", None),
+        "status": order.status,
+        "order_date": str(order.order_date) if order.order_date else None,
+        "ship_to_name": order.ship_to_name,
+    }
+
+    # Cascade: scans (via container) → line_serials (via line) → lines →
+    # containers → order. Doing each as a single DELETE keeps the round-
+    # trip count low even on big TOs.
+    container_ids_q = _select(_OutboundContainer.id).where(
+        _OutboundContainer.outbound_order_id == order.id
+    )
+    line_ids_q = _select(_OutboundLine.id).where(
+        _OutboundLine.outbound_order_id == order.id
+    )
+
+    scans_deleted = (
+        await session.execute(
+            _delete(_OutboundScan).where(
+                _OutboundScan.outbound_container_id.in_(container_ids_q)
+            )
+        )
+    ).rowcount or 0
+    serials_deleted = (
+        await session.execute(
+            _delete(_OutboundLineSerial).where(
+                _OutboundLineSerial.line_id.in_(line_ids_q)
+            )
+        )
+    ).rowcount or 0
+    lines_deleted = (
+        await session.execute(
+            _delete(_OutboundLine).where(_OutboundLine.outbound_order_id == order.id)
+        )
+    ).rowcount or 0
+    containers_deleted = (
+        await session.execute(
+            _delete(_OutboundContainer).where(
+                _OutboundContainer.outbound_order_id == order.id
+            )
+        )
+    ).rowcount or 0
+    await session.delete(order)
+
+    session.add(
+        ActivityLog(
+            actor="manager",
+            kind="outbound_order_deleted",
+            ref_type="outbound_order",
+            ref_id=order.id,
+            message=f"TO {to_no} deleted (cascade: {containers_deleted} container(s), "
+                    f"{lines_deleted} line(s), {scans_deleted} scan(s))",
+            payload={
+                "snapshot": snapshot,
+                "cascade": {
+                    "scans": scans_deleted,
+                    "line_serials": serials_deleted,
+                    "lines": lines_deleted,
+                    "containers": containers_deleted,
+                },
+            },
+        )
+    )
+    await session.commit()
+
+    # Best-effort Excel cleanup — never blocks the response.
+    excel_outbound_deleted = 0
+    try:
+        excel_outbound_deleted = await outbound_sheet_sync.delete_outbound_rows_for_to(to_no)
+    except Exception as e:  # noqa: BLE001
+        logging.getLogger(__name__).warning(
+            "outbound_sheet_sync.delete_outbound_rows_for_to failed: %s", e
+        )
+
+    # Refresh the per-brand Master Inventory so the deleted TO drops out
+    # of every brand sheet that referenced it.
+    try:
+        if master_sheet_sync.is_configured():
+            await master_sheet_sync.push_full_replace(session)
+    except Exception as e:  # noqa: BLE001
+        logging.getLogger(__name__).warning(
+            "master_sheet_sync.push_full_replace failed after TO delete: %s", e
+        )
+
+    return {
+        "ok": True,
+        "transfer_order_no": to_no,
+        "cascade": {
+            "scans": scans_deleted,
+            "line_serials": serials_deleted,
+            "lines": lines_deleted,
+            "containers": containers_deleted,
+        },
+        "excel_outbound_rows_deleted": excel_outbound_deleted,
+    }

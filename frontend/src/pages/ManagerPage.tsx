@@ -172,7 +172,7 @@ export default function ManagerPage() {
           </div>
         )}
         {tab === 'dos' && <DOsTab data={dos} />}
-        {tab === 'tos' && <TOsTab data={tos} />}
+        {tab === 'tos' && <TOsTab data={tos} onChanged={() => refresh('tos')} />}
         {tab === 'lots' && <LotsTab data={lots} />}
         {tab === 'inbound' && <InboundView />}
         {tab === 'accounts' && <AccountAdmin />}
@@ -388,7 +388,39 @@ function DOsTab({ data }: { data: DOListItem[] | null }) {
 
 // ─── Outbound Transfer Orders tab ──────────────────────────────────────
 
-function TOsTab({ data }: { data: OutboundOrderListRow[] | null }) {
+function TOsTab({
+  data,
+  onChanged,
+}: {
+  data: OutboundOrderListRow[] | null
+  onChanged: () => void
+}) {
+  const { user } = useAuth()
+  // Delete only for developer or manager. Operators never see the column.
+  const canDelete = user?.role === 'developer' || user?.role === 'manager'
+  const [pendingDelete, setPendingDelete] = useState<OutboundOrderListRow | null>(null)
+  const [deleting, setDeleting] = useState(false)
+  const [errorMsg, setErrorMsg] = useState<string | null>(null)
+
+  async function confirmDelete() {
+    if (!pendingDelete) return
+    setDeleting(true)
+    setErrorMsg(null)
+    try {
+      await api.deleteOutboundOrder(pendingDelete.transfer_order_no)
+      setPendingDelete(null)
+      onChanged()
+    } catch (e: unknown) {
+      // Surface server-side detail (e.g. invoice-attached 409) inline.
+      const msg = (e as { detail?: string; message?: string })?.detail
+        ?? (e as { message?: string })?.message
+        ?? String(e)
+      setErrorMsg(msg)
+    } finally {
+      setDeleting(false)
+    }
+  }
+
   if (data === null) return <LoadingHint />
   if (data.length === 0)
     return (
@@ -398,71 +430,162 @@ function TOsTab({ data }: { data: OutboundOrderListRow[] | null }) {
       />
     )
   return (
-    <div
-      className="bg-white rounded-xl border border-slate-200 overflow-hidden"
-      style={{
-        boxShadow:
-          '0 1px 2px 0 rgba(15,23,42,0.04), 0 8px 24px -8px rgba(15,23,42,0.08)',
-      }}
-    >
-      <div className="bg-slate-50 border-b border-slate-200 px-4 py-2.5">
-        <h3 className="text-[11px] font-bold uppercase tracking-[0.18em] text-[#1B4676]">
-          Outbound Transfer Orders
-        </h3>
-      </div>
-      <table className="w-full text-sm">
-        <thead className="bg-white text-[10.5px] uppercase text-slate-500 border-b border-slate-200">
-          <tr>
-            <th className="text-left px-4 py-2 font-semibold tracking-wider">TO #</th>
-            <th className="text-left px-4 py-2 font-semibold tracking-wider">PO #</th>
-            <th className="text-left px-4 py-2 font-semibold tracking-wider">Customer</th>
-            <th className="text-left px-4 py-2 font-semibold tracking-wider">Status</th>
-            <th className="text-left px-4 py-2 font-semibold tracking-wider">Priority</th>
-            <th className="text-right px-4 py-2 font-semibold tracking-wider">Lines</th>
-            <th className="text-right px-4 py-2 font-semibold tracking-wider">Trucks</th>
-            <th className="text-right px-4 py-2 font-semibold tracking-wider">Picked</th>
-            <th className="text-left px-4 py-2 font-semibold tracking-wider">Order date</th>
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-slate-100">
-          {data.map((t) => (
-            <tr
-              key={t.order_id}
-              className="hover:bg-[#1B4676]/5 transition cursor-pointer"
-            >
-              <td className="px-4 py-2 font-mono font-bold">
-                <Link
-                  to={`/manager/outbound-orders/${encodeURIComponent(t.transfer_order_no)}`}
-                  className="text-[#1B4676] hover:text-[#0093D0]"
-                >
-                  {t.transfer_order_no}
-                </Link>
-              </td>
-              <td className="px-4 py-2 font-mono text-slate-600">
-                {t.po_number ?? '—'}
-              </td>
-              <td className="px-4 py-2 text-slate-700">{t.customer_name}</td>
-              <td className="px-4 py-2">
-                <StatusPill status={t.status} />
-              </td>
-              <td className="px-4 py-2 text-slate-700 capitalize">{t.priority}</td>
-              <td className="px-4 py-2 text-right text-slate-700 font-mono">
-                {t.line_count}
-              </td>
-              <td className="px-4 py-2 text-right text-slate-700 font-mono">
-                {t.truck_count}
-              </td>
-              <td className="px-4 py-2 text-right text-slate-700 font-mono">
-                {t.picked_qty}
-              </td>
-              <td className="px-4 py-2 text-slate-600 font-mono">
-                {t.order_date ?? '—'}
-              </td>
+    <>
+      <div
+        className="bg-white rounded-xl border border-slate-200 overflow-hidden"
+        style={{
+          boxShadow:
+            '0 1px 2px 0 rgba(15,23,42,0.04), 0 8px 24px -8px rgba(15,23,42,0.08)',
+        }}
+      >
+        <div className="bg-slate-50 border-b border-slate-200 px-4 py-2.5">
+          <h3 className="text-[11px] font-bold uppercase tracking-[0.18em] text-[#1B4676]">
+            Outbound Transfer Orders
+          </h3>
+        </div>
+        <table className="w-full text-sm">
+          <thead className="bg-white text-[10.5px] uppercase text-slate-500 border-b border-slate-200">
+            <tr>
+              <th className="text-left px-4 py-2 font-semibold tracking-wider">TO #</th>
+              <th className="text-left px-4 py-2 font-semibold tracking-wider">PO #</th>
+              <th className="text-left px-4 py-2 font-semibold tracking-wider">Customer</th>
+              <th className="text-left px-4 py-2 font-semibold tracking-wider">Status</th>
+              <th className="text-left px-4 py-2 font-semibold tracking-wider">Priority</th>
+              <th className="text-right px-4 py-2 font-semibold tracking-wider">Lines</th>
+              <th className="text-right px-4 py-2 font-semibold tracking-wider">Trucks</th>
+              <th className="text-right px-4 py-2 font-semibold tracking-wider">Picked</th>
+              <th className="text-left px-4 py-2 font-semibold tracking-wider">Order date</th>
+              {canDelete && (
+                <th className="text-right px-4 py-2 font-semibold tracking-wider w-12">
+                  <span className="sr-only">Actions</span>
+                </th>
+              )}
             </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+          </thead>
+          <tbody className="divide-y divide-slate-100">
+            {data.map((t) => (
+              <tr
+                key={t.order_id}
+                className="hover:bg-[#1B4676]/5 transition"
+              >
+                <td className="px-4 py-2 font-mono font-bold">
+                  <Link
+                    to={`/manager/outbound-orders/${encodeURIComponent(t.transfer_order_no)}`}
+                    className="text-[#1B4676] hover:text-[#0093D0]"
+                  >
+                    {t.transfer_order_no}
+                  </Link>
+                </td>
+                <td className="px-4 py-2 font-mono text-slate-600">
+                  {t.po_number ?? '—'}
+                </td>
+                <td className="px-4 py-2 text-slate-700">{t.customer_name}</td>
+                <td className="px-4 py-2">
+                  <StatusPill status={t.status} />
+                </td>
+                <td className="px-4 py-2 text-slate-700 capitalize">{t.priority}</td>
+                <td className="px-4 py-2 text-right text-slate-700 font-mono">
+                  {t.line_count}
+                </td>
+                <td className="px-4 py-2 text-right text-slate-700 font-mono">
+                  {t.truck_count}
+                </td>
+                <td className="px-4 py-2 text-right text-slate-700 font-mono">
+                  {t.picked_qty}
+                </td>
+                <td className="px-4 py-2 text-slate-600 font-mono">
+                  {t.order_date ?? '—'}
+                </td>
+                {canDelete && (
+                  <td className="px-4 py-2 text-right">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setErrorMsg(null)
+                        setPendingDelete(t)
+                      }}
+                      title={`Delete ${t.transfer_order_no}`}
+                      aria-label={`Delete TO ${t.transfer_order_no}`}
+                      className="inline-flex items-center justify-center w-8 h-8 rounded-md text-slate-400 hover:text-red-600 hover:bg-red-50 border border-transparent hover:border-red-200 transition focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500"
+                    >
+                      <svg
+                        className="w-4 h-4"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        aria-hidden
+                      >
+                        <polyline points="3 6 5 6 21 6" />
+                        <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+                        <path d="M10 11v6M14 11v6" />
+                        <path d="M9 6V4a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2" />
+                      </svg>
+                    </button>
+                  </td>
+                )}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {pendingDelete && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4"
+          onClick={() => !deleting && setPendingDelete(null)}
+        >
+          <div
+            className="bg-white rounded-xl shadow-2xl max-w-md w-full p-6"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 className="text-lg font-bold text-[#1B4676] mb-2">
+              Delete Transfer Order?
+            </h2>
+            <p className="text-sm text-slate-600 mb-1">
+              <span className="font-mono font-bold text-[#1B4676]">
+                {pendingDelete.transfer_order_no}
+              </span>
+              <span className="text-slate-500"> · {pendingDelete.customer_name}</span>
+            </p>
+            <p className="text-sm text-slate-600 mt-3">
+              This permanently removes the TO and every child row
+              (lines, containers, scans, serials) from the database AND
+              clears the matching row from the OneDrive outbound mirror.
+            </p>
+            <p className="text-xs text-slate-500 mt-2">
+              Blocked if any invoice references this TO — void the
+              invoice first if so.
+            </p>
+            {errorMsg && (
+              <div className="mt-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                {errorMsg}
+              </div>
+            )}
+            <div className="mt-5 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setPendingDelete(null)}
+                disabled={deleting}
+                className="px-3 py-1.5 rounded-md border border-slate-300 text-slate-700 text-sm font-medium hover:bg-slate-50 disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={confirmDelete}
+                disabled={deleting}
+                className="px-3 py-1.5 rounded-md bg-red-600 hover:bg-red-700 text-white text-sm font-bold disabled:opacity-50"
+              >
+                {deleting ? 'Deleting…' : 'Delete TO'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
   )
 }
 

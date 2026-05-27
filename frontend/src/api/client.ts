@@ -672,6 +672,25 @@ export const api = {
     request<OutboundOrderErpDetail>(
       `/manager/outbound-orders/${encodeURIComponent(transfer_order_no)}`,
     ),
+
+  // Destructive — cascade-deletes the TO, all child rows, the Excel
+  // outbound row, and refreshes the per-brand Master Inventory. Server
+  // returns 409 if an invoice references this TO (void invoice first).
+  deleteOutboundOrder: (transfer_order_no: string) =>
+    request<{
+      ok: boolean
+      transfer_order_no: string
+      cascade: {
+        scans: number
+        line_serials: number
+        lines: number
+        containers: number
+      }
+      excel_outbound_rows_deleted: number
+    }>(
+      `/manager/outbound-orders/${encodeURIComponent(transfer_order_no)}`,
+      { method: 'DELETE' },
+    ),
 }
 
 // ─── Driver-docs OCR extraction ───────────────────────────────────────
