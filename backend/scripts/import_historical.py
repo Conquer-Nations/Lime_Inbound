@@ -380,14 +380,18 @@ def stage_inserts(
     seen_to_sku: set[tuple[str, str]] = set()
     for r in rows:
         plan["carrier_counts"][r["carrier"] or "(blank)"] += 1
-        if r["whpo_number"] in existing_whpos:
-            plan["existing_whpos"].append(r["whpo_number"])
-        else:
-            plan["new_whpos"].append(r["whpo_number"])
-        if r["container_no"] in existing_containers:
-            plan["existing_containers"].append(r["container_no"])
-        else:
-            plan["new_containers"].append(r["container_no"])
+        # WHPO / Container only counted for INBOUND rows (rows with
+        # received_date). Outbound rows reuse the "WHPO / LOAD #" column
+        # for the outbound load number, which doesn't belong as a WHPO.
+        if r["received_date"]:
+            if r["whpo_number"] in existing_whpos:
+                plan["existing_whpos"].append(r["whpo_number"])
+            else:
+                plan["new_whpos"].append(r["whpo_number"])
+            if r["container_no"] in existing_containers:
+                plan["existing_containers"].append(r["container_no"])
+            else:
+                plan["new_containers"].append(r["container_no"])
         if r["to_number"]:
             if r["to_number"] in existing_tos:
                 plan["existing_outbound_orders"].append(r["to_number"])
@@ -467,95 +471,85 @@ def apply_inserts(
     do_seq = 1
 
     for r in rows:
-        # 1. WHPO
-        whpo_id = existing_whpos.get(r["whpo_number"])
-        if whpo_id is None:
-            received_at = (
-                datetime.combine(r["received_date"], time(0, 0)).replace(
+        # ─── Inbound leg ────────────────────────────────────────────
+        # Only create WHPO / DO / Container / ContainerLine when the row
+        # represents an INBOUND event (RECEIVED DATE populated). Rows
+        # without received_date have a "WHPO / LOAD #" value that is
+        # actually an OUTBOUND load number, not a warehouse PO — those
+        # only generate outbound-side entities below.
+        if r["received_date"]:
+            # 1. WHPO
+            whpo_id = existing_whpos.get(r["whpo_number"])
+            if whpo_id is None:
+                received_at = datetime.combine(r["received_date"], time(0, 0)).replace(
                     tzinfo=timezone.utc
                 )
-                if r["received_date"]
-                else datetime.now(timezone.utc)
-            )
-            whpo = WHPO(
-                whpo_number=r["whpo_number"],
-                customer_id=customer.id,
-                received_at=received_at,
-                notes=f"[imported from historical xlsx] commodity={r['commodity']}",
-            )
-            session.add(whpo)
-            session.flush()
-            whpo_id = whpo.id
-            existing_whpos[r["whpo_number"]] = whpo_id
+                whpo = WHPO(
+                    whpo_number=r["whpo_number"],
+                    customer_id=customer.id,
+                    received_at=received_at,
+                    notes=f"[imported from historical xlsx] commodity={r['commodity']}",
+                )
+                session.add(whpo)
+                session.flush()
+                whpo_id = whpo.id
+                existing_whpos[r["whpo_number"]] = whpo_id
 
-        # 2. DO (one per WHPO)
-        if whpo_id not in existing_dos:
-            do_number = f"DO-HIST-{do_seq:06d}"
-            while do_number in {  # ultra-cautious dedupe
-                d for (d,) in session.execute(select(DO.do_number)).all()
-            }:
-                do_seq += 1
+            # 2. DO (one per WHPO)
+            if whpo_id not in existing_dos:
                 do_number = f"DO-HIST-{do_seq:06d}"
-            # Historical data: a populated received_date means the container
-            # physically arrived, regardless of whether the original ops team
-            # ever filled in the SCANNED column. Mark as 'received'.
-            do_status = "received" if r["received_date"] else "pending_master_data"
-            do_row = DO(
-                do_number=do_number,
-                whpo_id=whpo_id,
-                status=do_status,
-                expected_arrival_date=r["received_date"],
-                issued_by="historical-import",
-                notes="historical backfill",
-            )
-            session.add(do_row)
-            session.flush()
-            existing_dos[whpo_id] = do_row.id
-            do_seq += 1
-        do_id = existing_dos[whpo_id]
+                while do_number in {  # ultra-cautious dedupe
+                    d for (d,) in session.execute(select(DO.do_number)).all()
+                }:
+                    do_seq += 1
+                    do_number = f"DO-HIST-{do_seq:06d}"
+                do_row = DO(
+                    do_number=do_number,
+                    whpo_id=whpo_id,
+                    status="received",
+                    expected_arrival_date=r["received_date"],
+                    issued_by="historical-import",
+                    notes="historical backfill",
+                )
+                session.add(do_row)
+                session.flush()
+                existing_dos[whpo_id] = do_row.id
+                do_seq += 1
+            do_id = existing_dos[whpo_id]
 
-        # 3. Container (skip if exists)
-        container_id = existing_containers.get(r["container_no"])
-        if container_id is None:
-            received_dt = (
-                datetime.combine(r["received_date"], time(0, 0)).replace(
+            # 3. Container (skip if exists)
+            container_id = existing_containers.get(r["container_no"])
+            if container_id is None:
+                received_dt = datetime.combine(r["received_date"], time(0, 0)).replace(
                     tzinfo=timezone.utc
                 )
-                if r["received_date"]
-                else None
-            )
-            # Same logic as DO status above. Container schema is
-            # expected | receiving | received — 'finished' was wrong.
-            container = Container(
-                container_no=r["container_no"],
-                do_id=do_id,
-                actual_arrival_date=r["received_date"],
-                status="received" if r["received_date"] else "expected",
-                finished_at=received_dt if r["received_date"] else None,
-                driver_name=r["driver_name"],
-                carrier=r["carrier"],
-            )
-            session.add(container)
-            session.flush()
-            container_id = container.id
-            existing_containers[r["container_no"]] = container_id
-
-        # 3b. ContainerLine (one per row that has inbound qty + SKU).
-        # Only the inbound leg of a row (RECEIVED DATE + UNITS populated)
-        # represents stock arriving. Outbound legs share the same container
-        # number but are recorded via OutboundLine below.
-        if r["received_date"] and r["units_in"] and r["sku_code"]:
-            sku_id = sku_map.get(r["sku_code"])
-            session.add(
-                ContainerLine(
-                    container_id=container_id,
-                    sku_id=sku_id,
-                    sku_raw=r["sku_code"],
-                    qty=r["units_in"],
-                    line_index=1,
-                    product_type=r["commodity"],
+                container = Container(
+                    container_no=r["container_no"],
+                    do_id=do_id,
+                    actual_arrival_date=r["received_date"],
+                    status="received",
+                    finished_at=received_dt,
+                    driver_name=r["driver_name"],
+                    carrier=r["carrier"],
                 )
-            )
+                session.add(container)
+                session.flush()
+                container_id = container.id
+                existing_containers[r["container_no"]] = container_id
+
+            # 3b. ContainerLine (one per inbound row that has units + SKU)
+            if r["units_in"] and r["sku_code"]:
+                sku_id = sku_map.get(r["sku_code"])
+                session.add(
+                    ContainerLine(
+                        container_id=container_id,
+                        sku_id=sku_id,
+                        sku_raw=r["sku_code"],
+                        qty=r["units_in"],
+                        line_index=1,
+                        product_type=r["commodity"],
+                    )
+                )
 
         # 4. OutboundOrder (skip if exists)
         to_id = existing_tos.get(r["to_number"]) if r["to_number"] else None
