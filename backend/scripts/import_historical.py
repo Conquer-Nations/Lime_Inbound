@@ -496,10 +496,14 @@ def apply_inserts(
             }:
                 do_seq += 1
                 do_number = f"DO-HIST-{do_seq:06d}"
+            # Historical data: a populated received_date means the container
+            # physically arrived, regardless of whether the original ops team
+            # ever filled in the SCANNED column. Mark as 'received'.
+            do_status = "received" if r["received_date"] else "pending_master_data"
             do_row = DO(
                 do_number=do_number,
                 whpo_id=whpo_id,
-                status="received" if r["scanned"] == "YES" else "pending_master_data",
+                status=do_status,
                 expected_arrival_date=r["received_date"],
                 issued_by="historical-import",
                 notes="historical backfill",
@@ -520,12 +524,14 @@ def apply_inserts(
                 if r["received_date"]
                 else None
             )
+            # Same logic as DO status above. Container schema is
+            # expected | receiving | received — 'finished' was wrong.
             container = Container(
                 container_no=r["container_no"],
                 do_id=do_id,
                 actual_arrival_date=r["received_date"],
-                status="finished" if r["scanned"] else "expected",
-                finished_at=received_dt if r["scanned"] else None,
+                status="received" if r["received_date"] else "expected",
+                finished_at=received_dt if r["received_date"] else None,
                 driver_name=r["driver_name"],
                 carrier=r["carrier"],
             )
