@@ -181,19 +181,27 @@ async def push_full_replace(session: AsyncSession) -> bool:
             res = await client.post(
                 url, json=payload, headers={"Content-Type": "application/json"}
             )
-        if res.is_success:
-            logger.info(
-                "master sheet sync: pushed %d rows across %d brand(s) (HTTP %s)",
-                len(flat),
-                len(brands_grouped),
-                res.status_code,
-            )
-            return True
-        logger.warning(
-            "master sheet sync: webhook returned %s: %s",
+        # Always log the response body — that's the Office Script's return
+        # value, which tells us whether addRows actually ran, how many
+        # brand sheets it touched, and any errors.
+        logger.info(
+            "master sheet sync: pushed %d rows across %d brand(s) "
+            "(HTTP %s) — script response: %s",
+            len(flat),
+            len(brands_grouped),
             res.status_code,
-            res.text[:300],
+            res.text[:600],
         )
+        # Echo into stdout too so it surfaces in containerStream.log
+        # without waiting on logging buffer flushes.
+        print(
+            f"DIAG master_sheet_sync: HTTP {res.status_code} "
+            f"sent {len(flat)} rows / {len(brands_grouped)} brands  "
+            f"script_response={res.text[:600]}",
+            flush=True,
+        )
+        return res.is_success
     except Exception as e:  # noqa: BLE001
         logger.warning("master sheet sync: push failed: %r", e)
+        print(f"DIAG master_sheet_sync: push failed: {e!r}", flush=True)
     return False

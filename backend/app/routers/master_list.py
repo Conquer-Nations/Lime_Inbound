@@ -68,13 +68,44 @@ async def get_master_list(
 async def trigger_master_sheet_sync(
     session: AsyncSession = Depends(get_session),
 ) -> dict:
-    """Manually fire the OneDrive Excel mirror. Same call that the
-    backend makes after every scan-finish. Useful for testing the
-    Logic App setup or backfilling the workbook with current data.
-    Returns whether the webhook accepted."""
+    """Manually fire the OneDrive Excel mirror. Same call the backend
+    makes after every scan-finish. Returns full debug info — Logic App
+    response code, the Office Script's JSON return value, row counts —
+    so we can diagnose when the workbook doesn't update as expected."""
     from app.services import master_sheet_sync
-    ok = await master_sheet_sync.push_full_replace(session)
-    return {
-        "ok": ok,
-        "configured": master_sheet_sync.is_configured(),
-    }
+    from sqlalchemy import text
+    import httpx
+
+    url = master_sheet_sync.settings.onedrive_master_sheet_webhook_url
+    if not url:
+        return {"ok": False, "configured": False}
+
+    customers_rows = await session.execute(text("SELECT name FROM customers ORDER BY name"))
+    all_brands = [r[0] for r in customers_rows]
+    rows_result = await session.execute(text(
+        "SELECT * FROM vw_master_list ORDER BY received_date DESC NULLS LAST, container_no"
+    ))
+    rows = [dict(r._mapping) for r in rows_result]
+    brands_grouped: dict[str, list] = {b: [] for b in all_brands}
+    flat = []
+    for r in rows:
+        s = master_sheet_sync._serialize(r)
+        flat.append(s)
+        brand = (r.get("customer_name") or "").strip() or "_Unassigned"
+        brands_grouped.setdefault(brand, []).append(s)
+
+    payload = {"headers": master_sheet_sync.HEADERS, "brands": brands_grouped, "rows": flat}
+
+    try:
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            res = await client.post(url, json=payload, headers={"Content-Type": "application/json"})
+        return {
+            "ok": res.is_success,
+            "configured": True,
+            "logic_app_status": res.status_code,
+            "office_script_response": res.text[:2000],
+            "rows_sent": len(flat),
+            "brands_sent": {b: len(rs) for b, rs in brands_grouped.items()},
+        }
+    except Exception as e:  # noqa: BLE001
+        return {"ok": False, "configured": True, "error": repr(e)}
