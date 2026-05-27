@@ -37,7 +37,8 @@ from app.models import (
     Scan,
     TallySheet,
 )
-from app.schemas.scan_sheet import (
+from app.schemas.scan_sheet import (  # noqa: E501 — keep imports tidy
+    OutboundLineProgress,
     AuditSheetDetail,
     FinishSheetResponse,
     OpenSheetRequest,
@@ -299,6 +300,43 @@ async def _outbound_rows(
     return rows
 
 
+async def _outbound_progress(
+    session: AsyncSession, oc: OutboundContainer
+) -> list[OutboundLineProgress]:
+    """Per-line scan progress for the outbound operator UI panel. One
+    entry per OutboundLine on the TO, sorted by line_no, with the live
+    scanned count for each line."""
+    if oc.outbound_order_id is None:
+        return []
+    lines_q = await session.scalars(
+        select(OutboundLine)
+        .where(OutboundLine.outbound_order_id == oc.outbound_order_id)
+        .order_by(OutboundLine.line_no, OutboundLine.id)
+    )
+    lines = list(lines_q.all())
+    if not lines:
+        return []
+    counts_q = await session.execute(
+        select(OutboundScan.outbound_line_id, func.count())
+        .where(OutboundScan.outbound_line_id.in_([ln.id for ln in lines]))
+        .where(OutboundScan.outbound_container_id == oc.id)
+        .group_by(OutboundScan.outbound_line_id)
+    )
+    counts = {row[0]: row[1] for row in counts_q.all()}
+    return [
+        OutboundLineProgress(
+            line_id=ln.id,
+            line_no=ln.line_no,
+            sku_raw=ln.sku_raw or "",
+            description=ln.description,
+            order_qty=ln.order_qty,
+            scanned_qty=counts.get(ln.id, 0),
+            source_container_no=ln.source_container_no,
+        )
+        for ln in lines
+    ]
+
+
 async def _open_outbound_sheet(
     session: AsyncSession,
     oc: OutboundContainer,
@@ -342,10 +380,11 @@ async def _open_outbound_sheet(
             oc.started_by = operator
 
     rows = await _outbound_rows(session, receipt, oc)
+    progress = await _outbound_progress(session, oc)
     await session.commit()
 
     header = _outbound_header(receipt, oc, oc.order)
-    return OpenSheetResponse(header=header, rows=rows)
+    return OpenSheetResponse(header=header, rows=rows, outbound_progress=progress)
 
 
 async def _record_outbound_scan(
@@ -500,10 +539,15 @@ async def _record_outbound_scan(
         notes=out_scan.notes,
         scanned_at=out_scan.scanned_at,
     )
+    # Refresh per-LPN progress for the operator UI panel. Computed here
+    # so the frontend doesn't need a separate refetch round-trip after
+    # every accepted scan.
+    progress = await _outbound_progress(session, oc)
     return RecordScanResponse(
         accepted=True,
         row=row,
         total_scanned=total,
+        outbound_progress=progress,
     )
 
 
@@ -992,9 +1036,11 @@ async def view_sheet(receipt_id: int, session: AsyncSession = Depends(get_sessio
     if receipt_kind == "outbound":
         receipt, oc, order = await _load_outbound_receipt_context(session, receipt_id)
         rows = await _outbound_rows(session, receipt, oc)
+        progress = await _outbound_progress(session, oc)
         return OpenSheetResponse(
             header=_outbound_header(receipt, oc, order),
             rows=rows,
+            outbound_progress=progress,
         )
 
     receipt, container, whpo, do = await _load_receipt_context(session, receipt_id)

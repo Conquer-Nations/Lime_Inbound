@@ -70,9 +70,31 @@ class OpenSheetRequest(BaseModel):
     container_no: str = Field(min_length=1, max_length=24)
 
 
+class OutboundLineProgress(BaseModel):
+    """One row in the per-LPN progress panel rendered above the operator
+    scan grid in outbound mode. Tells the operator what SKUs they should
+    be scanning, how many of each they've completed, and which inbound
+    container the line was drawn from (so they know which physical
+    items to grab off the floor).
+
+    `scanned_qty` is the live count of OutboundScans against this line —
+    refreshed on every successful scan via RecordScanResponse.
+    """
+
+    line_id: int
+    line_no: int
+    sku_raw: str
+    description: str | None = None
+    order_qty: int
+    scanned_qty: int
+    source_container_no: str | None = None
+
+
 class OpenSheetResponse(BaseModel):
     header: ScanSheetHeader
     rows: list[ScanRow]            # empty on fresh open, existing rows on reopen
+    # Only populated in outbound mode (header.kind == "outbound").
+    outbound_progress: list[OutboundLineProgress] | None = None
 
 
 class RecordScanRequest(BaseModel):
@@ -97,6 +119,10 @@ class RecordScanResponse(BaseModel):
     duplicate_of_row_id: int | None = None
     error: str | None = None
     total_scanned: int = 0
+    # Refreshed snapshot of per-LPN progress so the operator UI's progress
+    # panel auto-advances after each accepted scan. Outbound-only; None
+    # for inbound and on rejected scans.
+    outbound_progress: list[OutboundLineProgress] | None = None
 
 
 class FinishSheetResponse(BaseModel):

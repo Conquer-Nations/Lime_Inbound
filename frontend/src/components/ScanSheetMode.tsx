@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import {
   api,
   ApiError,
+  type OutboundLineProgress,
   type ScanSheetHeader,
   type ScanSheetOpenResponse,
   type ScanSheetRow,
@@ -33,6 +34,12 @@ interface Props {
  */
 export default function ScanSheetMode({ sheet, operator, onFinished }: Props) {
   const [rows, setRows] = useState<ScanSheetRow[]>(sheet.rows)
+  // Per-LPN progress (outbound only). Initialized from /open response,
+  // refreshed off every accepted scan so the operator gets live visual
+  // feedback without polling.
+  const [outboundProgress, setOutboundProgress] = useState<
+    OutboundLineProgress[] | null
+  >(sheet.outbound_progress ?? null)
   const [serial, setSerial] = useState('')
   const [imei, setImei] = useState('')
   const [notes, setNotes] = useState('')
@@ -191,6 +198,7 @@ export default function ScanSheetMode({ sheet, operator, onFinished }: Props) {
         setRows((prev) => [...prev, res.row!])
         setLastAccepted(res.row.id)
         setNotes('')
+        if (res.outbound_progress) setOutboundProgress(res.outbound_progress)
       } else {
         setLastDupRowId(res.duplicate_of_row_id ?? null)
         setError(res.error ?? 'Scan rejected.')
@@ -240,6 +248,14 @@ export default function ScanSheetMode({ sheet, operator, onFinished }: Props) {
 
   return (
     <div className="space-y-4">
+      {/* Outbound only: per-LPN progress panel. Tells the operator which
+          SKUs are still owed on the TO, how many of each are scanned vs
+          ordered, and which inbound container each line is drawn from.
+          Auto-advances visually as scans land. */}
+      {h.kind === 'outbound' && outboundProgress && outboundProgress.length > 0 && (
+        <OutboundProgressPanel progress={outboundProgress} />
+      )}
+
       {/* Excel-style scan sheet — visual clone of TEMPLATE.xlsx (read-only) */}
       <ExcelStyleSheet h={h} rows={rows} lastAccepted={lastAccepted} lastDupRowId={lastDupRowId} />
 
@@ -629,6 +645,127 @@ function ExcelStyleSheet({
           )}
         </tbody>
       </table>
+    </div>
+  )
+}
+
+/* ─── Outbound per-LPN progress panel ──────────────────────────────────
+ * Renders above the scan grid in outbound mode. One row per OutboundLine
+ * on the TO. The "active" line — first one with capacity remaining — is
+ * highlighted in cyan so the operator knows which SKU they should be
+ * grabbing off the floor next. Lines that are 100% complete are dimmed
+ * with a green check. Source container hint shows which inbound
+ * container the vendor specified for this line.
+ */
+function OutboundProgressPanel({
+  progress,
+}: {
+  progress: OutboundLineProgress[]
+}) {
+  const totalOrdered = progress.reduce((s, p) => s + p.order_qty, 0)
+  const totalScanned = progress.reduce((s, p) => s + p.scanned_qty, 0)
+  const activeIdx = progress.findIndex((p) => p.scanned_qty < p.order_qty)
+
+  return (
+    <div
+      className="bg-white rounded-xl border border-slate-200 overflow-hidden"
+      style={{
+        boxShadow:
+          '0 1px 2px 0 rgba(15,23,42,0.04), 0 8px 24px -8px rgba(15,23,42,0.08)',
+      }}
+    >
+      <div className="bg-slate-50 border-b border-slate-200 px-4 py-2.5 flex items-center justify-between gap-3 flex-wrap">
+        <h3 className="text-[11px] font-bold uppercase tracking-[0.18em] text-[#1B4676]">
+          Loading progress — per LPN
+        </h3>
+        <div className="text-xs font-mono text-slate-600">
+          <span className="text-[#1B4676] font-bold">{totalScanned}</span>
+          <span className="text-slate-400"> / </span>
+          <span>{totalOrdered}</span>
+          <span className="ml-1 text-slate-500">items</span>
+        </div>
+      </div>
+      <ul className="divide-y divide-slate-100">
+        {progress.map((p, idx) => {
+          const isActive = idx === activeIdx
+          const isComplete = p.scanned_qty >= p.order_qty && p.order_qty > 0
+          const pct = p.order_qty > 0
+            ? Math.min(100, Math.round((p.scanned_qty / p.order_qty) * 100))
+            : 0
+          return (
+            <li
+              key={p.line_id}
+              className={`px-4 py-3 ${
+                isActive
+                  ? 'bg-[#0093D0]/5'
+                  : isComplete
+                  ? 'bg-emerald-50/40 opacity-90'
+                  : ''
+              }`}
+            >
+              <div className="flex items-baseline justify-between gap-3 mb-1.5">
+                <div className="flex items-baseline gap-2 min-w-0">
+                  <span className="text-[10.5px] uppercase tracking-wider text-slate-500 font-bold">
+                    Line {p.line_no}
+                  </span>
+                  <span className="font-mono font-bold text-[#1B4676] truncate">
+                    {p.sku_raw}
+                  </span>
+                  {p.description && (
+                    <span className="text-xs text-slate-500 truncate">
+                      {p.description}
+                    </span>
+                  )}
+                  {isActive && (
+                    <span className="text-[9.5px] uppercase tracking-wider font-bold text-[#0093D0] bg-[#0093D0]/10 border border-[#0093D0]/25 rounded-full px-2 py-0.5">
+                      Active
+                    </span>
+                  )}
+                  {isComplete && (
+                    <span className="text-[9.5px] uppercase tracking-wider font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-full px-2 py-0.5 inline-flex items-center gap-1">
+                      <svg className="w-3 h-3" viewBox="0 0 20 20" fill="currentColor" aria-hidden>
+                        <path
+                          fillRule="evenodd"
+                          d="M16.7 5.3a1 1 0 010 1.4l-7 7a1 1 0 01-1.4 0l-3-3a1 1 0 011.4-1.4L9 11.6l6.3-6.3a1 1 0 011.4 0z"
+                          clipRule="evenodd"
+                        />
+                      </svg>
+                      Done
+                    </span>
+                  )}
+                </div>
+                <span className="font-mono text-sm whitespace-nowrap">
+                  <span className={`font-bold ${isComplete ? 'text-emerald-700' : 'text-[#1B4676]'}`}>
+                    {p.scanned_qty}
+                  </span>
+                  <span className="text-slate-400"> / </span>
+                  <span className="text-slate-700">{p.order_qty}</span>
+                </span>
+              </div>
+              <div className="h-1.5 w-full rounded-full bg-slate-100 overflow-hidden">
+                <div
+                  className={`h-full rounded-full transition-all ${
+                    isComplete
+                      ? 'bg-emerald-500'
+                      : isActive
+                      ? 'bg-[#0093D0]'
+                      : 'bg-slate-300'
+                  }`}
+                  style={{ width: `${pct}%` }}
+                />
+              </div>
+              {p.source_container_no && (
+                <div className="mt-1.5 text-[11px] text-slate-500">
+                  Pull from{' '}
+                  <span className="font-mono text-[#1B4676]">
+                    {p.source_container_no}
+                  </span>
+                </div>
+              )}
+            </li>
+          )
+        })}
+      </ul>
     </div>
   )
 }

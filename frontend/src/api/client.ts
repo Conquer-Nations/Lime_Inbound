@@ -745,6 +745,9 @@ export interface ScanSheetHeader {
   is_completed: boolean
   requires_imei: boolean
   uses_box_numbers?: boolean
+  // 'inbound' (default) or 'outbound'. Drives the operator UI's
+  // per-LPN progress panel — outbound shows it, inbound hides it.
+  kind?: 'inbound' | 'outbound'
 }
 
 export interface ScanSheetRow {
@@ -760,9 +763,21 @@ export interface ScanSheetRow {
   scanned_at: string
 }
 
+export interface OutboundLineProgress {
+  line_id: number
+  line_no: number
+  sku_raw: string
+  description: string | null
+  order_qty: number
+  scanned_qty: number
+  source_container_no: string | null
+}
+
 export interface ScanSheetOpenResponse {
   header: ScanSheetHeader
   rows: ScanSheetRow[]
+  // Outbound only — backend leaves null for inbound receipts.
+  outbound_progress?: OutboundLineProgress[] | null
 }
 
 export interface ScanRecordResponse {
@@ -771,6 +786,9 @@ export interface ScanRecordResponse {
   duplicate_of_row_id: number | null
   error: string | null
   total_scanned: number
+  // Refreshed per-LPN counts on every accepted scan so the progress
+  // panel auto-advances. Null on rejected scans and on inbound.
+  outbound_progress?: OutboundLineProgress[] | null
 }
 
 export interface ScanFinishResponse {
