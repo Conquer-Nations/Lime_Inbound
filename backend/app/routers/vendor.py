@@ -188,6 +188,14 @@ async def submit(
         print(f"DIAG vendor: fetched {len(rows)} rows", flush=True)
         await sheet_sync.append_rows(rows)
 
+    # Also push the per-brand Master Inventory mirror so this shipment
+    # appears in its brand’s sheet immediately. Same best-effort pattern
+    # as the InboundTable append above — never blocks the vendor.
+    if not result.idempotent_replay:
+        from app.services import master_sheet_sync
+        if master_sheet_sync.is_configured():
+            await master_sheet_sync.push_full_replace(session)
+
     return result
 
 

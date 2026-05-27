@@ -1,24 +1,31 @@
 """OneDrive Excel mirror of the Master List (inbound + outbound).
 
-Pushes a **full replace** of the MasterTable inside `Lime Master Inventory.xlsx`
-every time inbound/outbound activity changes the data — receipt finish,
-outbound scan committed, etc. Per Tiana: "I need it to be mirror on
-excel in onedrive."
+Pushes a **full replace** of the brand-segregated master sheet workbook
+on every inbound/outbound state change — receipt finish, outbound scan
+committed, new vendor shipment submitted, etc. The workbook has ONE
+SHEET PER BRAND, each backed by its own table (MasterTable_<brand>).
 
 Two webhook URLs (both optional, best-effort):
-  - ONEDRIVE_MASTER_SHEET_WEBHOOK_URL — Logic App that overwrites
-    MasterTable contents. Office Script clears the table then bulk-
-    appends rows from `triggerBody().rows`.
+  - ONEDRIVE_MASTER_SHEET_WEBHOOK_URL — Logic App that overwrites every
+    brand-table in the workbook. The Office Script clears each existing
+    table and bulk-appends the new rows; if a brand sheet doesn't exist
+    yet, it auto-creates one from a hidden _TEMPLATE sheet.
   - ONEDRIVE_MASTER_SHEET_OPS_URL — reserved for future per-row ops.
 
-Payload shape:
+Payload shape (v2 — per-brand):
     {
       "headers": [...22 column names...],
-      "rows": [
-        [col1, col2, ..., col22],
-        ...
-      ]
+      "brands": {
+        "Lime":              [[col1, ..., col22], ...],
+        "Pan American Wire": [[col1, ..., col22], ...],
+        "Boviet Solar":      []
+      }
     }
+
+The Office Script v2 keys off `payload.brands`. Backward-compat path
+(workbooks still on Office Script v1) ignores `brands` and falls back
+to a flattened `payload.rows`, so we always include both during the
+transition.
 """
 from __future__ import annotations
 
@@ -115,16 +122,29 @@ def _serialize(row: dict[str, Any]) -> list[Any]:
 
 
 async def push_full_replace(session: AsyncSession) -> bool:
-    """Read the full vw_master_list + POST to the Logic App as a full
-    replace. Returns True iff the webhook accepted. Caller doesn't
-    fail when False — Postgres is the source of truth, OneDrive is
-    the secondary sink."""
+    """Read the full vw_master_list + POST to the Logic App as a per-brand
+    full replace. Returns True iff the webhook accepted. Caller never
+    fails when False — Postgres is the source of truth, OneDrive is the
+    secondary sink and may be unreachable transiently.
+
+    Payload includes both the legacy flat `rows` and the new per-brand
+    `brands` map so Office Script v1 and v2 both work during rollout.
+    """
     url = settings.onedrive_master_sheet_webhook_url
     if not url:
         logger.info(
             "master sheet sync: ONEDRIVE_MASTER_SHEET_WEBHOOK_URL not set, skipping"
         )
         return False
+
+    # Also pull the full customer list so brands with zero containers
+    # right now still get a sheet (cleared) — keeps the workbook tab
+    # structure stable across the onboarding curve, so vendors aren't
+    # surprised when a brand sheet appears and disappears.
+    customers_result = await session.execute(
+        text("SELECT name FROM customers ORDER BY name")
+    )
+    all_brands: list[str] = [r[0] for r in customers_result]
 
     rows_result = await session.execute(
         text(
@@ -135,9 +155,25 @@ async def push_full_replace(session: AsyncSession) -> bool:
         )
     )
     rows = [dict(r._mapping) for r in rows_result]
+
+    # Group rows by customer_name. Anything missing a customer (shouldn't
+    # happen given vw_master_list joins through customers) lands in the
+    # special "_Unassigned" bucket so the data isn't silently dropped.
+    brands_grouped: dict[str, list[list[Any]]] = {b: [] for b in all_brands}
+    flat: list[list[Any]] = []
+    for r in rows:
+        serialized = _serialize(r)
+        flat.append(serialized)
+        brand = (r.get("customer_name") or "").strip() or "_Unassigned"
+        brands_grouped.setdefault(brand, []).append(serialized)
+
     payload = {
         "headers": HEADERS,
-        "rows": [_serialize(r) for r in rows],
+        "brands": brands_grouped,
+        # Legacy flat rows kept ONLY for backward compatibility with
+        # Office Script v1. v2 ignores this. Safe to remove once every
+        # workbook is on v2.
+        "rows": flat,
     }
 
     try:
@@ -147,8 +183,9 @@ async def push_full_replace(session: AsyncSession) -> bool:
             )
         if res.is_success:
             logger.info(
-                "master sheet sync: full replace pushed (%d rows, HTTP %s)",
-                len(rows),
+                "master sheet sync: pushed %d rows across %d brand(s) (HTTP %s)",
+                len(flat),
+                len(brands_grouped),
                 res.status_code,
             )
             return True
