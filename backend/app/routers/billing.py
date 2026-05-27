@@ -102,7 +102,14 @@ def _list_item_to_read(inv: Invoice, customer_name: str | None,
 
 
 def _to_read(inv: Invoice, customer_name: str | None,
-             whpo_number: str | None, transfer_order_no: str | None) -> InvoiceRead:
+             whpo_number: str | None, transfer_order_no: str | None,
+             lines: list[InvoiceLine] | None = None) -> InvoiceRead:
+    # When `lines` is passed in, use it (caller already loaded them via an
+    # explicit async query). Otherwise read off the relationship — only
+    # safe when the session previously eager-loaded `inv.lines`. Direct
+    # assignment to inv.lines triggers a sync lazy-load under the async
+    # session and crashes with MissingGreenlet.
+    resolved_lines = lines if lines is not None else (inv.lines or [])
     return InvoiceRead(
         id=inv.id,
         invoice_number=inv.invoice_number,
@@ -133,7 +140,7 @@ def _to_read(inv: Invoice, customer_name: str | None,
         vendor_payment_reference=inv.vendor_payment_reference,
         vendor_marked_paid_at=inv.vendor_marked_paid_at,
         vendor_marked_paid_by=inv.vendor_marked_paid_by,
-        lines=[_line_to_read(line) for line in (inv.lines or [])],
+        lines=[_line_to_read(line) for line in resolved_lines],
     )
 
 
@@ -335,16 +342,20 @@ async def _load_invoice_read(session: AsyncSession, invoice_id: int) -> InvoiceR
     if row is None:
         raise HTTPException(404, f"Invoice {invoice_id} not found")
     inv, customer_name, whpo_no, to_no = row
-    # Load lines eagerly for the response.
-    lines = (
+    # Load lines via an explicit async query and pass them through to
+    # _to_read. Do NOT assign to inv.lines — SQLAlchemy treats that as a
+    # set-collection operation and fires a lazy-load on the relationship
+    # to compute the delta, which blows up under the async session with
+    # `sqlalchemy.exc.MissingGreenlet` (greenlet_spawn has not been
+    # called; can't call await_only() here).
+    lines = list((
         await session.scalars(
             select(InvoiceLine)
             .where(InvoiceLine.invoice_id == invoice_id)
             .order_by(InvoiceLine.id)
         )
-    ).all()
-    inv.lines = list(lines)
-    return _to_read(inv, customer_name, whpo_no, to_no)
+    ).all())
+    return _to_read(inv, customer_name, whpo_no, to_no, lines=lines)
 
 
 @manager_router.get("/invoices/{invoice_id}/pdf")
