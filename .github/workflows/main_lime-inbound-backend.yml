@@ -2,7 +2,7 @@
 # More GitHub Actions for Azure: https://github.com/Azure/actions
 # More info on Python, GitHub Actions, and Azure App Service: https://aka.ms/python-webapps-actions
 
-name: Build and deploy Python app to Azure Web App - cn-warehouse-backend
+name: Build and deploy Python app to Azure Web App - lime-inbound-backend
 
 on:
   push:
@@ -60,8 +60,12 @@ jobs:
         uses: azure/webapps-deploy@v3
         id: deploy-to-webapp
         with:
-          app-name: 'cn-warehouse-backend'
+          app-name: 'lime-inbound-backend'
           slot-name: 'Production'
           # Publish profile is app-specific (embeds the FTPS deploy URL).
-          publish-profile: ${{ secrets.AZUREAPPSERVICE_PUBLISHPROFILE_CN_WAREHOUSE_BACKEND }}
+          # GUID-named secret was created 2026-05-25 by the Azure portal when
+          # Deployment Center was reconfigured. If this fails with 401/403,
+          # download a fresh publish profile from the lime-inbound-backend
+          # App Service in the Azure portal and replace this secret.
+          publish-profile: ${{ secrets.AZUREAPPSERVICE_PUBLISHPROFILE_638A66E0E3FE43FE9A4D5E8901A2D990 }}
           package: release.zip
