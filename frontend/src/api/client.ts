@@ -673,6 +673,41 @@ export const api = {
       `/manager/outbound-orders/${encodeURIComponent(transfer_order_no)}`,
     ),
 
+  // Candidate inbound containers for assigning a TO line's source. Shows
+  // every container with stock of the line's SKU + remaining qty (after
+  // existing TO allocations).
+  listSourceContainerCandidates: (transfer_order_no: string, line_id: number) =>
+    request<{
+      transfer_order_no: string
+      line_id: number
+      sku: string
+      order_qty: number
+      current_source_container_no: string | null
+      candidates: {
+        container_no: string
+        inbound_qty: number
+        already_allocated_qty: number
+        remaining_qty: number
+        received_date: string | null
+        is_current: boolean
+      }[]
+    }>(
+      `/manager/outbound-orders/${encodeURIComponent(transfer_order_no)}/lines/${line_id}/container-candidates`,
+    ),
+
+  // Manually set/clear the source inbound container for an outbound line.
+  // Pass null to clear. Server validates: container exists + carries the
+  // line's SKU.
+  assignSourceContainer: (
+    transfer_order_no: string,
+    line_id: number,
+    source_container_no: string | null,
+  ) =>
+    request<{ ok: boolean; transfer_order_no: string; line_id: number; source_container_no: string | null }>(
+      `/manager/outbound-orders/${encodeURIComponent(transfer_order_no)}/lines/${line_id}/source-container`,
+      { method: 'PATCH', body: JSON.stringify({ source_container_no }) },
+    ),
+
   // Destructive — cascade-deletes the TO, all child rows, the Excel
   // outbound row, and refreshes the per-brand Master Inventory. Server
   // returns 409 if an invoice references this TO (void invoice first).

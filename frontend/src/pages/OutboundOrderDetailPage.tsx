@@ -29,6 +29,15 @@ export default function OutboundOrderDetailPage() {
   const [data, setData] = useState<OutboundOrderErpDetail | null>(null)
   const [err, setErr] = useState<string | null>(null)
 
+  const reload = () => {
+    if (!transfer_order_no) return
+    setErr(null)
+    api
+      .getOutboundOrderDetail(transfer_order_no)
+      .then(setData)
+      .catch((e) => setErr(String(e?.detail || e)))
+  }
+
   useEffect(() => {
     if (!transfer_order_no) return
     setErr(null)
@@ -82,7 +91,7 @@ export default function OutboundOrderDetailPage() {
               <ShipFromToCard d={data} />
               <SubmissionCard d={data} />
             </div>
-            <LinesCard d={data} />
+            <LinesCard d={data} onReload={reload} />
             <ContainersCard containers={data.containers} />
             <LinkedInboundCard linked={data.linked_inbound_containers} />
             {data.activity.length > 0 && <ActivityCard entries={data.activity} />}
@@ -228,7 +237,10 @@ function SubmissionCard({ d }: { d: OutboundOrderErpDetail }) {
   )
 }
 
-function LinesCard({ d }: { d: OutboundOrderErpDetail }) {
+function LinesCard({ d, onReload }: { d: OutboundOrderErpDetail; onReload: () => void }) {
+  const { user } = useAuth()
+  const canAssign = user?.role === 'developer' || user?.role === 'manager'
+  const [assigning, setAssigning] = useState<OutboundOrderErpLine | null>(null)
   const pct =
     d.total_order_qty === 0
       ? 0
@@ -279,18 +291,32 @@ function LinesCard({ d }: { d: OutboundOrderErpDetail }) {
                   <span className="ml-1 text-xs text-slate-400">{ln.unit}</span>
                 </td>
                 <td className="px-3 py-2 font-mono">
-                  {ln.source_container_no ? (
-                    <Link
-                      to={`/manager/containers/${encodeURIComponent(
-                        ln.source_container_no,
-                      )}`}
-                      className="text-[#1B4676] hover:text-[#0093D0] underline decoration-dotted"
-                    >
-                      {ln.source_container_no}
-                    </Link>
-                  ) : (
-                    <span className="text-slate-400">—</span>
-                  )}
+                  <div className="flex items-center gap-2 flex-wrap">
+                    {ln.source_container_no ? (
+                      <Link
+                        to={`/manager/containers/${encodeURIComponent(
+                          ln.source_container_no,
+                        )}`}
+                        className="text-[#1B4676] hover:text-[#0093D0] underline decoration-dotted"
+                      >
+                        {ln.source_container_no}
+                      </Link>
+                    ) : (
+                      <span className="inline-flex items-center gap-1 text-amber-700 bg-amber-50 border border-amber-200 rounded-full px-2 py-0.5 text-[10.5px] uppercase tracking-wider font-bold">
+                        Unassigned
+                      </span>
+                    )}
+                    {canAssign && (
+                      <button
+                        type="button"
+                        onClick={() => setAssigning(ln)}
+                        className="text-[10.5px] uppercase tracking-wider font-bold text-[#0093D0] hover:text-[#1B4676] hover:underline"
+                        title={ln.source_container_no ? 'Reassign source container' : 'Assign source container'}
+                      >
+                        {ln.source_container_no ? 'Change' : 'Assign'}
+                      </button>
+                    )}
+                  </div>
                 </td>
                 <td className="px-3 py-2 text-xs text-slate-600">
                   {ln.serial_specific ? (
@@ -306,6 +332,17 @@ function LinesCard({ d }: { d: OutboundOrderErpDetail }) {
           </tbody>
         </table>
       </div>
+      {assigning && (
+        <AssignSourceContainerModal
+          transferOrderNo={d.transfer_order_no}
+          line={assigning}
+          onClose={() => setAssigning(null)}
+          onSaved={() => {
+            setAssigning(null)
+            onReload()
+          }}
+        />
+      )}
     </Card>
   )
 }
@@ -618,5 +655,239 @@ function DetailChrome({
         </ol>
       </nav>
     </>
+  )
+}
+
+// ─── Assign source-container modal ───────────────────────────────────
+// Loads candidates (containers with stock of this line's SKU + remaining
+// qty after other TO allocations), lets the manager pick one or clear.
+// Server validates again on save — if the picked container's stock got
+// allocated to another TO between load + save, that returns 400 inline.
+function AssignSourceContainerModal({
+  transferOrderNo,
+  line,
+  onClose,
+  onSaved,
+}: {
+  transferOrderNo: string
+  line: OutboundOrderErpLine
+  onClose: () => void
+  onSaved: () => void
+}) {
+  const [candidates, setCandidates] = useState<
+    {
+      container_no: string
+      inbound_qty: number
+      already_allocated_qty: number
+      remaining_qty: number
+      received_date: string | null
+      is_current: boolean
+    }[]
+  >([])
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+  const [picked, setPicked] = useState<string | null>(line.source_container_no ?? null)
+  const [err, setErr] = useState<string | null>(null)
+  const [manual, setManual] = useState('')
+
+  useEffect(() => {
+    let cancelled = false
+    setLoading(true)
+    setErr(null)
+    api
+      .listSourceContainerCandidates(transferOrderNo, line.line_id)
+      .then((r) => {
+        if (cancelled) return
+        setCandidates(r.candidates)
+      })
+      .catch((e: { detail?: string }) => {
+        if (!cancelled) setErr(e?.detail ?? String(e))
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [transferOrderNo, line.line_id])
+
+  async function save() {
+    setSaving(true)
+    setErr(null)
+    try {
+      const finalVal = manual.trim() || picked
+      await api.assignSourceContainer(
+        transferOrderNo,
+        line.line_id,
+        finalVal && finalVal.length > 0 ? finalVal : null,
+      )
+      onSaved()
+    } catch (e: unknown) {
+      const msg = (e as { detail?: string; message?: string })?.detail
+        ?? (e as { message?: string })?.message
+        ?? String(e)
+      setErr(msg)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4"
+      onClick={() => !saving && onClose()}
+    >
+      <div
+        className="bg-white rounded-xl shadow-2xl max-w-2xl w-full p-6 max-h-[85vh] overflow-y-auto"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <h2 className="text-lg font-bold text-[#1B4676]">
+          Assign source container
+        </h2>
+        <p className="text-sm text-slate-600 mt-1">
+          TO <span className="font-mono font-bold">{transferOrderNo}</span>
+          {' · '}line {line.line_no}
+          {' · '}SKU <span className="font-mono font-bold">{line.sku}</span>
+          {' · '}
+          <span className="font-mono">{line.order_qty}</span> {line.unit} needed
+        </p>
+
+        {err && (
+          <div className="mt-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+            {err}
+          </div>
+        )}
+
+        <div className="mt-4 space-y-1">
+          <div className="text-[11px] uppercase tracking-[0.14em] font-bold text-slate-500">
+            Available containers
+          </div>
+          {loading && (
+            <div className="text-sm text-slate-500 py-4">Loading candidates…</div>
+          )}
+          {!loading && candidates.length === 0 && (
+            <div className="text-sm text-slate-500 py-4 italic">
+              No inbound containers on file with stock of {line.sku}. Either
+              no shipment has arrived yet, or every container is fully
+              allocated to other TOs. Use the manual entry below if you
+              want to assign anyway.
+            </div>
+          )}
+          {!loading && candidates.length > 0 && (
+            <div className="rounded-md border border-slate-200 divide-y divide-slate-100">
+              <label
+                className={`flex items-center gap-3 px-3 py-2 cursor-pointer hover:bg-slate-50 ${
+                  picked === null && manual === '' ? 'bg-slate-50' : ''
+                }`}
+              >
+                <input
+                  type="radio"
+                  name="container-pick"
+                  checked={picked === null && manual === ''}
+                  onChange={() => {
+                    setPicked(null)
+                    setManual('')
+                  }}
+                  className="w-4 h-4"
+                />
+                <div className="flex-1 text-sm">
+                  <div className="font-semibold text-slate-700">Unassigned (clear)</div>
+                  <div className="text-xs text-slate-500">
+                    Operator scan flow will FIFO-pick at the dock.
+                  </div>
+                </div>
+              </label>
+              {candidates.map((c) => (
+                <label
+                  key={c.container_no}
+                  className={`flex items-center gap-3 px-3 py-2 cursor-pointer hover:bg-slate-50 ${
+                    picked === c.container_no ? 'bg-[#0093D0]/5' : ''
+                  }`}
+                >
+                  <input
+                    type="radio"
+                    name="container-pick"
+                    checked={picked === c.container_no && manual === ''}
+                    onChange={() => {
+                      setPicked(c.container_no)
+                      setManual('')
+                    }}
+                    className="w-4 h-4"
+                    disabled={c.remaining_qty < line.order_qty && !c.is_current}
+                  />
+                  <div className="flex-1 text-sm">
+                    <div className="flex items-baseline gap-2 flex-wrap">
+                      <span className="font-mono font-bold text-[#1B4676]">
+                        {c.container_no}
+                      </span>
+                      {c.is_current && (
+                        <span className="text-[10px] uppercase tracking-wider font-bold text-[#0093D0] bg-[#0093D0]/10 border border-[#0093D0]/25 rounded-full px-1.5 py-0.5">
+                          Current
+                        </span>
+                      )}
+                      {c.remaining_qty < line.order_qty && !c.is_current && (
+                        <span className="text-[10px] uppercase tracking-wider font-bold text-amber-700 bg-amber-50 border border-amber-200 rounded-full px-1.5 py-0.5">
+                          Short
+                        </span>
+                      )}
+                    </div>
+                    <div className="text-xs text-slate-500 font-mono">
+                      remaining <span className={`font-bold ${c.remaining_qty >= line.order_qty ? 'text-emerald-700' : 'text-slate-700'}`}>{c.remaining_qty}</span>
+                      {' / '}inbound {c.inbound_qty}
+                      {c.already_allocated_qty > 0 && (
+                        <span className="text-slate-400"> · {c.already_allocated_qty} allocated</span>
+                      )}
+                      {c.received_date && (
+                        <span className="text-slate-400"> · arrived {c.received_date}</span>
+                      )}
+                    </div>
+                  </div>
+                </label>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div className="mt-4 space-y-1">
+          <div className="text-[11px] uppercase tracking-[0.14em] font-bold text-slate-500">
+            Or type a container number manually
+          </div>
+          <input
+            type="text"
+            value={manual}
+            onChange={(e) => {
+              setManual(e.target.value.toUpperCase())
+              if (e.target.value) setPicked(null)
+            }}
+            placeholder="e.g. TESU1234567"
+            className="w-full border border-slate-300 rounded-md px-3 py-2 font-mono text-sm focus:border-[#0093D0] focus:ring-2 focus:ring-[#0093D0]/20 focus:outline-none transition"
+            disabled={saving}
+          />
+          <div className="text-xs text-slate-500">
+            Server validates the container exists + carries SKU {line.sku} before
+            saving.
+          </div>
+        </div>
+
+        <div className="mt-5 flex justify-end gap-2">
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={saving}
+            className="px-3 py-1.5 rounded-md border border-slate-300 text-slate-700 text-sm font-medium hover:bg-slate-50 disabled:opacity-50"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={save}
+            disabled={saving || loading}
+            className="px-4 py-1.5 rounded-md bg-[#1B4676] hover:bg-[#224E72] text-white text-sm font-bold disabled:opacity-50"
+          >
+            {saving ? 'Saving…' : 'Save'}
+          </button>
+        </div>
+      </div>
+    </div>
   )
 }

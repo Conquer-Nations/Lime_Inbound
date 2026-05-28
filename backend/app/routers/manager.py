@@ -2161,6 +2161,259 @@ async def get_outbound_erp_detail(
         raise HTTPException(status_code=404, detail=str(e))
 
 
+@router.get("/outbound-orders/{transfer_order_no}/lines/{line_id}/container-candidates")
+async def list_source_container_candidates(
+    transfer_order_no: str,
+    line_id: int,
+    session: AsyncSession = Depends(get_session),
+):
+    """Return inbound containers that could fulfill the given outbound
+    line — same customer (or any customer under the same account), same
+    SKU, with remaining qty > 0.
+
+    "Remaining" = inbound ContainerLine.qty MINUS already-allocated
+    outbound_lines.order_qty for that same source_container_no + SKU
+    across non-cancelled TOs. Picks-the-line itself is excluded so we
+    don't double-count.
+
+    Sorted oldest-received-first (FIFO hint) so the manager can match the
+    on-paper aging logic when picking manually.
+    """
+    from sqlalchemy import select as _select, func as _func
+    from app.models import (
+        Container as _Container,
+        ContainerLine as _ContainerLine,
+        DO as _DO,
+        OutboundLine as _OutboundLine,
+        OutboundOrder as _OutboundOrder,
+        WHPO as _WHPO,
+    )
+
+    order = (
+        await session.execute(
+            _select(_OutboundOrder).where(
+                _OutboundOrder.transfer_order_no == transfer_order_no
+            )
+        )
+    ).scalar_one_or_none()
+    if order is None:
+        raise HTTPException(404, f"TO {transfer_order_no} not found")
+
+    line = (
+        await session.execute(
+            _select(_OutboundLine).where(
+                _OutboundLine.id == line_id,
+                _OutboundLine.outbound_order_id == order.id,
+            )
+        )
+    ).scalar_one_or_none()
+    if line is None:
+        raise HTTPException(404, f"Line {line_id} not found on TO {transfer_order_no}")
+
+    sku_raw = (line.sku_raw or "").strip()
+    if not sku_raw:
+        return {"candidates": []}
+
+    # Step 1: find every (container, sku) inbound row matching this SKU
+    # for the TO's customer (and any sibling customers under the same
+    # account, so account-level orders can draw cross-brand if needed).
+    customer_ids: list[int] = [order.customer_id]
+    if order.customer and order.customer.account_id:
+        sibling_ids = (
+            await session.scalars(
+                _select(Customer.id).where(Customer.account_id == order.customer.account_id)
+            )
+        ).all()
+        customer_ids = list(set(customer_ids + list(sibling_ids)))
+
+    inbound_q = (
+        _select(
+            _Container.container_no,
+            _func.sum(_ContainerLine.qty),
+            _func.max(_DO.expected_arrival_date),
+        )
+        .join(_DO, _Container.do_id == _DO.id)
+        .join(_WHPO, _DO.whpo_id == _WHPO.id)
+        .join(_ContainerLine, _ContainerLine.container_id == _Container.id)
+        .where(_WHPO.customer_id.in_(customer_ids))
+        .where(_ContainerLine.sku_raw == sku_raw)
+        .group_by(_Container.container_no)
+        .order_by(_func.max(_DO.expected_arrival_date).asc().nullsfirst())
+    )
+    inbound_rows = (await session.execute(inbound_q)).all()
+
+    # Step 2: how much is already allocated to other (non-cancelled) TOs
+    # per (source_container_no, sku_raw)?
+    allocations_q = (
+        _select(
+            _OutboundLine.source_container_no,
+            _func.sum(_OutboundLine.order_qty),
+        )
+        .join(_OutboundOrder, _OutboundLine.outbound_order_id == _OutboundOrder.id)
+        .where(_OutboundLine.sku_raw == sku_raw)
+        .where(_OutboundLine.source_container_no.isnot(None))
+        .where(_OutboundLine.id != line.id)            # exclude this line
+        .where(_OutboundOrder.status != "cancelled")
+        .group_by(_OutboundLine.source_container_no)
+    )
+    allocations = {
+        r[0]: int(r[1] or 0) for r in (await session.execute(allocations_q)).all()
+    }
+
+    candidates = []
+    for container_no, inbound_qty, received_date in inbound_rows:
+        inbound = int(inbound_qty or 0)
+        allocated = allocations.get(container_no, 0)
+        remaining = inbound - allocated
+        if remaining <= 0 and container_no != line.source_container_no:
+            # Container is fully allocated to other TOs and not currently
+            # assigned to this line — skip.
+            continue
+        candidates.append(
+            {
+                "container_no": container_no,
+                "inbound_qty": inbound,
+                "already_allocated_qty": allocated,
+                "remaining_qty": remaining,
+                "received_date": received_date.isoformat() if received_date else None,
+                "is_current": container_no == line.source_container_no,
+            }
+        )
+
+    return {
+        "transfer_order_no": transfer_order_no,
+        "line_id": line.id,
+        "sku": sku_raw,
+        "order_qty": line.order_qty,
+        "current_source_container_no": line.source_container_no,
+        "candidates": candidates,
+    }
+
+
+@router.patch("/outbound-orders/{transfer_order_no}/lines/{line_id}/source-container")
+async def assign_source_container(
+    transfer_order_no: str,
+    line_id: int,
+    payload: dict,
+    session: AsyncSession = Depends(get_session),
+):
+    """Manually assign (or clear) the source inbound container for an
+    outbound line.
+
+    Body: `{"source_container_no": "TESU1234567"}` to assign, or
+    `{"source_container_no": null}` to clear. Pass an empty string also
+    interpreted as clear.
+
+    Validates that the container exists and has matching SKU stock when
+    a non-null value is given — refuses to silently link to a bogus
+    container number.
+
+    Writes an ActivityLog row + refreshes the master sheet so the new
+    linkage shows in every downstream view.
+    """
+    from sqlalchemy import select as _select
+    from app.models import (
+        Container as _Container,
+        ContainerLine as _ContainerLine,
+        OutboundLine as _OutboundLine,
+        OutboundOrder as _OutboundOrder,
+    )
+
+    order = (
+        await session.execute(
+            _select(_OutboundOrder).where(
+                _OutboundOrder.transfer_order_no == transfer_order_no
+            )
+        )
+    ).scalar_one_or_none()
+    if order is None:
+        raise HTTPException(404, f"TO {transfer_order_no} not found")
+
+    line = (
+        await session.execute(
+            _select(_OutboundLine).where(
+                _OutboundLine.id == line_id,
+                _OutboundLine.outbound_order_id == order.id,
+            )
+        )
+    ).scalar_one_or_none()
+    if line is None:
+        raise HTTPException(404, f"Line {line_id} not found on TO {transfer_order_no}")
+
+    raw = payload.get("source_container_no")
+    new_val: str | None = None
+    if raw is not None:
+        s = str(raw).strip().upper()
+        if s:
+            new_val = s
+
+    if new_val is not None:
+        # Validate container exists and has stock of this line's SKU.
+        container = (
+            await session.execute(
+                _select(_Container).where(_Container.container_no == new_val)
+            )
+        ).scalar_one_or_none()
+        if container is None:
+            raise HTTPException(
+                400, f"Container {new_val} not on file. Check the number or wait for the inbound receipt."
+            )
+        has_sku = await session.scalar(
+            _select(_ContainerLine.id)
+            .where(_ContainerLine.container_id == container.id)
+            .where(_ContainerLine.sku_raw == (line.sku_raw or ""))
+            .limit(1)
+        )
+        if has_sku is None:
+            raise HTTPException(
+                400,
+                f"Container {new_val} doesn't carry SKU {line.sku_raw}. Pick a container that has this SKU.",
+            )
+
+    old_val = line.source_container_no
+    line.source_container_no = new_val
+
+    session.add(
+        ActivityLog(
+            actor="manager",
+            kind="outbound_line_source_assigned",
+            ref_type="outbound_order",
+            ref_id=order.id,
+            message=(
+                f"TO {transfer_order_no} line {line.line_no} ({line.sku_raw}): "
+                f"source container {old_val or '∅'} → {new_val or '∅'}"
+            ),
+            payload={
+                "transfer_order_no": transfer_order_no,
+                "line_id": line.id,
+                "line_no": line.line_no,
+                "sku": line.sku_raw,
+                "before": old_val,
+                "after": new_val,
+            },
+        )
+    )
+    await session.commit()
+
+    # Best-effort master sheet refresh — the linkage shows up in the
+    # outbound aggregates of the inbound container's row.
+    try:
+        from app.services import master_sheet_sync
+        if master_sheet_sync.is_configured():
+            await master_sheet_sync.push_full_replace(session)
+    except Exception as e:  # noqa: BLE001
+        logging.getLogger(__name__).warning(
+            "master_sheet_sync.push_full_replace failed after source-container assign: %s", e
+        )
+
+    return {
+        "ok": True,
+        "transfer_order_no": transfer_order_no,
+        "line_id": line.id,
+        "source_container_no": new_val,
+    }
+
+
 @router.delete("/outbound-orders/{transfer_order_no}", status_code=200)
 async def delete_outbound_order(
     transfer_order_no: str,
