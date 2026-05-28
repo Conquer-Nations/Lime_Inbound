@@ -142,14 +142,60 @@ export default function ScanSheetMode({ sheet, operator, onFinished }: Props) {
     })
   }
 
+  // ── Batch-scan queue (scooter mode) ──────────────────────────────────
+  // Scooters have no IMEI step → operators batch-scan 10 serials in
+  // rapid succession with the BT-A500. The scanner emits each scan
+  // ~50ms apart with an Enter terminator. The previous implementation
+  // early-exited on `busy` while a submit was in-flight, dropping every
+  // scan after the first. New behavior: when busy AND non-IMEI mode,
+  // queue the serial and let the drain effect process it after the
+  // in-flight submit completes.
+  const serialQueueRef = useRef<string[]>([])
+  const [queueLen, setQueueLen] = useState(0)
+
+  // Drain worker — fires whenever `busy` flips to false and the queue
+  // has items. Pulls the next queued serial and submits it.
+  useEffect(() => {
+    if (busy || sheet.header.is_completed) return
+    if (serialQueueRef.current.length === 0) return
+    const next = serialQueueRef.current.shift()!
+    setQueueLen(serialQueueRef.current.length)
+    // Fire-and-forget; submitOrAdvance handles its own busy guard.
+    void submitOrAdvance(next)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [busy, queueLen])
+
   /** Core scan handler — called when the operator presses Enter (scanner or
    * keyboard) OR taps the "Add scan" button. Reads input values straight
    * from the DOM (not React state) so scanner-fast Enter can never race a
-   * pending setState. */
-  async function submitOrAdvance() {
-    if (busy || sheet.header.is_completed) return
-    const serialVal = (serialInputRef.current?.value ?? serial).trim()
+   * pending setState.
+   *
+   * `overrideSerial` is set by the queue drain effect to bypass the DOM
+   * read (the input may have been cleared / overwritten by then). */
+  async function submitOrAdvance(overrideSerial?: string) {
+    const serialVal = (overrideSerial ?? serialInputRef.current?.value ?? serial).trim()
     const imeiVal = (imeiInputRef.current?.value ?? imei).trim()
+
+    // Batch-scan queue path: scooter mode + something already in-flight.
+    // Push the just-scanned serial into the queue and bail — the drain
+    // effect will pick it up the moment busy turns false.
+    if (
+      busy
+      && !sheet.header.is_completed
+      && !sheet.header.requires_imei
+      && serialVal
+      && /^[A-Za-z0-9-]+$/.test(serialVal)
+      && overrideSerial === undefined
+    ) {
+      serialQueueRef.current.push(serialVal)
+      setQueueLen(serialQueueRef.current.length)
+      setSerial('')
+      if (serialInputRef.current) serialInputRef.current.value = ''
+      focusNext('serial')
+      return
+    }
+
+    if (busy || sheet.header.is_completed) return
     if (!serialVal) {
       focusNext('serial')
       return
@@ -354,10 +400,21 @@ export default function ScanSheetMode({ sheet, operator, onFinished }: Props) {
           </div>
         )}
 
-        <div className="text-xs text-slate-500">
-          {rows.length === 0
-            ? 'No scans yet — go ahead.'
-            : `${rows.length} scan${rows.length === 1 ? '' : 's'} on this container so far.`}
+        <div className="text-xs text-slate-500 flex items-center gap-3 flex-wrap">
+          <span>
+            {rows.length === 0
+              ? 'No scans yet — go ahead.'
+              : `${rows.length} scan${rows.length === 1 ? '' : 's'} on this container so far.`}
+          </span>
+          {queueLen > 0 && (
+            <span
+              className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-[#0093D0]/10 border border-[#0093D0]/30 text-[#1B4676] font-bold"
+              title="Scans waiting to be recorded"
+            >
+              <Spinner size={10} className="text-[#0093D0]" />
+              {queueLen} queued
+            </span>
+          )}
         </div>
       </form>
 
