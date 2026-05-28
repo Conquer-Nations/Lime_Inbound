@@ -48,10 +48,17 @@ async def next_po_number(session: AsyncSession, year: int) -> str:
 
 
 async def list_available_inventory_for_company(
-    session: AsyncSession, company_name: str
+    session: AsyncSession,
+    customer_ids: list[int],
 ) -> list[tuple[str, int]]:
     """Return [(sku, available_qty)] for every SKU with stock currently on
-    hand for `company_name`.
+    hand across the given customer/brand IDs.
+
+    Caller passes a customer-id list (typically from `vendor_customer_ids`)
+    so account-level logins like TQL get every brand rolling up to them.
+    Previously took a single company_name and matched Customer.name —
+    silently returned 0 rows for account-level logins since TQL is an
+    Account, not a Customer.
 
     Definition: each Scan row (inbound) with serial_number != NULL counts as
     one unit. An OutboundScan with `inbound_scan_id` set marks that unit as
@@ -61,7 +68,9 @@ async def list_available_inventory_for_company(
     of the Scan. We take the first line on the container as the SKU label
     (containers typically carry one SKU each in this 3PL flow).
     """
-    # Inbound scans for this company that still have serials assigned
+    if not customer_ids:
+        return []
+    # Inbound scans for this customer set that still have serials assigned
     inbound_q = (
         select(
             ContainerLine.sku_raw.label("sku_raw"),
@@ -71,7 +80,7 @@ async def list_available_inventory_for_company(
         .join(DO, Container.do_id == DO.id)
         .join(WHPO, DO.whpo_id == WHPO.id)
         .join(Scan, Scan.container_id == Container.id)
-        .where(WHPO.customer.has(name=company_name))
+        .where(WHPO.customer_id.in_(customer_ids))
         .where(Scan.serial_number.isnot(None))
         .subquery()
     )
@@ -151,9 +160,16 @@ async def find_inbound_scan_fifo(
 
 
 async def list_container_inventory_for_company(
-    session: AsyncSession, company_name: str
+    session: AsyncSession,
+    customer_ids: list[int],
 ) -> list[dict]:
-    """Build the per-(container, sku) inventory summary for a company.
+    """Build the per-(container, sku) inventory summary across a set of
+    customer/brand IDs.
+
+    Caller passes a customer-id list (typically from `vendor_customer_ids`)
+    so account-level logins like TQL get every brand rolling up. Previously
+    took a single company_name and matched Customer.name — TQL is an
+    Account, so that returned 0 rows for account-level logins.
 
     For each inbound container line we have:
       inbound_qty  — ContainerLine.qty (manifest qty)
@@ -165,8 +181,7 @@ async def list_container_inventory_for_company(
     Returns dicts ready for ContainerInventoryItem; order is most-recent
     container first.
     """
-    norm_co = company_name.strip().lower() if company_name else ""
-    if not norm_co:
+    if not customer_ids:
         return []
 
     # 1. Inbound rows from the manifest. One row per (container, sku).
@@ -180,9 +195,8 @@ async def list_container_inventory_for_company(
         )
         .join(DO, Container.do_id == DO.id)
         .join(WHPO, DO.whpo_id == WHPO.id)
-        .join(Customer, WHPO.customer_id == Customer.id)
         .join(ContainerLine, ContainerLine.container_id == Container.id)
-        .where(func.lower(Customer.name) == norm_co)
+        .where(WHPO.customer_id.in_(customer_ids))
         .group_by(
             Container.container_no,
             ContainerLine.sku_raw,
@@ -208,9 +222,8 @@ async def list_container_inventory_for_company(
         .join(OutboundScan, OutboundScan.inbound_scan_id == Scan.id)
         .join(DO, Container.do_id == DO.id)
         .join(WHPO, DO.whpo_id == WHPO.id)
-        .join(Customer, WHPO.customer_id == Customer.id)
         .join(ContainerLine, ContainerLine.container_id == Container.id)
-        .where(func.lower(Customer.name) == norm_co)
+        .where(WHPO.customer_id.in_(customer_ids))
         .group_by(Container.container_no, ContainerLine.sku_raw)
     )
     outbound_rows = (await session.execute(outbound_stmt)).all()
@@ -225,8 +238,7 @@ async def list_container_inventory_for_company(
             OutboundOrder.transfer_order_no,
         )
         .join(OutboundOrder, OutboundLine.outbound_order_id == OutboundOrder.id)
-        .join(Customer, OutboundOrder.customer_id == Customer.id)
-        .where(func.lower(Customer.name) == norm_co)
+        .where(OutboundOrder.customer_id.in_(customer_ids))
         .where(OutboundLine.source_container_no.isnot(None))
         .where(OutboundOrder.status != "cancelled")
         .distinct()

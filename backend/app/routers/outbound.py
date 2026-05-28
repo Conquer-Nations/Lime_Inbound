@@ -154,12 +154,22 @@ async def _refresh_inventory_snapshot(
 ) -> None:
     """Recompute the per-container inventory summary for a company and
     push it to the ContainerInventory worksheet in OneDrive. Best-effort:
-    any failure is logged and swallowed so vendor flows never break."""
+    any failure is logged and swallowed so vendor flows never break.
+
+    `company_name` is the vendor's claim, which may be either a Customer
+    (brand) name OR an Account name. Resolve to a customer-id list via
+    the same logic vendor scoping uses, so account-level flows roll up
+    every brand under the account.
+    """
     if not company_name:
         return
     try:
+        from app.services.vendor_scoping import vendor_customer_ids
+        ids = await vendor_customer_ids(session, {"company": company_name})
+        if not ids:
+            return
         items = await outbound_service.list_container_inventory_for_company(
-            session, company_name
+            session, ids
         )
         rows = outbound_sheet_sync.inventory_rows_from_items(company_name, items)
         await outbound_sheet_sync.replace_container_inventory_for_company(
@@ -784,13 +794,15 @@ async def list_inventory(
     session: AsyncSession = Depends(get_session),
     vendor: dict = Depends(current_vendor_required),
 ):
-    """Available stock by SKU for the vendor's company. Computed as
-    inbound scans minus outbound scans."""
-    company = (vendor.get("company") or "").strip()
-    if not company:
+    """Available stock by SKU across every brand the vendor's JWT can
+    access (direct-brand or account-level rollup). Computed as inbound
+    scans minus outbound scans."""
+    from app.services.vendor_scoping import vendor_customer_ids
+    ids = await vendor_customer_ids(session, vendor)
+    if not ids:
         return InventoryResponse(items=[])
     rows = await outbound_service.list_available_inventory_for_company(
-        session, company
+        session, ids
     )
     return InventoryResponse(
         items=[InventoryItem(sku=sku, available_qty=qty) for sku, qty in rows]
@@ -804,12 +816,13 @@ async def container_inventory(
     session: AsyncSession = Depends(get_session),
     vendor: dict = Depends(current_vendor_required),
 ):
-    """Per-(container, sku) inventory dashboard for the vendor's company.
+    """Per-(container, sku) inventory dashboard across every brand the
+    vendor's JWT can access (direct-brand or account-level rollup).
     Each row shows inbound (manifest) qty, outbound qty already allocated
-    to Transfer Orders, and pending (remaining) qty. Used by the New
-    outbound order form's source-container picker and the dashboard tile."""
-    company = (vendor.get("company") or "").strip()
-    if not company:
+    to Transfer Orders, and pending (remaining) qty."""
+    from app.services.vendor_scoping import vendor_customer_ids
+    ids = await vendor_customer_ids(session, vendor)
+    if not ids:
         return ContainerInventoryResponse(
             containers=[],
             total_inbound=0,
@@ -817,7 +830,7 @@ async def container_inventory(
             total_pending=0,
         )
     rows = await outbound_service.list_container_inventory_for_company(
-        session, company
+        session, ids
     )
     items = [ContainerInventoryItem(**r) for r in rows]
     return ContainerInventoryResponse(
