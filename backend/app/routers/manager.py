@@ -2913,3 +2913,200 @@ async def push_scan_sheet_to_onedrive(
         "scans_in_payload": len(rows),
         "error": error,
     }
+
+
+@router.delete("/containers/{container_no}", status_code=200)
+async def delete_container_full(
+    container_no: str,
+    session: AsyncSession = Depends(get_session),
+):
+    """Destructive: remove an inbound container fully from the system —
+    container + all child rows (scans, receipts, lot_assignments,
+    container_lines), the Excel InboundTable rows for its WHPO, and
+    refresh the per-brand Master Inventory.
+
+    If the container's parent DO has no other containers, the DO + WHPO
+    are removed too (matches the "the whole shipment is gone" mental
+    model — vendor would resubmit cleanly).
+
+    Refuses (409) if any invoice references this container's WHPO —
+    void the invoice first.
+
+    Outbound references: OutboundLine.source_container_no pointing at
+    this container_no is *cleared*, not deleted (the TO itself stays
+    valid, just falls back to FIFO-pick-at-dock for that line).
+    """
+    from sqlalchemy import select as _select, delete as _delete, update as _update
+    from app.models import (
+        Container as _Container,
+        ContainerLine as _ContainerLine,
+        DO as _DO,
+        Invoice as _Invoice,
+        LotAssignment as _LotAssignment,
+        OutboundLine as _OutboundLine,
+        Pallet as _Pallet,
+        Receipt as _Receipt,
+        Scan as _Scan,
+        WHPO as _WHPO,
+    )
+
+    cno = (container_no or "").strip().upper()
+    if not cno:
+        raise HTTPException(400, "container_no required")
+
+    container = (
+        await session.execute(
+            _select(_Container).where(_Container.container_no == cno)
+        )
+    ).scalar_one_or_none()
+    if container is None:
+        raise HTTPException(404, f"Container {cno} not found")
+
+    # Block if there's an invoice tied to the parent WHPO (or to any TO
+    # that draws from this container). Caller voids/voids invoice first.
+    do_row = await session.get(_DO, container.do_id) if container.do_id else None
+    whpo_id = do_row.whpo_id if do_row else None
+    invoice_block = await session.scalar(
+        _select(func.count(_Invoice.id)).where(
+            (_Invoice.whpo_id == whpo_id)
+            if whpo_id else (_Invoice.id == -1)
+        )
+    )
+    if invoice_block:
+        raise HTTPException(
+            409,
+            f"Container {cno}'s WHPO has {invoice_block} invoice(s) attached. "
+            "Void the invoice(s) under Manager > Invoicing before deleting.",
+        )
+
+    # WHPO number captured for Excel cleanup (delete_inbound_rows_for_whpo)
+    whpo = await session.get(_WHPO, whpo_id) if whpo_id else None
+    whpo_number = whpo.whpo_number if whpo else None
+
+    snapshot = {
+        "container_no": cno,
+        "container_id": container.id,
+        "do_id": container.do_id,
+        "do_number": do_row.do_number if do_row else None,
+        "whpo_id": whpo_id,
+        "whpo_number": whpo_number,
+        "status": container.status,
+    }
+
+    # Cascade: scans → pallets → lot_assignments → container_lines →
+    # receipts (after their child scans/pallets are gone) → container.
+    scans_deleted = (
+        await session.execute(
+            _delete(_Scan).where(_Scan.container_id == container.id)
+        )
+    ).rowcount or 0
+    pallets_deleted = (
+        await session.execute(
+            _delete(_Pallet).where(_Pallet.container_id == container.id)
+        )
+    ).rowcount or 0
+    lot_assignments_deleted = (
+        await session.execute(
+            _delete(_LotAssignment).where(_LotAssignment.container_id == container.id)
+        )
+    ).rowcount or 0
+    lines_deleted = (
+        await session.execute(
+            _delete(_ContainerLine).where(_ContainerLine.container_id == container.id)
+        )
+    ).rowcount or 0
+    receipts_deleted = (
+        await session.execute(
+            _delete(_Receipt).where(_Receipt.container_id == container.id)
+        )
+    ).rowcount or 0
+
+    # Outbound TO lines that referenced this container_no: NULL the
+    # source pointer, don't delete the line. The TO stays valid and the
+    # operator will FIFO-pick a replacement source at the dock.
+    sources_cleared = (
+        await session.execute(
+            _update(_OutboundLine)
+            .where(_OutboundLine.source_container_no == cno)
+            .values(source_container_no=None)
+        )
+    ).rowcount or 0
+
+    await session.delete(container)
+
+    # If the DO has no other containers, remove DO + WHPO too. Mirrors
+    # what a vendor would see after a fresh resubmit.
+    do_and_whpo_removed = False
+    if container.do_id is not None:
+        remaining = await session.scalar(
+            _select(func.count(_Container.id)).where(_Container.do_id == container.do_id)
+        )
+        if not remaining:
+            if do_row is not None:
+                await session.delete(do_row)
+            if whpo is not None:
+                await session.delete(whpo)
+            do_and_whpo_removed = True
+
+    session.add(
+        ActivityLog(
+            actor="manager",
+            kind="container_deleted",
+            ref_type="container",
+            ref_id=snapshot["container_id"],
+            message=(
+                f"Container {cno} fully removed "
+                f"(scans={scans_deleted}, lines={lines_deleted}, "
+                f"receipts={receipts_deleted}"
+                + (f", DO+WHPO {snapshot['do_number']}/{whpo_number} dropped" if do_and_whpo_removed else "")
+                + (f", {sources_cleared} outbound source ref(s) cleared" if sources_cleared else "")
+                + ")"
+            ),
+            payload={"snapshot": snapshot, "cascade": {
+                "scans": scans_deleted,
+                "pallets": pallets_deleted,
+                "lot_assignments": lot_assignments_deleted,
+                "container_lines": lines_deleted,
+                "receipts": receipts_deleted,
+                "outbound_source_refs_cleared": sources_cleared,
+                "do_and_whpo_removed": do_and_whpo_removed,
+            }},
+        )
+    )
+    await session.commit()
+
+    # Excel cleanup (best-effort, no rollback if these fail).
+    excel_inbound_deleted = 0
+    if whpo_number:
+        try:
+            excel_inbound_deleted = await sheet_sync.delete_inbound_rows_for_whpo(whpo_number)
+        except Exception as e:  # noqa: BLE001
+            logging.getLogger(__name__).warning(
+                "delete_inbound_rows_for_whpo failed during container delete: %s", e
+            )
+
+    master_pushed = False
+    try:
+        from app.services import master_sheet_sync
+        if master_sheet_sync.is_configured():
+            master_pushed = await master_sheet_sync.push_full_replace(session)
+    except Exception as e:  # noqa: BLE001
+        logging.getLogger(__name__).warning(
+            "master_sheet_sync push failed during container delete: %s", e
+        )
+
+    return {
+        "ok": True,
+        "container_no": cno,
+        "cascade": {
+            "scans": scans_deleted,
+            "pallets": pallets_deleted,
+            "lot_assignments": lot_assignments_deleted,
+            "container_lines": lines_deleted,
+            "receipts": receipts_deleted,
+            "outbound_source_refs_cleared": sources_cleared,
+            "do_and_whpo_removed": do_and_whpo_removed,
+        },
+        "excel_inbound_rows_deleted": excel_inbound_deleted,
+        "master_sheet_pushed": master_pushed,
+    }
