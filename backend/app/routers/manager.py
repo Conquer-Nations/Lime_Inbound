@@ -2797,3 +2797,115 @@ async def backfill_scan_receipt(
         "onedrive_scan_sheet_pushed": onedrive_pushed,
         "master_sheet_pushed": master_pushed,
     }
+
+
+@router.post("/receipts/{receipt_id}/push-scan-sheet")
+async def push_scan_sheet_to_onedrive(
+    receipt_id: int,
+    session: AsyncSession = Depends(get_session),
+):
+    """Re-push a receipt's scan sheet to the OneDrive scan-sheets workbook.
+
+    Use cases:
+      - The original push at receipt-finish time failed silently because
+        the scan-sheets Logic App was broken (workbook rename, OneDrive
+        auth expired, etc).
+      - You just fixed the Logic App and want yesterday's receipts to
+        catch up.
+      - The scan-sheets workbook was rebuilt from scratch and needs the
+        backfill.
+
+    Reads the receipt + scans straight out of Postgres, builds the
+    AuditSheetDetail payload, fires the Logic App. Returns the upstream
+    HTTP status so the caller can confirm.
+    """
+    from sqlalchemy import select as _select
+    from app.models import (
+        Container as _Container,
+        Receipt as _Receipt,
+        Scan as _Scan,
+        DO as _DO,
+        WHPO as _WHPO,
+    )
+    from sqlalchemy.orm import selectinload as _selectinload
+
+    receipt = await session.scalar(
+        _select(_Receipt).where(_Receipt.id == receipt_id)
+    )
+    if receipt is None:
+        raise HTTPException(404, f"Receipt {receipt_id} not found")
+    if receipt.kind != "inbound" or receipt.container_id is None:
+        raise HTTPException(
+            400,
+            f"Receipt {receipt_id} is {receipt.kind} — push-scan-sheet is "
+            "for inbound receipts. Outbound has its own push endpoint.",
+        )
+
+    # Re-load container with the relationships the header builder needs.
+    container = await session.scalar(
+        _select(_Container)
+        .where(_Container.id == receipt.container_id)
+        .options(
+            _selectinload(_Container.do).selectinload(_DO.whpo).selectinload(_WHPO.customer),
+            _selectinload(_Container.lines),
+        )
+    )
+    if container is None:
+        raise HTTPException(
+            500, f"Receipt {receipt_id} references missing container_id {receipt.container_id}"
+        )
+
+    scans = (
+        await session.scalars(
+            _select(_Scan)
+            .where(_Scan.receipt_id == receipt.id)
+            .where(_Scan.serial_number.isnot(None))
+            .order_by(_Scan.scanned_at.asc())
+        )
+    ).all()
+
+    from app.services import scan_sheet_onedrive
+    if not scan_sheet_onedrive.is_configured():
+        raise HTTPException(
+            400,
+            "ONEDRIVE_SCAN_SHEET_URL is not configured. Set the env var first.",
+        )
+
+    from app.routers.scan_sheet import (
+        _build_header,
+        _scan_to_row,
+        _container_sku,
+        _container_uses_box_numbers,
+        _box_for_index,
+    )
+    from app.schemas.scan_sheet import AuditSheetDetail
+
+    header = _build_header(receipt, container, container.do.whpo, container.do)
+    is_scooter = _container_uses_box_numbers(container)
+    sku_default = _container_sku(container)
+    rows = [
+        _scan_to_row(
+            s,
+            container.container_no,
+            sku_default,
+            _box_for_index(idx) if is_scooter else None,
+        )
+        for idx, s in enumerate(scans)
+    ]
+    detail = AuditSheetDetail(header=header, rows=rows)
+
+    try:
+        await scan_sheet_onedrive.push_scan_sheet(detail)
+        pushed = True
+        error = None
+    except Exception as e:  # noqa: BLE001
+        pushed = False
+        error = str(e)
+
+    return {
+        "ok": pushed,
+        "receipt_id": receipt.id,
+        "container_no": container.container_no,
+        "scans_in_payload": len(rows),
+        "error": error,
+    }
