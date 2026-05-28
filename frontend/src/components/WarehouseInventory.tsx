@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { inventoryReportsApi } from '../api/client'
 import type {
   AgingBucket,
@@ -74,14 +75,26 @@ export default function WarehouseInventory() {
           Warehouse Inventory
         </div>
         <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-[#1B4676]">
-          Container aging & remaining inventory
+          Received container inventory
+          <span className="block text-base font-medium text-slate-500 mt-1">
+            Aging tracked from operator scan-finish
+          </span>
         </h1>
-        <p className="mt-1.5 text-sm text-slate-600 max-w-2xl">
-          Every received container, ordered oldest first. Click a row to
-          drill into its per-SKU and per-serial remaining inventory.
-          Aging buckets: 0–29 days <em>active</em> · 30–59 <em>aging</em> ·
-          60+ <em>stale</em>.
+        <p className="mt-3 text-sm text-slate-600 max-w-2xl">
+          Every container that has been physically scanned in at the dock,
+          ordered oldest first. Click a row to drill into its per-SKU and
+          per-serial remaining inventory. Aging buckets: 0–29 days{' '}
+          <em>active</em> · 30–59 <em>aging</em> · 60+ <em>stale</em>.
         </p>
+        <div className="mt-3 rounded-md border border-[#0093D0]/25 bg-[#0093D0]/5 px-3 py-2 text-xs text-slate-700 max-w-2xl">
+          <span className="font-bold text-[#1B4676]">Not seeing a container?</span>{' '}
+          This view shows only containers an operator has finished scanning.
+          Submitted shipments still expected at the dock live in{' '}
+          <Link to="/manager" className="text-[#0093D0] hover:text-[#1B4676] underline decoration-dotted font-semibold">
+            Delivery Orders
+          </Link>
+          {' '}— they'll appear here once received and finished.
+        </div>
       </header>
 
       {error && (
