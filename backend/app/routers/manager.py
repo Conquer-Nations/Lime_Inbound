@@ -2841,13 +2841,17 @@ async def push_scan_sheet_to_onedrive(
             "for inbound receipts. Outbound has its own push endpoint.",
         )
 
-    # Re-load container with the relationships the header builder needs.
+    # Re-load container with every relationship the header builder + line
+    # helpers touch. _container_requires_imei walks line.sku.product_type
+    # when line.product_type is null → preload that too or boom
+    # MissingGreenlet under the async session.
+    from app.models import ContainerLine as _ContainerLine
     container = await session.scalar(
         _select(_Container)
         .where(_Container.id == receipt.container_id)
         .options(
             _selectinload(_Container.do).selectinload(_DO.whpo).selectinload(_WHPO.customer),
-            _selectinload(_Container.lines),
+            _selectinload(_Container.lines).selectinload(_ContainerLine.sku),
         )
     )
     if container is None:
