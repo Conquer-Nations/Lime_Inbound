@@ -2568,3 +2568,238 @@ async def delete_outbound_order(
         },
         "excel_outbound_rows_deleted": excel_outbound_deleted,
     }
+
+
+@router.post("/backfill/scan-receipt")
+async def backfill_scan_receipt(
+    payload: dict,
+    session: AsyncSession = Depends(get_session),
+):
+    """Manually backfill a completed receipt for a container whose operator
+    didn't use the portal at the dock — happens when the scan was done on
+    paper / a separate scanner and the data lands later.
+
+    Idempotent-ish: refuses to insert if the container already has a
+    'completed' receipt (any prior receipt's scans would have been re-
+    created on a retry which would silently duplicate). Wipe the existing
+    receipt first if you actually want to overwrite.
+
+    Body:
+      {
+        "container_no": "TCNU2190245",
+        "operator":     "thomas",
+        "started_at":   "2026-05-28T20:45:00Z",   ISO UTC
+        "finished_at":  "2026-05-28T22:45:00Z",
+        "scans": [
+          {"serial": "LELHE5XD162603250788", "imei": "864852081687344"},
+          ...
+        ]
+      }
+
+    Does:
+      - Creates a Receipt(status='completed', started/finished_at, by=operator)
+      - Creates one Pallet to hold the scans (single-pallet — caller can
+        re-split later if needed)
+      - Creates Scan rows (one per item) linked to receipt + pallet + container
+      - Resolves sku_id from the container's first ContainerLine
+      - Updates Container.status='received' and Container.finished_at
+      - Triggers scan_sheet_onedrive push + master_sheet refresh
+      - Writes an ActivityLog row for audit
+    """
+    from datetime import datetime as _dt
+    from sqlalchemy import select as _select
+    from app.models import (
+        Container as _Container,
+        ContainerLine as _ContainerLine,
+        Pallet as _Pallet,
+        Receipt as _Receipt,
+        Scan as _Scan,
+    )
+
+    container_no = (payload.get("container_no") or "").strip().upper()
+    operator = (payload.get("operator") or "").strip() or "manager-backfill"
+    if not container_no:
+        raise HTTPException(400, "container_no required")
+    scans_in = payload.get("scans") or []
+    if not isinstance(scans_in, list) or not scans_in:
+        raise HTTPException(400, "scans must be a non-empty array")
+    try:
+        started_at = _dt.fromisoformat(payload["started_at"].replace("Z", "+00:00"))
+        finished_at = _dt.fromisoformat(payload["finished_at"].replace("Z", "+00:00"))
+    except (KeyError, ValueError) as e:
+        raise HTTPException(400, f"started_at/finished_at must be ISO datetimes: {e}")
+    if finished_at <= started_at:
+        raise HTTPException(400, "finished_at must be after started_at")
+
+    container = (
+        await session.execute(
+            _select(_Container).where(_Container.container_no == container_no)
+        )
+    ).scalar_one_or_none()
+    if container is None:
+        raise HTTPException(
+            404,
+            f"Container {container_no} not on file. Submit the WHPO first via the vendor portal.",
+        )
+
+    existing_completed = await session.scalar(
+        _select(_Receipt.id)
+        .where(_Receipt.container_id == container.id)
+        .where(_Receipt.status == "completed")
+        .limit(1)
+    )
+    if existing_completed is not None:
+        raise HTTPException(
+            409,
+            f"Container {container_no} already has a completed receipt "
+            f"(id={existing_completed}). Delete it first if you want to "
+            "rebuild from scratch.",
+        )
+
+    # Resolve a default SKU + sku_id from the manifest.
+    first_line = await session.scalar(
+        _select(_ContainerLine)
+        .where(_ContainerLine.container_id == container.id)
+        .limit(1)
+    )
+    default_sku_id = first_line.sku_id if first_line else None
+    default_sku_raw = (first_line.sku_raw if first_line else None) or ""
+
+    # 1. Receipt
+    receipt = _Receipt(
+        container_id=container.id,
+        status="completed",
+        started_at=started_at,
+        finished_at=finished_at,
+        started_by=operator,
+        finished_by=operator,
+    )
+    session.add(receipt)
+    await session.flush()  # populate receipt.id
+
+    # 2. Single pallet
+    pallet = _Pallet(
+        receipt_id=receipt.id,
+        container_id=container.id,
+        sku_id=default_sku_id,
+        lot_id=None,
+        qty=len(scans_in),
+        level=1,
+        sqft=0,
+        palletized_at=finished_at,
+        palletized_by=operator,
+    )
+    session.add(pallet)
+    await session.flush()
+
+    # 3. Scans
+    accepted = 0
+    skipped: list[dict] = []
+    for entry in scans_in:
+        serial = (entry.get("serial") or "").strip()
+        imei = (entry.get("imei") or "").strip() or None
+        if not serial:
+            skipped.append({"reason": "empty serial", "entry": entry})
+            continue
+        sku_raw = (entry.get("sku") or "").strip() or default_sku_raw
+        session.add(
+            _Scan(
+                receipt_id=receipt.id,
+                pallet_id=pallet.id,
+                container_id=container.id,
+                sku_id=default_sku_id,
+                item_barcode=serial,
+                serial_number=serial,
+                imei=imei,
+                scanned_at=started_at,         # exact per-scan time not provided
+                scanned_by=operator,
+                result="ok",
+                error_reason=None,
+            )
+        )
+        accepted += 1
+
+    # 4. Container status
+    container.status = "received"
+    container.finished_at = finished_at
+    if not container.actual_arrival_date:
+        container.actual_arrival_date = started_at.date()
+
+    # 5. Audit log
+    session.add(
+        ActivityLog(
+            actor=operator,
+            kind="container_backfilled",
+            ref_type="container",
+            ref_id=container.id,
+            message=(
+                f"Manual scan-data backfill on {container_no} — "
+                f"{accepted} scans, started {started_at.isoformat()}, "
+                f"finished {finished_at.isoformat()} by {operator}"
+            ),
+            payload={
+                "container_no": container_no,
+                "receipt_id": receipt.id,
+                "pallet_id": pallet.id,
+                "scan_count": accepted,
+                "skipped": skipped,
+            },
+        )
+    )
+    await session.commit()
+
+    # 6. Push scan sheet to OneDrive (creates a new worksheet in the
+    # configured scan-sheets workbook). Best-effort.
+    onedrive_pushed = False
+    try:
+        from app.services import scan_sheet_onedrive
+        from app.routers.scan_sheet import _build_header, _scan_to_row, _container_sku, _container_uses_box_numbers
+        # Reload container + relationships for the header build
+        await session.refresh(container, attribute_names=["do"])
+        whpo = container.do.whpo if container.do else None
+        do = container.do
+        header = _build_header(receipt, container, whpo, do)
+        scans = (
+            await session.scalars(
+                _select(_Scan)
+                .where(_Scan.receipt_id == receipt.id)
+                .order_by(_Scan.scanned_at.asc())
+            )
+        ).all()
+        is_scooter = _container_uses_box_numbers(container)
+        sku_default = _container_sku(container)
+        from app.schemas.scan_sheet import AuditSheetDetail
+        rows = [
+            _scan_to_row(s, container.container_no, sku_default, idx + 1 if is_scooter else None)
+            for idx, s in enumerate(scans)
+        ]
+        detail = AuditSheetDetail(header=header, rows=rows)
+        if scan_sheet_onedrive.is_configured():
+            await scan_sheet_onedrive.push_scan_sheet(detail)
+            onedrive_pushed = True
+    except Exception as e:  # noqa: BLE001
+        logging.getLogger(__name__).warning(
+            "scan-sheet OneDrive push failed during backfill: %s", e
+        )
+
+    # 7. Master sheet refresh
+    master_pushed = False
+    try:
+        from app.services import master_sheet_sync
+        if master_sheet_sync.is_configured():
+            master_pushed = await master_sheet_sync.push_full_replace(session)
+    except Exception as e:  # noqa: BLE001
+        logging.getLogger(__name__).warning(
+            "master_sheet_sync refresh failed during backfill: %s", e
+        )
+
+    return {
+        "ok": True,
+        "container_no": container_no,
+        "receipt_id": receipt.id,
+        "pallet_id": pallet.id,
+        "scans_accepted": accepted,
+        "scans_skipped": len(skipped),
+        "onedrive_scan_sheet_pushed": onedrive_pushed,
+        "master_sheet_pushed": master_pushed,
+    }
