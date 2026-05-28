@@ -21,7 +21,13 @@ class MasterListRow(BaseModel):
     customer_name: str | None = None
 
     # Inbound (cols 1-13 in the xlsx)
+    # `invoice` is the actual billing invoice number (CN-YYYYMMDD-####)
+    # — populated once Manager > Invoicing issues an invoice for this
+    # row's WHPO (or for an outbound TO drawing from this container).
+    # NULL until then. Don't confuse with `do_number` — that's the
+    # warehouse Delivery Order ID, separate concept.
     invoice: str | None = None
+    do_number: str | None = None
     commodity: str | None = None
     whpo_load_no: str | None = None
     carrier_broker: str | None = None

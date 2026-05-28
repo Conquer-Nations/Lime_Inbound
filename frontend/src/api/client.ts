@@ -1427,7 +1427,11 @@ export interface MasterListRow {
   customer_name: string | null
 
   // Inbound (cols 1-13 in the xlsx)
+  // `invoice` is the BILLING invoice number (CN-YYYYMMDD-####),
+  // populated once Manager > Invoicing issues an invoice. Don't
+  // confuse with `do_number` — that's the warehouse Delivery Order ID.
   invoice: string | null
+  do_number: string | null
   commodity: string | null
   whpo_load_no: string | null
   carrier_broker: string | null

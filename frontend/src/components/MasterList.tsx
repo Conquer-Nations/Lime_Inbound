@@ -166,7 +166,7 @@ export default function MasterList(props: MasterListVariantProps = {}) {
               {/* Two-row header: section bands above, column names below.
                   Matches the xlsx's visual grouping. */}
               <tr className="bg-[#1B4676] text-white">
-                <th colSpan={13} className="text-left px-3 py-1.5 text-[10px] uppercase tracking-wider font-bold">
+                <th colSpan={14} className="text-left px-3 py-1.5 text-[10px] uppercase tracking-wider font-bold">
                   Inbound
                 </th>
                 <th colSpan={7} className="text-left px-3 py-1.5 text-[10px] uppercase tracking-wider font-bold bg-[#0093D0]">
@@ -177,7 +177,8 @@ export default function MasterList(props: MasterListVariantProps = {}) {
                 </th>
               </tr>
               <tr className="bg-slate-50 text-[10px] font-semibold uppercase tracking-wider text-slate-500">
-                <th className="text-left px-2 py-2">invoice</th>
+                <th className="text-left px-2 py-2">invoice #</th>
+                <th className="text-left px-2 py-2">DO #</th>
                 <th className="text-left px-2 py-2">commodity</th>
                 <th className="text-left px-2 py-2">container</th>
                 <th className="text-left px-2 py-2">whpo</th>
@@ -233,6 +234,7 @@ function Row({ r }: { r: MasterListRow }) {
     <tr className="border-t border-slate-100 hover:bg-[#0093D0]/5">
       {/* Inbound cells */}
       <td className={`${cell} font-mono text-slate-700`}>{fmtT(r.invoice)}</td>
+      <td className={`${cell} font-mono text-slate-500 text-[11px]`}>{fmtT(r.do_number)}</td>
       <td className={`${cell} text-slate-700`}>{fmtT(r.commodity)}</td>
       <td className={`${cell} font-mono`}>
         <Link

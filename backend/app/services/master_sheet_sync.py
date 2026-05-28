@@ -50,6 +50,7 @@ _LA_TZ = ZoneInfo("America/Los_Angeles")
 # in order.
 HEADERS = [
     "invoice",
+    "do_number",
     "commodity",
     "container",
     "whpo_load_no",
@@ -97,6 +98,7 @@ def _serialize(row: dict[str, Any]) -> list[Any]:
     the Logic App expects."""
     return [
         row.get("invoice") or "",
+        row.get("do_number") or "",
         row.get("commodity") or "",
         row.get("container_no") or "",
         row.get("whpo_load_no") or "",
