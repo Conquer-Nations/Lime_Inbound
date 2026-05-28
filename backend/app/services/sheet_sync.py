@@ -106,7 +106,16 @@ async def _append_via_webhook(rows: list[dict[str, Any]]) -> int:
     payload. Returns the count of rows for the first successful destination
     (best-effort — used just for the manager sync status).
     """
-    payload = {"rows": [_serialize(r) for r in rows]}
+    # Include `headers` so the Office Script can map values to columns
+    # by NAME instead of position. Lets ops add extra columns to the
+    # InboundTable (populated from elsewhere — manual entry, formulas,
+    # other integrations) without breaking the append flow. Without
+    # headers, addRow blows up the moment the workbook's column count
+    # diverges from len(HEADERS).
+    payload = {
+        "headers": HEADERS,
+        "rows": [_serialize(r) for r in rows],
+    }
     headers = {"Content-Type": "application/json"}
     if settings.inbound_webhook_secret:
         headers["X-CN-Secret"] = settings.inbound_webhook_secret
