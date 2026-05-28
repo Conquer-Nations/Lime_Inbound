@@ -2611,7 +2611,6 @@ async def backfill_scan_receipt(
     from app.models import (
         Container as _Container,
         ContainerLine as _ContainerLine,
-        Pallet as _Pallet,
         Receipt as _Receipt,
         Scan as _Scan,
     )
@@ -2677,35 +2676,31 @@ async def backfill_scan_receipt(
     session.add(receipt)
     await session.flush()  # populate receipt.id
 
-    # 2. Single pallet
-    pallet = _Pallet(
-        receipt_id=receipt.id,
-        container_id=container.id,
-        sku_id=default_sku_id,
-        lot_id=None,
-        qty=len(scans_in),
-        level=1,
-        sqft=0,
-        palletized_at=finished_at,
-        palletized_by=operator,
-    )
-    session.add(pallet)
-    await session.flush()
-
-    # 3. Scans
+    # 2. Scans — no Pallet wrapper since (a) backfill data doesn't carry
+    # box/pallet structure and (b) Pallet has non-nullable FKs (lot_id,
+    # sku_id, pallet_mode_at_receipt) that don't make sense to fabricate.
+    # Scan.pallet_id is nullable. Scooter box-numbering (which IS pallet-
+    # backed) doesn't apply to this SKU class — N-E-BIKE etc. ship without
+    # box grouping.
     accepted = 0
     skipped: list[dict] = []
+    seen_serials: set[str] = set()
     for entry in scans_in:
         serial = (entry.get("serial") or "").strip()
         imei = (entry.get("imei") or "").strip() or None
         if not serial:
             skipped.append({"reason": "empty serial", "entry": entry})
             continue
-        sku_raw = (entry.get("sku") or "").strip() or default_sku_raw
+        if serial in seen_serials:
+            # Per-receipt serial uniqueness constraint would blow up the
+            # whole transaction on commit. Quietly skip the dup.
+            skipped.append({"reason": "duplicate serial within payload", "serial": serial})
+            continue
+        seen_serials.add(serial)
         session.add(
             _Scan(
                 receipt_id=receipt.id,
-                pallet_id=pallet.id,
+                pallet_id=None,
                 container_id=container.id,
                 sku_id=default_sku_id,
                 item_barcode=serial,
@@ -2740,7 +2735,6 @@ async def backfill_scan_receipt(
             payload={
                 "container_no": container_no,
                 "receipt_id": receipt.id,
-                "pallet_id": pallet.id,
                 "scan_count": accepted,
                 "skipped": skipped,
             },
@@ -2797,9 +2791,9 @@ async def backfill_scan_receipt(
         "ok": True,
         "container_no": container_no,
         "receipt_id": receipt.id,
-        "pallet_id": pallet.id,
         "scans_accepted": accepted,
         "scans_skipped": len(skipped),
+        "skipped_details": skipped,
         "onedrive_scan_sheet_pushed": onedrive_pushed,
         "master_sheet_pushed": master_pushed,
     }
