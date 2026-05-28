@@ -20,4 +20,5 @@ export const STAFF: Record<string, Staff> = {
   giovanni: { id: 'giovanni', name: 'Giovanni',  role: 'operator',  pin: '0000' },
   mike:     { id: 'mike',     name: 'Mike',      role: 'operator',  pin: '0000' },
   deon:     { id: 'deon',     name: 'Deon',      role: 'operator',  pin: '0000' },
+  julio:    { id: 'julio',    name: 'Julio',     role: 'operator',  pin: '0000' },
 }
