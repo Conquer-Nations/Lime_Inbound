@@ -29,6 +29,7 @@ transition.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import date, datetime, timezone
 from typing import Any
@@ -41,6 +42,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 
 logger = logging.getLogger(__name__)
+
+# Track in-flight background pushes so we can collapse a burst of
+# concurrent writes into a single push instead of fanning out one
+# per endpoint hit. `_pending` is set while a task is queued or
+# running; new arrivals re-arm via `_again` instead of spawning more.
+_pending: asyncio.Task | None = None
+_again = False
+_lock = asyncio.Lock()
 
 _LA_TZ = ZoneInfo("America/Los_Angeles")
 
@@ -80,20 +89,66 @@ def is_configured() -> bool:
 
 
 async def maybe_push(session: AsyncSession, *, source: str) -> bool:
-    """Best-effort wrapper for `push_full_replace`. Returns False on any
-    error or when the webhook isn't configured. Logs the source label
-    so we can trace which write triggered each push. Use this at the
-    end of every endpoint that mutates anything visible in the master
-    sheet (driver info, WHPO updates, outbound TO submit/update,
-    container attach, scan-finish, etc.) so the manager + vendor views
-    stay in lock-step with Postgres."""
+    """Fire-and-forget master-sheet refresh — returns immediately,
+    actual push runs on a background task with its own session so the
+    caller releases its DB connection and the Logic App's latency
+    never blocks the request.
+
+    Burst-collapsing: if a push is already queued or running, this
+    just re-arms a "do it again when done" flag instead of fanning
+    out one task per write. That keeps the workbook eventually
+    consistent without thundering-herd posts on busy days (e.g.
+    bulk WHPO updates or scan-finish bursts).
+
+    Returns True if the push was scheduled (or already in flight),
+    False if not configured.
+    """
     if not is_configured():
         return False
+    global _pending, _again
+    async with _lock:
+        if _pending is not None and not _pending.done():
+            _again = True
+            logger.info(
+                "master_sheet_sync.maybe_push(%s): coalesced into in-flight push",
+                source,
+            )
+            return True
+        _pending = asyncio.create_task(_run_push_loop(source))
+    return True
+
+
+async def _run_push_loop(source: str) -> None:
+    """Background worker — pushes once, then re-pushes once if more
+    writes piled up while we were busy. Uses its own AsyncSession so
+    the request that triggered us has long since closed its connection.
+    """
+    global _pending, _again
+    # Import here to avoid a circular at module import time.
+    from app.db import SessionLocal
     try:
-        return await push_full_replace(session)
-    except Exception as e:  # noqa: BLE001
-        logger.warning("master_sheet_sync.maybe_push(%s) failed: %r", source, e)
-        return False
+        while True:
+            try:
+                async with SessionLocal() as session:
+                    await push_full_replace(session)
+            except Exception as e:  # noqa: BLE001
+                logger.warning(
+                    "master_sheet_sync background push (%s) failed: %r",
+                    source,
+                    e,
+                )
+            async with _lock:
+                if not _again:
+                    _pending = None
+                    return
+                _again = False
+                # Loop again — another write arrived during the push.
+    finally:
+        # Defensive: make sure we never leave _pending stuck pointing
+        # at a dead task on an unexpected exit path.
+        async with _lock:
+            if _pending is not None and _pending.done():
+                _pending = None
 
 
 def _fmt_date(d: date | None) -> str:

@@ -193,11 +193,11 @@ async def submit(
 
     # Also push the per-brand Master Inventory mirror so this shipment
     # appears in its brand’s sheet immediately. Same best-effort pattern
-    # as the InboundTable append above — never blocks the vendor.
+    # as the InboundTable append above — fires a background task and
+    # never blocks the vendor on the OneDrive Logic App.
     if not result.idempotent_replay:
         from app.services import master_sheet_sync
-        if master_sheet_sync.is_configured():
-            await master_sheet_sync.push_full_replace(session)
+        await master_sheet_sync.maybe_push(session, source="whpo_submitted")
 
     return result
 

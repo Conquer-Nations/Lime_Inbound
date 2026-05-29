@@ -609,11 +609,10 @@ async def _finish_outbound_sheet(
     # Mirror the master sheet — outbound scans on this container changed
     # units_out / pallets_out / to_no for the rows in the master view
     # that reference the inbound containers whose serials shipped here.
-    try:
-        from app.services import master_sheet_sync
-        await master_sheet_sync.push_full_replace(session)
-    except Exception as e:
-        logger.warning("master sheet sync errored on outbound finish: %s", e)
+    # Fires in the background so the operator's finish button isn't
+    # blocked by the OneDrive Logic App.
+    from app.services import master_sheet_sync
+    await master_sheet_sync.maybe_push(session, source="outbound_scan_finished")
 
     return FinishSheetResponse(
         receipt_id=receipt.id,
@@ -1013,12 +1012,10 @@ async def finish_sheet(
 
     # Mirror the master sheet (inbound + outbound view) to OneDrive.
     # Inbound finish changes units_in / pallets / scanned for this
-    # container, which is one row in the master view.
-    try:
-        from app.services import master_sheet_sync
-        await master_sheet_sync.push_full_replace(session)
-    except Exception as e:
-        logger.warning("master sheet sync errored on inbound finish: %s", e)
+    # container, which is one row in the master view. Background task
+    # — operator's finish button doesn't wait on the Logic App.
+    from app.services import master_sheet_sync
+    await master_sheet_sync.maybe_push(session, source="inbound_scan_finished")
 
     return FinishSheetResponse(
         receipt_id=receipt.id,

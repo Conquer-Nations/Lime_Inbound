@@ -2439,16 +2439,11 @@ async def assign_source_container(
     )
     await session.commit()
 
-    # Best-effort master sheet refresh — the linkage shows up in the
-    # outbound aggregates of the inbound container's row.
-    try:
-        from app.services import master_sheet_sync
-        if master_sheet_sync.is_configured():
-            await master_sheet_sync.push_full_replace(session)
-    except Exception as e:  # noqa: BLE001
-        logging.getLogger(__name__).warning(
-            "master_sheet_sync.push_full_replace failed after source-container assign: %s", e
-        )
+    # Master sheet refresh — runs in the background so the request
+    # returns immediately. Linkage shows up in the outbound aggregates
+    # of the inbound container's row.
+    from app.services import master_sheet_sync
+    await master_sheet_sync.maybe_push(session, source="source_container_assigned")
 
     return {
         "ok": True,
@@ -2592,14 +2587,9 @@ async def delete_outbound_order(
         )
 
     # Refresh the per-brand Master Inventory so the deleted TO drops out
-    # of every brand sheet that referenced it.
-    try:
-        if master_sheet_sync.is_configured():
-            await master_sheet_sync.push_full_replace(session)
-    except Exception as e:  # noqa: BLE001
-        logging.getLogger(__name__).warning(
-            "master_sheet_sync.push_full_replace failed after TO delete: %s", e
-        )
+    # of every brand sheet that referenced it. Background task — caller
+    # gets the cascade summary immediately.
+    await master_sheet_sync.maybe_push(session, source="to_deleted")
 
     return {
         "ok": True,
@@ -2820,16 +2810,14 @@ async def backfill_scan_receipt(
             "scan-sheet OneDrive push failed during backfill: %s", e
         )
 
-    # 7. Master sheet refresh
-    master_pushed = False
-    try:
-        from app.services import master_sheet_sync
-        if master_sheet_sync.is_configured():
-            master_pushed = await master_sheet_sync.push_full_replace(session)
-    except Exception as e:  # noqa: BLE001
-        logging.getLogger(__name__).warning(
-            "master_sheet_sync refresh failed during backfill: %s", e
-        )
+    # 7. Master sheet refresh — scheduled on a background task so the
+    # backfill response returns immediately. Caller can re-trigger via
+    # /manager/master-list/sync-onedrive if they want a synchronous push
+    # for debugging.
+    from app.services import master_sheet_sync
+    master_pushed = await master_sheet_sync.maybe_push(
+        session, source="scan_receipt_backfill"
+    )
 
     return {
         "ok": True,
@@ -2930,21 +2918,19 @@ async def heal_container_finish_drift(
         )
     await session.commit()
 
-    # Refresh the master sheet mirror so the now-finished containers
-    # show up in the OneDrive workbook + Master List view.
-    master_refresh_error: str | None = None
+    # Schedule a master sheet refresh on a background task so the
+    # now-finished containers show up in the OneDrive workbook. Caller
+    # never blocks on it — the per-row repair is the important part.
     if healed:
-        try:
-            from app.services import master_sheet_sync
-            await master_sheet_sync.push_full_replace(session)
-        except Exception as e:  # noqa: BLE001
-            master_refresh_error = repr(e)
+        from app.services import master_sheet_sync
+        await master_sheet_sync.maybe_push(
+            session, source="container_finish_drift_healed"
+        )
 
     return {
         "ok": True,
         "healed_count": len(healed),
         "healed": healed,
-        "master_sheet_refresh_error": master_refresh_error,
     }
 
 
@@ -3234,15 +3220,12 @@ async def delete_container_full(
                 "delete_inbound_rows_for_whpo failed during container delete: %s", e
             )
 
-    master_pushed = False
-    try:
-        from app.services import master_sheet_sync
-        if master_sheet_sync.is_configured():
-            master_pushed = await master_sheet_sync.push_full_replace(session)
-    except Exception as e:  # noqa: BLE001
-        logging.getLogger(__name__).warning(
-            "master_sheet_sync push failed during container delete: %s", e
-        )
+    # Background master sheet refresh — caller gets the cascade summary
+    # immediately and the workbook catches up shortly after.
+    from app.services import master_sheet_sync
+    master_pushed = await master_sheet_sync.maybe_push(
+        session, source="container_deleted"
+    )
 
     return {
         "ok": True,
