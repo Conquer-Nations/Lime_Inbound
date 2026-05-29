@@ -2843,6 +2843,111 @@ async def backfill_scan_receipt(
     }
 
 
+@router.post("/maintenance/heal-container-finish-drift")
+async def heal_container_finish_drift(
+    session: AsyncSession = Depends(get_session),
+):
+    """Find every container that has a completed Receipt but whose own
+    `status` / `finished_at` were never stamped, and fix them in place.
+
+    Pre-existing data drift caused by the bug in scan_sheet.finish_sheet
+    where only Receipt was updated, not Container — so dashboards +
+    Inventory & Aging miss those containers entirely. The bug is fixed
+    going forward in the same commit; this endpoint repairs the past.
+
+    Safe to re-run — only patches containers that are demonstrably
+    stale (a completed receipt exists but status != 'received').
+    """
+    from sqlalchemy import select as _select
+    from app.models import (
+        Container as _Container,
+        Receipt as _Receipt,
+    )
+
+    # Pull the latest completed Receipt per container that's still in a
+    # non-received state. One query, no per-row roundtrips.
+    rows = await session.execute(
+        _select(
+            _Container.id,
+            _Container.container_no,
+            _Container.status,
+            _Receipt.id.label("receipt_id"),
+            _Receipt.finished_at,
+            _Receipt.finished_by,
+        )
+        .join(_Receipt, _Receipt.container_id == _Container.id)
+        .where(_Receipt.status == "completed")
+        .where(
+            (_Container.status != "received")
+            | (_Container.finished_at.is_(None))
+        )
+        .order_by(_Container.id, _Receipt.finished_at.desc().nullslast())
+    )
+
+    healed: list[dict] = []
+    seen_container_ids: set[int] = set()
+    for r in rows.all():
+        if r.id in seen_container_ids:
+            continue  # already patched from a more-recent receipt
+        seen_container_ids.add(r.id)
+        container = await session.get(_Container, r.id)
+        if container is None:
+            continue
+        previous_status = container.status
+        previous_finished_at = container.finished_at
+        container.status = "received"
+        container.finished_at = r.finished_at
+        if not container.finished_by:
+            container.finished_by = r.finished_by or "manager-heal"
+        if not container.actual_arrival_date and r.finished_at:
+            container.actual_arrival_date = r.finished_at.date()
+        healed.append(
+            {
+                "container_no": r.container_no,
+                "receipt_id": r.receipt_id,
+                "previous_status": previous_status,
+                "new_finished_at": (
+                    r.finished_at.isoformat() if r.finished_at else None
+                ),
+                "had_finished_at_before": previous_finished_at is not None,
+            }
+        )
+
+    if healed:
+        session.add(
+            ActivityLog(
+                actor="manager-heal",
+                kind="container_finish_drift_healed",
+                ref_type="maintenance",
+                ref_id=None,
+                message=(
+                    f"Healed {len(healed)} container(s) whose Receipt was "
+                    f"completed but Container.status/finished_at had not "
+                    f"been stamped (scan_sheet.finish_sheet bug)."
+                ),
+                payload={"healed": healed},
+            )
+        )
+    await session.commit()
+
+    # Refresh the master sheet mirror so the now-finished containers
+    # show up in the OneDrive workbook + Master List view.
+    master_refresh_error: str | None = None
+    if healed:
+        try:
+            from app.services import master_sheet_sync
+            await master_sheet_sync.push_full_replace(session)
+        except Exception as e:  # noqa: BLE001
+            master_refresh_error = repr(e)
+
+    return {
+        "ok": True,
+        "healed_count": len(healed),
+        "healed": healed,
+        "master_sheet_refresh_error": master_refresh_error,
+    }
+
+
 @router.post("/receipts/{receipt_id}/push-scan-sheet")
 async def push_scan_sheet_to_onedrive(
     receipt_id: int,

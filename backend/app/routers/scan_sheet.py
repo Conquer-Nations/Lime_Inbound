@@ -967,9 +967,19 @@ async def finish_sheet(
             finished_at=receipt.finished_at or receipt.started_at,
             download_url=f"/operator/sheet/{receipt.id}/export.xlsx",
         )
+    now = datetime.now(timezone.utc)
     receipt.status = "completed"
-    receipt.finished_at = datetime.now(timezone.utc)
+    receipt.finished_at = now
     receipt.finished_by = operator
+    # CRITICAL: also stamp the container itself. Without this, dashboards
+    # + Inventory & Aging miss the container — both filter on
+    # Container.status='received' / finished_at NOT NULL. Used to bypass
+    # the proper finish_container() service and only updated the Receipt.
+    container.status = "received"
+    container.finished_at = now
+    container.finished_by = operator
+    if not container.actual_arrival_date:
+        container.actual_arrival_date = now.date()
     await session.commit()
 
     # Best-effort: push the finished receipt to OneDrive as a new sheet.
