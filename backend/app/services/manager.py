@@ -9,6 +9,7 @@ operator can proceed.
 from __future__ import annotations
 
 from datetime import date, datetime, timezone
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import and_, cast, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -26,10 +27,21 @@ from app.models import (
     Floor,
     Lot,
     LotAssignment,
+    OutboundScan,
     Pallet,
     Receipt,
+    Scan,
     WHPO,
 )
+
+# Warehouse is in Vernon, CA — dashboard "today" should mean the
+# operator's local day, not UTC. Otherwise a 5pm-PT scan rolls into
+# "tomorrow" on the dashboard at midnight UTC (= 5pm PT).
+_WAREHOUSE_TZ = ZoneInfo("America/Los_Angeles")
+
+
+def _warehouse_today() -> date:
+    return datetime.now(_WAREHOUSE_TZ).date()
 from app.schemas.manager import (
     ActivityFeedItem,
     AssignmentRow,
@@ -559,7 +571,10 @@ async def _refresh_do_status(
 
 
 async def get_dashboard(session: AsyncSession) -> DashboardResponse:
-    today = date.today()
+    # Warehouse-local "today" — operators in Vernon, CA expect the dashboard
+    # to track their day, not UTC. Without this, anything scanned after
+    # 5pm PT shows up as "tomorrow" the moment midnight UTC ticks over.
+    today = _warehouse_today()
 
     # KPIs
     containers_expected_today = await session.scalar(
@@ -579,7 +594,11 @@ async def get_dashboard(session: AsyncSession) -> DashboardResponse:
         .select_from(Container)
         .where(
             Container.status == "received",
-            cast(Container.finished_at, SqlDate) == today,
+            cast(
+                func.timezone("America/Los_Angeles", Container.finished_at),
+                SqlDate,
+            )
+            == today,
         )
     )
 
@@ -589,15 +608,40 @@ async def get_dashboard(session: AsyncSession) -> DashboardResponse:
         .where(ExceptionRecord.status == "open")
     )
 
-    total_pallets_stored = await session.scalar(
-        select(func.count()).select_from(Pallet)
-    )
-
-    pallets_received_today = await session.scalar(
+    # "Units on floor" — physical reality, not a Pallet row count. We
+    # used to `COUNT(*) FROM pallets`, but (a) the cumulative pallet
+    # table never decreases when stock ships out, and (b) backfilled
+    # receipts (e.g. TCNU2190245) skip Pallet creation entirely. Count
+    # ok-scans for received containers minus outbound scans instead.
+    units_received = await session.scalar(
         select(func.count())
-        .select_from(Pallet)
-        .where(cast(Pallet.palletized_at, SqlDate) == today)
+        .select_from(Scan)
+        .join(Container, Container.id == Scan.container_id)
+        .where(Container.status == "received")
+        .where(Scan.result == "ok")
+    ) or 0
+    units_shipped = await session.scalar(
+        select(func.count()).select_from(OutboundScan)
+    ) or 0
+    total_pallets_stored = max(int(units_received) - int(units_shipped), 0)
+
+    # "Received today" — same logic, scoped to scans timestamped today
+    # in warehouse time. Falls back to 0 cleanly when no scans landed.
+    units_received_today = await session.scalar(
+        select(func.count())
+        .select_from(Scan)
+        .join(Container, Container.id == Scan.container_id)
+        .where(Container.status == "received")
+        .where(Scan.result == "ok")
+        .where(
+            cast(
+                func.timezone("America/Los_Angeles", Scan.scanned_at),
+                SqlDate,
+            )
+            == today
+        )
     )
+    pallets_received_today = int(units_received_today or 0)
 
     # Lot occupancy: sum of placed pallets / sum of capacity
     occ_row = await session.execute(

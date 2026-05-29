@@ -25,10 +25,11 @@ Aging buckets (calendar days since Container.finished_at):
 from __future__ import annotations
 
 import logging
-from datetime import date as _date
+from datetime import date as _date, datetime
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import get_session
@@ -40,8 +41,17 @@ from app.models import (
     Customer,
     OutboundOrder,
     OutboundScan,
+    Receipt,
     Scan,
 )
+
+_WAREHOUSE_TZ = ZoneInfo("America/Los_Angeles")
+
+
+def _today() -> _date:
+    """Warehouse-local 'today' — Vernon, CA. Late-evening scans land
+    on the same calendar day for operators, even after midnight UTC."""
+    return datetime.now(_WAREHOUSE_TZ).date()
 from app.schemas.inventory_reports import (
     ContainerAgingResponse,
     ContainerAgingRow,
@@ -54,8 +64,16 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/manager", tags=["manager-inventory-reports"])
 
 
-def _bucket(days: int | None, units_remaining: int) -> str:
-    """Pure function so frontend tests can mirror the rule trivially."""
+def _bucket(days: int | None, units_remaining: int, in_progress: bool) -> str:
+    """Pure function so frontend tests can mirror the rule trivially.
+
+    `in_progress` overrides the day-count: a container the operator is
+    actively scanning right now (Receipt.status='in_progress') should
+    surface in aging so managers can see what's on the dock, not after
+    the receipt is finalized.
+    """
+    if in_progress:
+        return "active"
     if days is None:
         return "active"
     if units_remaining <= 0:
@@ -78,7 +96,16 @@ async def container_aging(
     limit: int = Query(500, ge=1, le=2000),
     session: AsyncSession = Depends(get_session),
 ) -> ContainerAgingResponse:
-    today = _date.today()
+    today = _today()
+
+    # Containers that are either finished OR have an in-progress receipt
+    # both belong in the aging view — managers want to see what's on the
+    # dock right now, not just what's already wrapped up.
+    in_progress_subq = (
+        select(Receipt.container_id)
+        .where(Receipt.status == "in_progress")
+        .subquery()
+    )
 
     base = (
         select(
@@ -88,15 +115,22 @@ async def container_aging(
             DO.do_number.label("invoice_no"),
             WHPO.whpo_number.label("whpo_number"),
             Container.finished_at.label("finished_at"),
+            Container.status.label("status"),
         )
         .join(DO, DO.id == Container.do_id, isouter=True)
         .join(WHPO, WHPO.id == DO.whpo_id, isouter=True)
         .join(Customer, Customer.id == WHPO.customer_id, isouter=True)
-        .where(Container.finished_at.is_not(None))
+        .where(
+            or_(
+                Container.finished_at.is_not(None),
+                Container.id.in_(select(in_progress_subq.c.container_id)),
+            )
+        )
     )
     if brand:
         base = base.where(Customer.name == brand)
-    base = base.order_by(Container.finished_at.asc()).limit(limit)
+    # Newest first so in-progress + recent receipts surface above stale ones.
+    base = base.order_by(Container.finished_at.desc().nullsfirst()).limit(limit)
 
     rows = (await session.execute(base)).all()
 
@@ -132,7 +166,10 @@ async def container_aging(
         units_in = units_in_map.get(r.cid, 0)
         units_out = units_out_map.get(r.cid, 0)
         units_remaining = max(units_in - units_out, 0)
-        agb = _bucket(days, units_remaining)
+        # Container.status tracks the in-progress / received transition;
+        # treat anything still being scanned as the freshest possible row.
+        in_progress = r.status == "in_progress"
+        agb = _bucket(days, units_remaining, in_progress)
         counts[agb] = counts.get(agb, 0) + 1
         if bucket and agb != bucket:
             continue

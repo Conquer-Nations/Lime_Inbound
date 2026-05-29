@@ -124,11 +124,11 @@ export default function DashboardTab({
           onClick={() => onNavigate({ tab: 'exceptions' })}
         />
         <Kpi
-          label="Pallets on floor"
+          label="Units on floor"
           value={k.total_pallets_stored}
-          unit={`+${k.pallets_received_today} today`}
+          unit={`+${k.pallets_received_today} scanned today`}
           accent="slate"
-          onClick={() => onNavigate({ tab: 'data', table: 'pallets' })}
+          onClick={() => onNavigate({ tab: 'warehouse_inventory' as 'data' })}
         />
         <Kpi
           label="Lot occupancy"
