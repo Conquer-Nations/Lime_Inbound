@@ -54,9 +54,11 @@ from app.schemas.manager import (
     ExceptionItem,
     LotDetail,
     LotMapItem,
+    OperatorStat,
     PalletInLot,
     ResolveExceptionRequest,
     ResolveExceptionResponse,
+    TodaySummary,
 )
 
 
@@ -681,10 +683,10 @@ async def get_dashboard(session: AsyncSession) -> DashboardResponse:
         lots_total=int(lots_total or 0),
     )
 
-    # Recent activity (last 20)
+    # Recent activity (last 50 — was 20; richer feed for the redesign)
     rows = (
         await session.scalars(
-            select(ActivityLog).order_by(ActivityLog.t.desc()).limit(20)
+            select(ActivityLog).order_by(ActivityLog.t.desc()).limit(50)
         )
     ).all()
     feed = [
@@ -700,4 +702,73 @@ async def get_dashboard(session: AsyncSession) -> DashboardResponse:
         for r in rows
     ]
 
-    return DashboardResponse(today=today, kpis=kpis, activity=feed)
+    # ── Today's activity rollup ──────────────────────────────────────────
+    # All bucketed in warehouse-local time (PT). One round-trip:
+    # count(activity_log.kind) where date(t in PT) = today, grouped by kind.
+    tz_t = func.timezone("America/Los_Angeles", ActivityLog.t)
+    activity_kinds_today_q = await session.execute(
+        select(ActivityLog.kind, func.count())
+        .where(cast(tz_t, SqlDate) == today)
+        .group_by(ActivityLog.kind)
+    )
+    kind_counts = {k: int(c or 0) for k, c in activity_kinds_today_q.all()}
+
+    today_summary = TodaySummary(
+        containers_received=kind_counts.get("container_finished", 0)
+        + kind_counts.get("container_backfilled", 0),
+        # Units scanned today reuses the same scan-based metric the
+        # "Units on floor +N today" KPI shows — counted from Scan rows
+        # so the numbers stay consistent across tiles.
+        units_scanned=int(units_received_today or 0),
+        vendor_submissions=kind_counts.get("whpo_submitted", 0)
+        + kind_counts.get("whpo_updated", 0),
+        drivers_checked_in=kind_counts.get("driver_info_submitted", 0),
+        outbound_orders_placed=kind_counts.get("outbound_submitted", 0)
+        + kind_counts.get("outbound_updated", 0),
+        outbound_shipments=kind_counts.get("outbound", 0),
+        exceptions_resolved=kind_counts.get("exception_resolved", 0),
+    )
+
+    # ── Hourly scan histogram (24 buckets, PT) ───────────────────────────
+    # Used by the dashboard chart so managers can see when scanners
+    # are actually scanning during the day.
+    tz_scan = func.timezone("America/Los_Angeles", Scan.scanned_at)
+    hourly_q = await session.execute(
+        select(
+            func.extract("hour", tz_scan).label("h"),
+            func.count(),
+        )
+        .where(Scan.result == "ok")
+        .where(cast(tz_scan, SqlDate) == today)
+        .group_by("h")
+    )
+    hourly_buckets = [0] * 24
+    for h, c in hourly_q.all():
+        idx = int(h or 0)
+        if 0 <= idx < 24:
+            hourly_buckets[idx] = int(c or 0)
+
+    # ── Top operators today (by scan count) ──────────────────────────────
+    operators_q = await session.execute(
+        select(Scan.scanned_by, func.count())
+        .where(Scan.result == "ok")
+        .where(cast(tz_scan, SqlDate) == today)
+        .where(Scan.scanned_by.is_not(None))
+        .group_by(Scan.scanned_by)
+        .order_by(func.count().desc())
+        .limit(5)
+    )
+    operators_today = [
+        OperatorStat(actor=str(a), scans=int(c or 0))
+        for a, c in operators_q.all()
+        if a
+    ]
+
+    return DashboardResponse(
+        today=today,
+        kpis=kpis,
+        activity=feed,
+        today_summary=today_summary,
+        hourly_scans=hourly_buckets,
+        operators_today=operators_today,
+    )

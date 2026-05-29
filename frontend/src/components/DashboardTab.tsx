@@ -1,7 +1,7 @@
-import { useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import { api } from '../api/client'
-import type { DashboardResponse } from '../types/api'
+import type { DashboardResponse, TodaySummary } from '../types/api'
 
 const REFRESH_MS = 10_000
 
@@ -145,91 +145,21 @@ export default function DashboardTab({
         />
       </div>
 
-      {/* Activity feed + quick actions */}
+      {/* ── Today at a glance ────────────────────────────────────────── */}
+      <TodayPanel summary={data.today_summary ?? null} />
+
+      {/* ── Hourly chart + operator leaderboard ─────────────────────── */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        <div
-          className="lg:col-span-2 bg-white rounded-xl border border-slate-200 overflow-hidden"
-          style={{
-            boxShadow:
-              '0 1px 2px 0 rgba(15,23,42,0.04), 0 8px 24px -8px rgba(15,23,42,0.08)',
-          }}
-        >
-          <header className="px-4 py-2.5 bg-slate-50 border-b border-slate-200 flex items-baseline justify-between">
-            <h3 className="text-[11px] font-bold uppercase tracking-[0.18em] text-[#0093D0]">
-              Recent activity
-            </h3>
-            <span className="text-xs text-slate-500 font-mono">
-              {data.activity.length} events
-            </span>
-          </header>
-          {data.activity.length === 0 ? (
-            <div className="p-8 text-center text-sm text-slate-400 italic">
-              No activity yet.
-            </div>
-          ) : (
-            <ul className="divide-y divide-slate-100">
-              {data.activity.map((a) => {
-                const href =
-                  a.ref_type === 'do' && a.ref_id != null
-                    ? `/manager/dos/${a.ref_id}`
-                    : null
-                const exceptionDrill = a.ref_type === 'exception'
+        <HourlyChart hourly={data.hourly_scans ?? []} />
+        <OperatorsPanel ops={data.operators_today ?? []} />
+      </div>
 
-                const content = (
-                  <div className="flex items-start gap-3">
-                    <ActivityIcon kind={a.kind} />
-                    <div className="flex-1 text-sm">
-                      <div className="text-slate-800">
-                        {a.message ?? <em className="text-slate-400">{a.kind}</em>}
-                      </div>
-                      <div className="text-xs text-slate-500 mt-0.5">
-                        {a.actor && <>by {a.actor} · </>}
-                        {new Date(a.t).toLocaleString()}
-                      </div>
-                    </div>
-                    {(href || exceptionDrill) && (
-                      <span className="text-slate-300 self-center pr-1" aria-hidden>
-                        <ChevronRightIcon className="w-4 h-4" />
-                      </span>
-                    )}
-                  </div>
-                )
-
-                if (href) {
-                  return (
-                    <li key={a.id}>
-                      <Link
-                        to={href}
-                        className="block px-4 py-3 hover:bg-[#0093D0]/5 transition"
-                      >
-                        {content}
-                      </Link>
-                    </li>
-                  )
-                }
-                if (exceptionDrill) {
-                  return (
-                    <li key={a.id}>
-                      <button
-                        type="button"
-                        onClick={() => onNavigate({ tab: 'exceptions' })}
-                        className="w-full text-left px-4 py-3 hover:bg-[#0093D0]/5 transition"
-                      >
-                        {content}
-                      </button>
-                    </li>
-                  )
-                }
-                return (
-                  <li key={a.id} className="px-4 py-3">
-                    {content}
-                  </li>
-                )
-              })}
-            </ul>
-          )}
-        </div>
-
+      {/* ── Live ticker + quick actions ─────────────────────────────── */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        <ActivityTicker
+          activity={data.activity}
+          onExceptionClick={() => onNavigate({ tab: 'exceptions' })}
+        />
         <div
           className="bg-white rounded-xl border border-slate-200 p-4"
           style={{
@@ -296,6 +226,316 @@ export default function DashboardTab({
       </div>
     </div>
   )
+}
+
+// ─── Daily activity dashboard pieces ──────────────────────────────────
+
+/** 7-tile strip summarizing today's key event counts. Strip layout
+ * keeps the strip visually distinct from the KPI grid above. */
+function TodayPanel({ summary }: { summary: TodaySummary | null }) {
+  const tiles: { label: string; value: number; tone: TilToneT }[] =
+    summary == null
+      ? [
+          { label: 'Containers received', value: 0, tone: 'green' },
+          { label: 'Units scanned', value: 0, tone: 'cyan' },
+          { label: 'Vendor submissions', value: 0, tone: 'navy' },
+          { label: 'Drivers checked in', value: 0, tone: 'cyan' },
+          { label: 'TOs placed', value: 0, tone: 'navy' },
+          { label: 'Shipments out', value: 0, tone: 'green' },
+          { label: 'Exceptions resolved', value: 0, tone: 'amber' },
+        ]
+      : [
+          { label: 'Containers received', value: summary.containers_received, tone: 'green' },
+          { label: 'Units scanned', value: summary.units_scanned, tone: 'cyan' },
+          { label: 'Vendor submissions', value: summary.vendor_submissions, tone: 'navy' },
+          { label: 'Drivers checked in', value: summary.drivers_checked_in, tone: 'cyan' },
+          { label: 'TOs placed', value: summary.outbound_orders_placed, tone: 'navy' },
+          { label: 'Shipments out', value: summary.outbound_shipments, tone: 'green' },
+          { label: 'Exceptions resolved', value: summary.exceptions_resolved, tone: 'amber' },
+        ]
+  return (
+    <div
+      className="bg-white rounded-xl border border-slate-200 overflow-hidden"
+      style={{
+        boxShadow:
+          '0 1px 2px 0 rgba(15,23,42,0.04), 0 8px 24px -8px rgba(15,23,42,0.08)',
+      }}
+    >
+      <header className="px-4 py-2.5 bg-slate-50 border-b border-slate-200 flex items-baseline justify-between">
+        <h3 className="text-[11px] font-bold uppercase tracking-[0.18em] text-[#0093D0]">
+          Today's activity
+        </h3>
+        <span className="text-[11px] text-slate-500">
+          Vernon time · auto-refresh 10s
+        </span>
+      </header>
+      <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 divide-x divide-y sm:divide-y-0 divide-slate-100">
+        {tiles.map((t) => (
+          <TodayTile key={t.label} {...t} />
+        ))}
+      </div>
+    </div>
+  )
+}
+
+type TilToneT = 'cyan' | 'navy' | 'green' | 'amber'
+
+function TodayTile({
+  label,
+  value,
+  tone,
+}: {
+  label: string
+  value: number
+  tone: TilToneT
+}) {
+  const color = {
+    cyan: 'text-[#0093D0]',
+    navy: 'text-[#1B4676]',
+    green: 'text-emerald-700',
+    amber: 'text-amber-700',
+  }[tone]
+  return (
+    <div className="px-3 py-3 sm:py-4">
+      <div className={`text-2xl font-bold tabular-nums ${color}`}>{value}</div>
+      <div className="text-[10px] uppercase tracking-[0.12em] font-bold text-slate-500 mt-1">
+        {label}
+      </div>
+    </div>
+  )
+}
+
+/** 24-bar histogram of units scanned per hour (PT). Plain SVG; no chart
+ *  dependency. Hovering a bar surfaces the exact count. */
+function HourlyChart({ hourly }: { hourly: number[] }) {
+  // Always render a 24-slot array so the layout doesn't jump if the
+  // backend hasn't filled it in yet.
+  const data = useMemo(() => {
+    const safe = Array.from({ length: 24 }, (_, i) => hourly[i] ?? 0)
+    const peak = Math.max(1, ...safe)
+    return { safe, peak, total: safe.reduce((s, n) => s + n, 0) }
+  }, [hourly])
+
+  return (
+    <div
+      className="lg:col-span-2 bg-white rounded-xl border border-slate-200 overflow-hidden"
+      style={{
+        boxShadow:
+          '0 1px 2px 0 rgba(15,23,42,0.04), 0 8px 24px -8px rgba(15,23,42,0.08)',
+      }}
+    >
+      <header className="px-4 py-2.5 bg-slate-50 border-b border-slate-200 flex items-baseline justify-between">
+        <h3 className="text-[11px] font-bold uppercase tracking-[0.18em] text-[#0093D0]">
+          Scans by hour
+        </h3>
+        <span className="text-[11px] text-slate-500 font-mono">
+          {data.total} total · peak {data.peak}/hr
+        </span>
+      </header>
+      <div className="px-4 py-3">
+        <div className="flex items-end gap-1 h-32">
+          {data.safe.map((v, h) => {
+            const height = Math.round((v / data.peak) * 100)
+            const isPeak = v === data.peak && v > 0
+            return (
+              <div
+                key={h}
+                className="flex-1 group relative flex flex-col justify-end h-full"
+                title={`${formatHour(h)} — ${v} scan${v === 1 ? '' : 's'}`}
+              >
+                <div
+                  className={`w-full rounded-t-sm transition ${
+                    v === 0
+                      ? 'bg-slate-100'
+                      : isPeak
+                      ? 'bg-[#0093D0]'
+                      : 'bg-[#0093D0]/40 group-hover:bg-[#0093D0]/70'
+                  }`}
+                  style={{ height: `${Math.max(height, v > 0 ? 4 : 2)}%` }}
+                />
+              </div>
+            )
+          })}
+        </div>
+        <div className="flex justify-between text-[9px] text-slate-400 font-mono mt-1 px-0.5">
+          <span>12a</span>
+          <span>6a</span>
+          <span>12p</span>
+          <span>6p</span>
+          <span>11p</span>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function formatHour(h: number): string {
+  if (h === 0) return '12 AM'
+  if (h === 12) return '12 PM'
+  if (h < 12) return `${h} AM`
+  return `${h - 12} PM`
+}
+
+/** Top scanning operators today. Empty state nudges to expect activity
+ *  as the shift ramps up. */
+function OperatorsPanel({ ops }: { ops: { actor: string; scans: number }[] }) {
+  const peak = ops[0]?.scans ?? 0
+  return (
+    <div
+      className="bg-white rounded-xl border border-slate-200 overflow-hidden"
+      style={{
+        boxShadow:
+          '0 1px 2px 0 rgba(15,23,42,0.04), 0 8px 24px -8px rgba(15,23,42,0.08)',
+      }}
+    >
+      <header className="px-4 py-2.5 bg-slate-50 border-b border-slate-200">
+        <h3 className="text-[11px] font-bold uppercase tracking-[0.18em] text-[#0093D0]">
+          Top operators today
+        </h3>
+      </header>
+      {ops.length === 0 ? (
+        <div className="p-6 text-center text-sm text-slate-400 italic">
+          No scans logged yet today.
+        </div>
+      ) : (
+        <ul className="divide-y divide-slate-100">
+          {ops.map((o, i) => {
+            const pct = peak === 0 ? 0 : Math.round((o.scans / peak) * 100)
+            return (
+              <li key={o.actor} className="px-4 py-2.5">
+                <div className="flex items-center gap-2 mb-1">
+                  <span
+                    className={`inline-flex items-center justify-center w-5 h-5 rounded-full text-[10px] font-bold ${
+                      i === 0
+                        ? 'bg-[#0093D0] text-white'
+                        : 'bg-slate-100 text-slate-700'
+                    }`}
+                  >
+                    {i + 1}
+                  </span>
+                  <span className="text-sm font-semibold text-[#1B4676] capitalize truncate flex-1">
+                    {o.actor}
+                  </span>
+                  <span className="text-sm font-mono font-bold tabular-nums text-slate-800">
+                    {o.scans}
+                  </span>
+                </div>
+                <div className="h-1 bg-slate-100 rounded-full overflow-hidden ml-7">
+                  <div
+                    className="h-full bg-[#0093D0]/70 rounded-full"
+                    style={{ width: `${pct}%` }}
+                  />
+                </div>
+              </li>
+            )
+          })}
+        </ul>
+      )}
+    </div>
+  )
+}
+
+/** Replacement for the old "Recent activity" feed. Same content, tighter
+ *  visual rhythm, scrollable instead of dominating the viewport. */
+function ActivityTicker({
+  activity,
+  onExceptionClick,
+}: {
+  activity: DashboardResponse['activity']
+  onExceptionClick: () => void
+}) {
+  return (
+    <div
+      className="lg:col-span-2 bg-white rounded-xl border border-slate-200 overflow-hidden flex flex-col"
+      style={{
+        boxShadow:
+          '0 1px 2px 0 rgba(15,23,42,0.04), 0 8px 24px -8px rgba(15,23,42,0.08)',
+        maxHeight: 480,
+      }}
+    >
+      <header className="px-4 py-2.5 bg-slate-50 border-b border-slate-200 flex items-baseline justify-between">
+        <h3 className="text-[11px] font-bold uppercase tracking-[0.18em] text-[#0093D0]">
+          Live activity
+        </h3>
+        <span className="text-xs text-slate-500 font-mono">
+          {activity.length} events
+        </span>
+      </header>
+      {activity.length === 0 ? (
+        <div className="p-8 text-center text-sm text-slate-400 italic">
+          No activity yet.
+        </div>
+      ) : (
+        <ul className="divide-y divide-slate-100 overflow-y-auto">
+          {activity.map((a) => {
+            const href =
+              a.ref_type === 'do' && a.ref_id != null
+                ? `/manager/dos/${a.ref_id}`
+                : null
+            const exceptionDrill = a.ref_type === 'exception'
+            const content = (
+              <div className="flex items-start gap-3">
+                <ActivityIcon kind={a.kind} />
+                <div className="flex-1 text-sm min-w-0">
+                  <div className="text-slate-800 truncate">
+                    {a.message ?? <em className="text-slate-400">{a.kind}</em>}
+                  </div>
+                  <div className="text-[11px] text-slate-500 mt-0.5">
+                    {a.actor && <>by {a.actor} · </>}
+                    {formatRelativeTime(a.t)}
+                  </div>
+                </div>
+                {(href || exceptionDrill) && (
+                  <span className="text-slate-300 self-center pr-1" aria-hidden>
+                    <ChevronRightIcon className="w-4 h-4" />
+                  </span>
+                )}
+              </div>
+            )
+            if (href) {
+              return (
+                <li key={a.id}>
+                  <Link
+                    to={href}
+                    className="block px-4 py-2.5 hover:bg-[#0093D0]/5 transition"
+                  >
+                    {content}
+                  </Link>
+                </li>
+              )
+            }
+            if (exceptionDrill) {
+              return (
+                <li key={a.id}>
+                  <button
+                    type="button"
+                    onClick={onExceptionClick}
+                    className="w-full text-left px-4 py-2.5 hover:bg-[#0093D0]/5 transition"
+                  >
+                    {content}
+                  </button>
+                </li>
+              )
+            }
+            return (
+              <li key={a.id} className="px-4 py-2.5">
+                {content}
+              </li>
+            )
+          })}
+        </ul>
+      )}
+    </div>
+  )
+}
+
+function formatRelativeTime(iso: string): string {
+  const then = new Date(iso).getTime()
+  const diffSec = Math.round((Date.now() - then) / 1000)
+  if (diffSec < 60) return 'just now'
+  if (diffSec < 3600) return `${Math.round(diffSec / 60)}m ago`
+  if (diffSec < 86_400) return `${Math.round(diffSec / 3600)}h ago`
+  return new Date(iso).toLocaleString()
 }
 
 // ─── Sub-components ────────────────────────────────────────────────────

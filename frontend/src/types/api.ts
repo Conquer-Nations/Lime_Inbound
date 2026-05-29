@@ -305,8 +305,26 @@ export interface ActivityFeedItem {
   message: string | null
 }
 
+export interface TodaySummary {
+  containers_received: number
+  units_scanned: number
+  vendor_submissions: number
+  drivers_checked_in: number
+  outbound_orders_placed: number
+  outbound_shipments: number
+  exceptions_resolved: number
+}
+
+export interface OperatorStat {
+  actor: string
+  scans: number
+}
+
 export interface DashboardResponse {
   today: string
   kpis: DashboardKPIs
   activity: ActivityFeedItem[]
+  today_summary?: TodaySummary | null
+  hourly_scans?: number[]      // length 24 (PT)
+  operators_today?: OperatorStat[]
 }

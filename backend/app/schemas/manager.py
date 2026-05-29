@@ -207,10 +207,34 @@ class ActivityFeedItem(BaseModel):
     message: str | None
 
 
+class TodaySummary(BaseModel):
+    """Counts of today's most-watched events. All bucketed in
+    America/Los_Angeles so the operator's day boundary is consistent
+    with the rest of the dashboard."""
+    containers_received: int
+    units_scanned: int
+    vendor_submissions: int      # whpo_submitted (new inbound DOs)
+    drivers_checked_in: int      # driver_info_submitted
+    outbound_orders_placed: int  # outbound_submitted
+    outbound_shipments: int      # outbound (sealed truck)
+    exceptions_resolved: int
+
+
+class OperatorStat(BaseModel):
+    actor: str
+    scans: int
+
+
 class DashboardResponse(BaseModel):
     today: date
     kpis: DashboardKPIs
     activity: list[ActivityFeedItem]
+    # New richer daily-activity payloads (Pydantic-optional with safe
+    # defaults so the schema stays backward-compatible if any old caller
+    # is still on the v0 shape).
+    today_summary: TodaySummary | None = None
+    hourly_scans: list[int] = []       # length 24, index = hour-of-day (PT)
+    operators_today: list[OperatorStat] = []  # top 5 by scans today
 
 
 # ─── SKU master CRUD (manager admin UI) ─────────────────────────────────
