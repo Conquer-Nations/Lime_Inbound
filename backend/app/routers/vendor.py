@@ -292,6 +292,12 @@ async def update_container_driver_info(
             carrier=payload.carrier,
         )
 
+    # Driver info changes the driver_name + carrier columns in
+    # vw_master_list — re-push so the OneDrive master sheet stays in
+    # sync with what the vendor / manager portals already render live.
+    from app.services import master_sheet_sync
+    await master_sheet_sync.maybe_push(session, source="driver_info_submitted")
+
     return DriverInfoResponse(
         container_no=container.container_no,
         whpo_number=whpo_number,
@@ -743,6 +749,12 @@ async def update_whpo(
             e,
         )
         excel_ok = False
+
+    # WHPO updates can add / remove containers + lines, all of which
+    # roll up into vw_master_list. Push the mirror so the OneDrive
+    # workbook keeps pace with the live view.
+    from app.services import master_sheet_sync
+    await master_sheet_sync.maybe_push(session, source="whpo_updated")
 
     return WHPOUpdateResponse(
         whpo_number=whpo.whpo_number,

@@ -361,6 +361,12 @@ async def submit_outbound_order(
 
     await _refresh_inventory_snapshot(session, customer.name)
 
+    # Master sheet's `to_no` + `ship_date` + `ship_to` + `units_out`
+    # columns all derive from outbound_orders / outbound_lines — push
+    # so the vendor + manager Master Sheet views match the new TO.
+    from app.services import master_sheet_sync
+    await master_sheet_sync.maybe_push(session, source="outbound_submitted")
+
     return OutboundIntakeResponse(
         order_id=order.id,
         transfer_order_no=order.transfer_order_no,
@@ -475,6 +481,11 @@ async def update_outbound_order(
             )
             await outbound_sheet_sync.append_outbound_rows(rows)
         await _refresh_inventory_snapshot(session, order_company_name(order))
+
+    # TO updates change source_container assignments / order_qty / ship_to
+    # — all of which flow through the master sheet outbound columns.
+    from app.services import master_sheet_sync
+    await master_sheet_sync.maybe_push(session, source="outbound_updated")
 
     return OutboundUpdateResponse(
         order_id=order.id,
@@ -780,6 +791,12 @@ async def attach_outbound_container(
             )
             await outbound_sheet_sync.append_outbound_rows(rows)
         await _refresh_inventory_snapshot(session, order_company_name(order))
+
+    # Attaching an outbound container changes the units_out / pallets_out
+    # / to_no columns on every inbound container the new truck draws
+    # from. Keep the master sheet mirror in sync.
+    from app.services import master_sheet_sync
+    await master_sheet_sync.maybe_push(session, source="outbound_container_attached")
 
     return OutboundContainerAttachResponse(
         container_id=c.id, container_no=c.container_no, status=c.status

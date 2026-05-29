@@ -79,6 +79,23 @@ def is_configured() -> bool:
     return bool(settings.onedrive_master_sheet_webhook_url)
 
 
+async def maybe_push(session: AsyncSession, *, source: str) -> bool:
+    """Best-effort wrapper for `push_full_replace`. Returns False on any
+    error or when the webhook isn't configured. Logs the source label
+    so we can trace which write triggered each push. Use this at the
+    end of every endpoint that mutates anything visible in the master
+    sheet (driver info, WHPO updates, outbound TO submit/update,
+    container attach, scan-finish, etc.) so the manager + vendor views
+    stay in lock-step with Postgres."""
+    if not is_configured():
+        return False
+    try:
+        return await push_full_replace(session)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("master_sheet_sync.maybe_push(%s) failed: %r", source, e)
+        return False
+
+
 def _fmt_date(d: date | None) -> str:
     if d is None:
         return ""
