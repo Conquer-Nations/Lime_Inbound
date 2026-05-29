@@ -1,7 +1,9 @@
 import { Fragment, useEffect, useRef, useState, type ReactNode } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import {
   api,
   ApiError,
+  vendorMasterListApi,
   type ContainerInventoryItem,
   type ContainerInventoryResponse,
   type DriverDocsExtraction,
@@ -12,6 +14,10 @@ import {
   type OutboundOrderStatusResponse,
   type PickingTicketExtraction,
 } from '../api/client'
+import FilterBar, {
+  resolveFilterDates,
+  useFilterFromURL,
+} from '../components/FilterBar'
 import { StatusTimeline } from '../components/StatusTimeline'
 import Spinner from '../components/Spinner'
 import { useVendorAuth } from '../auth/VendorAuthContext'
@@ -2819,13 +2825,40 @@ export function OutboundInventoryDashboard({ onBack }: { onBack: () => void }) {
   const [error, setError] = useState<string | null>(null)
   const [data, setData] = useState<ContainerInventoryResponse | null>(null)
   const [refreshTick, setRefreshTick] = useState(0)
+  const [brands, setBrands] = useState<{ id: number; name: string }[]>([])
+
+  // Brand + date filter (URL-persisted).
+  const [searchParams, setSearchParams] = useSearchParams()
+  const [filter, setFilter] = useFilterFromURL(searchParams, setSearchParams)
+
+  // Load brand id+name list once for the FilterBar picker.
+  useEffect(() => {
+    vendorMasterListApi
+      .brandsWithIds()
+      .then((bs) =>
+        setBrands(
+          [...bs]
+            .filter((b) => b && b.name)
+            .sort((a, b) => a.name.localeCompare(b.name)),
+        ),
+      )
+      .catch(() => {
+        // Fail-soft: picker hides itself if 0/1 brands.
+      })
+  }, [])
 
   useEffect(() => {
     let cancelled = false
     setBusy(true)
     setError(null)
+    const { from_date, to_date } = resolveFilterDates(filter)
     api
-      .outboundContainerInventory()
+      .outboundContainerInventory({
+        customer_id:
+          filter.brand_id === 'all' ? undefined : (filter.brand_id as number),
+        from_date,
+        to_date,
+      })
       .then((r) => {
         if (!cancelled) setData(r)
       })
@@ -2840,7 +2873,7 @@ export function OutboundInventoryDashboard({ onBack }: { onBack: () => void }) {
     return () => {
       cancelled = true
     }
-  }, [refreshTick])
+  }, [refreshTick, filter])
 
   return (
     <OutboundShell breadcrumb="Outbound — container inventory" onBack={onBack}>
@@ -2865,6 +2898,9 @@ export function OutboundInventoryDashboard({ onBack }: { onBack: () => void }) {
             {busy ? 'Refreshing…' : '↻ Refresh'}
           </button>
         </div>
+
+        {/* Brand + date filter (URL-persisted). */}
+        <FilterBar brands={brands} value={filter} onChange={setFilter} />
 
         {/* Summary tiles */}
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">

@@ -1,10 +1,15 @@
 import { useEffect, useMemo, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { api, billingApi } from '../api/client'
 import type {
   CustomerRead,
   InvoiceListItem,
   InvoiceStatus,
 } from '../api/client'
+import FilterBar, {
+  resolveFilterDates,
+  useFilterFromURL,
+} from './FilterBar'
 
 /**
  * Manager Order History — finalized invoices. Shows `paid` and `void`
@@ -47,10 +52,13 @@ export default function BillingOrderHistory() {
   const [direction, setDirection] = useState<Direction>('inbound')
   const [statusFilter, setStatusFilter] = useState<'all' | HistoryStatus>('all')
   const [customers, setCustomers] = useState<CustomerRead[]>([])
-  const [customerFilter, setCustomerFilter] = useState<number | 'all'>('all')
   const [items, setItems] = useState<InvoiceListItem[] | null>(null)
   const [search, setSearch] = useState('')
   const [error, setError] = useState<string | null>(null)
+
+  // Brand + date filter via FilterBar (URL-persisted).
+  const [searchParams, setSearchParams] = useSearchParams()
+  const [filter, setFilter] = useFilterFromURL(searchParams, setSearchParams)
 
   // Load brand list once.
   useEffect(() => {
@@ -65,18 +73,25 @@ export default function BillingOrderHistory() {
   // Reload invoices when filters change.
   useEffect(() => {
     setError(null)
+    const { from_date, to_date } = resolveFilterDates(filter)
+    const customer_id =
+      filter.brand_id === 'all' ? undefined : (filter.brand_id as number)
     // We always need paid + void; pull paid first, then void, then merge.
     // Backend doesn't have a direction filter — we filter client-side
     // via whpo_number vs transfer_order_no (which the row already has).
     Promise.all([
       billingApi.listInvoices({
         status: 'paid',
-        customer_id: customerFilter === 'all' ? undefined : customerFilter,
+        customer_id,
+        from_date,
+        to_date,
         limit: 500,
       }),
       billingApi.listInvoices({
         status: 'void',
-        customer_id: customerFilter === 'all' ? undefined : customerFilter,
+        customer_id,
+        from_date,
+        to_date,
         limit: 500,
       }),
     ])
@@ -88,7 +103,7 @@ export default function BillingOrderHistory() {
         setItems(merged)
       })
       .catch((e) => setError(String(e?.detail || e)))
-  }, [customerFilter])
+  }, [filter])
 
   const filtered = useMemo(() => {
     if (!items) return null
@@ -188,7 +203,14 @@ export default function BillingOrderHistory() {
         </div>
       )}
 
-      {/* Filters */}
+      {/* Brand + date filter (URL-persisted). */}
+      <FilterBar
+        brands={customers.map((c) => ({ id: c.id, name: c.name }))}
+        value={filter}
+        onChange={setFilter}
+      />
+
+      {/* Search + status filters */}
       <div className="flex flex-wrap items-center gap-3">
         <input
           type="search"
@@ -197,26 +219,6 @@ export default function BillingOrderHistory() {
           placeholder="Search invoice #, customer, WHPO, TO…"
           className="w-72 max-w-full border border-slate-200 rounded-md px-3 py-1.5 text-sm focus:outline-none focus:border-[#0093D0]"
         />
-        <label className="inline-flex items-center gap-2">
-          <span className="text-[10px] uppercase tracking-[0.14em] font-bold text-slate-500">
-            Brand
-          </span>
-          <select
-            value={customerFilter === 'all' ? '' : String(customerFilter)}
-            onChange={(e) =>
-              setCustomerFilter(e.target.value ? Number(e.target.value) : 'all')
-            }
-            className="border border-slate-200 rounded-md px-2 py-1 text-sm focus:outline-none focus:border-[#0093D0] bg-white min-w-[10rem]"
-          >
-            <option value="">All brands</option>
-            {customers.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name}
-                {c.account_name ? ` · ${c.account_name}` : ''}
-              </option>
-            ))}
-          </select>
-        </label>
         <div className="flex items-center gap-1 flex-wrap">
           {(['all', 'paid', 'void'] as const).map((s) => (
             <button

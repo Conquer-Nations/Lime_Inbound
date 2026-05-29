@@ -1,7 +1,11 @@
 import { useEffect, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import { api, masterListApi } from '../api/client'
 import type { CustomerRead, MasterListResponse, MasterListRow } from '../api/client'
+import FilterBar, {
+  resolveFilterDates,
+  useFilterFromURL,
+} from './FilterBar'
 
 /**
  * Master List — mirror of Tiana's Lime-Inventory-Sep 2025.xlsx.
@@ -23,16 +27,18 @@ import type { CustomerRead, MasterListResponse, MasterListRow } from '../api/cli
  */
 export interface MasterListVariantProps {
   /** Fetcher for the row data (one of masterListApi.list /
-   *  vendorMasterListApi.list). */
+   *  vendorMasterListApi.list). Receives FilterBar-resolved customer_id
+   *  + date range. */
   loadRows?: (params: {
-    customer?: string
+    customer_id?: number
+    from_date?: string
+    to_date?: string
     scanned?: boolean
     limit?: number
   }) => Promise<MasterListResponse>
-  /** Fetcher for the brand-filter dropdown options. Returns the names
-   *  in alphabetical order. Optional — if missing, the dropdown stays
-   *  empty (defaults to "All brands"). */
-  loadBrands?: () => Promise<string[]>
+  /** Brand id+name list for the FilterBar's brand picker. The picker
+   *  hides itself when this returns 0 or 1 brand. */
+  loadBrands?: () => Promise<{ id: number; name: string }[]>
 }
 
 export default function MasterList(props: MasterListVariantProps = {}) {
@@ -40,23 +46,24 @@ export default function MasterList(props: MasterListVariantProps = {}) {
   const [total, setTotal] = useState(0)
   const [error, setError] = useState<string | null>(null)
   const [scannedFilter, setScannedFilter] = useState<'all' | 'scanned' | 'pending'>('all')
-  const [customer, setCustomer] = useState('')
-  const [brands, setBrands] = useState<{ name: string }[]>([])
+  const [brands, setBrands] = useState<{ id: number; name: string }[]>([])
+
+  const [searchParams, setSearchParams] = useSearchParams()
+  const [filter, setFilter] = useFilterFromURL(searchParams, setSearchParams)
 
   const loadRowsFn = props.loadRows ?? ((p) => masterListApi.list(p))
 
   // Load brands once. The vendor variant passes a custom loadBrands that
-  // hits /vendor/master-list/brands; the manager variant falls back to
-  // the global customer list.
+  // hits /vendor/brands; the manager variant falls back to the global
+  // customer list.
   useEffect(() => {
     if (props.loadBrands) {
       props.loadBrands()
-        .then((names) =>
+        .then((bs) =>
           setBrands(
-            names
-              .filter(Boolean)
-              .sort((a, b) => a.localeCompare(b))
-              .map((name) => ({ name })),
+            [...bs]
+              .filter((b) => b && b.name)
+              .sort((a, b) => a.name.localeCompare(b.name)),
           ),
         )
         .catch(() => {})
@@ -67,22 +74,25 @@ export default function MasterList(props: MasterListVariantProps = {}) {
       .then((rows: CustomerRead[]) =>
         setBrands(
           rows
-            .map((r) => ({ name: r.name }))
+            .map((r) => ({ id: r.id, name: r.name }))
             .sort((a, b) => a.name.localeCompare(b.name)),
         ),
       )
       .catch(() => {
-        /* fail-soft — dropdown stays at default and the user can still
-           pick "All brands" or type via the URL once we ship a free-text
-           fallback. Not surfacing the error inline because the master
+        /* fail-soft — picker hides if zero brands and the user can still
+           filter by date alone. Not surfacing inline because the master
            sheet itself still loads fine. */
       })
   }, [props.loadBrands])
 
   function reload() {
     setError(null)
+    const { from_date, to_date } = resolveFilterDates(filter)
     loadRowsFn({
-      customer: customer.trim() || undefined,
+      customer_id:
+        filter.brand_id === 'all' ? undefined : (filter.brand_id as number),
+      from_date,
+      to_date,
       scanned:
         scannedFilter === 'scanned'
           ? true
@@ -98,7 +108,7 @@ export default function MasterList(props: MasterListVariantProps = {}) {
       .catch((e) => setError(String(e?.detail || e)))
   }
 
-  useEffect(reload, [scannedFilter, customer])
+  useEffect(reload, [scannedFilter, filter])
 
   return (
     <div className="space-y-5">
@@ -127,6 +137,8 @@ export default function MasterList(props: MasterListVariantProps = {}) {
         </div>
       )}
 
+      <FilterBar brands={brands} value={filter} onChange={setFilter} />
+
       <section className="bg-white border border-slate-200 rounded-xl shadow-sm">
         <div className="flex items-center justify-between gap-3 px-4 py-3 border-b border-slate-200 flex-wrap">
           <div>
@@ -135,19 +147,6 @@ export default function MasterList(props: MasterListVariantProps = {}) {
             </h2>
           </div>
           <div className="flex items-center gap-2 flex-wrap">
-            <select
-              value={customer}
-              onChange={(e) => setCustomer(e.target.value)}
-              className="border border-slate-300 rounded-md px-2.5 py-1 text-xs w-44 bg-white text-[#1B4676] focus:border-[#0093D0] focus:ring-2 focus:ring-[#0093D0]/20 focus:outline-none transition"
-              aria-label="Filter by brand"
-            >
-              <option value="">All brands</option>
-              {brands.map((b) => (
-                <option key={b.name} value={b.name}>
-                  {b.name}
-                </option>
-              ))}
-            </select>
             <PillGroup
               value={scannedFilter}
               onChange={(v) => setScannedFilter(v)}

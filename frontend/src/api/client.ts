@@ -568,8 +568,20 @@ export const api = {
   outboundInventory: () =>
     request<InventoryResponse>('/vendor/outbound/inventory'),
 
-  outboundContainerInventory: () =>
-    request<ContainerInventoryResponse>('/vendor/outbound/container-inventory'),
+  outboundContainerInventory: (params?: {
+    customer_id?: number
+    from_date?: string
+    to_date?: string
+  }) => {
+    const q = new URLSearchParams()
+    if (params?.customer_id != null) q.set('customer_id', String(params.customer_id))
+    if (params?.from_date) q.set('from_date', params.from_date)
+    if (params?.to_date) q.set('to_date', params.to_date)
+    const qs = q.toString()
+    return request<ContainerInventoryResponse>(
+      `/vendor/outbound/container-inventory${qs ? `?${qs}` : ''}`,
+    )
+  },
 
   whpoStatus: (whpoNumber: string) =>
     request<WHPOStatusResponse>(
@@ -679,8 +691,20 @@ export const api = {
       `/manager/containers/${encodeURIComponent(container_no)}`,
     ),
 
-  listAllOutboundOrders: () =>
-    request<OutboundOrderListRow[]>('/manager/outbound-orders'),
+  listAllOutboundOrders: (params?: {
+    customer_id?: number
+    from_date?: string
+    to_date?: string
+  }) => {
+    const q = new URLSearchParams()
+    if (params?.customer_id != null) q.set('customer_id', String(params.customer_id))
+    if (params?.from_date) q.set('from_date', params.from_date)
+    if (params?.to_date) q.set('to_date', params.to_date)
+    const qs = q.toString()
+    return request<OutboundOrderListRow[]>(
+      `/manager/outbound-orders${qs ? `?${qs}` : ''}`,
+    )
+  },
 
   getOutboundOrderDetail: (transfer_order_no: string) =>
     request<OutboundOrderErpDetail>(
@@ -1515,16 +1539,22 @@ export interface MasterListResponse {
 export const masterListApi = {
   list: (params: {
     customer?: string
+    customer_id?: number
     since?: string
     until?: string
+    from_date?: string
+    to_date?: string
     scanned?: boolean
     limit?: number
     offset?: number
   } = {}): Promise<MasterListResponse> => {
     const q = new URLSearchParams()
     if (params.customer) q.set('customer', params.customer)
+    if (params.customer_id != null) q.set('customer_id', String(params.customer_id))
     if (params.since) q.set('since', params.since)
     if (params.until) q.set('until', params.until)
+    if (params.from_date) q.set('from_date', params.from_date)
+    if (params.to_date) q.set('to_date', params.to_date)
     if (params.scanned !== undefined) q.set('scanned', String(params.scanned))
     if (params.limit != null) q.set('limit', String(params.limit))
     if (params.offset != null) q.set('offset', String(params.offset))
@@ -1539,16 +1569,22 @@ export const masterListApi = {
 export const vendorMasterListApi = {
   list: (params: {
     customer?: string
+    customer_id?: number
     since?: string
     until?: string
+    from_date?: string
+    to_date?: string
     scanned?: boolean
     limit?: number
     offset?: number
   } = {}): Promise<MasterListResponse> => {
     const q = new URLSearchParams()
     if (params.customer) q.set('customer', params.customer)
+    if (params.customer_id != null) q.set('customer_id', String(params.customer_id))
     if (params.since) q.set('since', params.since)
     if (params.until) q.set('until', params.until)
+    if (params.from_date) q.set('from_date', params.from_date)
+    if (params.to_date) q.set('to_date', params.to_date)
     if (params.scanned !== undefined) q.set('scanned', String(params.scanned))
     if (params.limit != null) q.set('limit', String(params.limit))
     if (params.offset != null) q.set('offset', String(params.offset))
@@ -1556,6 +1592,10 @@ export const vendorMasterListApi = {
     return request<MasterListResponse>(`/vendor/master-list${qs ? `?${qs}` : ''}`)
   },
   brands: (): Promise<string[]> => request<string[]>('/vendor/master-list/brands'),
+  /** Brand id+name list — used by FilterBar (which is keyed on numeric
+   *  IDs). Direct-brand vendor → one entry; account-level → many. */
+  brandsWithIds: (): Promise<{ id: number; name: string }[]> =>
+    request<{ id: number; name: string }[]>('/vendor/brands'),
 }
 
 // ─── Tally sheets (POD-driven billing audit) ─────────────────────────────
@@ -1847,12 +1887,16 @@ export const billingApi = {
   listInvoices: (params: {
     status?: InvoiceStatus
     customer_id?: number
+    from_date?: string
+    to_date?: string
     limit?: number
     offset?: number
   } = {}) => {
     const q = new URLSearchParams()
     if (params.status) q.set('status', params.status)
     if (params.customer_id != null) q.set('customer_id', String(params.customer_id))
+    if (params.from_date) q.set('from_date', params.from_date)
+    if (params.to_date) q.set('to_date', params.to_date)
     if (params.limit != null) q.set('limit', String(params.limit))
     if (params.offset != null) q.set('offset', String(params.offset))
     const qs = q.toString()
@@ -1942,7 +1986,24 @@ export const billingApi = {
     `${(import.meta.env.VITE_API_BASE as string | undefined) ?? '/api'}/manager/invoices/${invoice_id}/pdf?type=${type}`,
 
   // Vendor surface — scoped server-side via JWT
-  vendorListInvoices: () => request<InvoiceListItem[]>('/vendor/invoices'),
+  vendorListInvoices: (params?: {
+    status?: InvoiceStatus
+    customer_id?: number
+    from_date?: string
+    to_date?: string
+    limit?: number
+    offset?: number
+  }) => {
+    const q = new URLSearchParams()
+    if (params?.status) q.set('status', params.status)
+    if (params?.customer_id != null) q.set('customer_id', String(params.customer_id))
+    if (params?.from_date) q.set('from_date', params.from_date)
+    if (params?.to_date) q.set('to_date', params.to_date)
+    if (params?.limit != null) q.set('limit', String(params.limit))
+    if (params?.offset != null) q.set('offset', String(params.offset))
+    const qs = q.toString()
+    return request<InvoiceListItem[]>(`/vendor/invoices${qs ? `?${qs}` : ''}`)
+  },
 
   vendorGetInvoice: (invoice_id: number) =>
     request<InvoiceRead>(`/vendor/invoices/${invoice_id}`),

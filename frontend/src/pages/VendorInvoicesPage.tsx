@@ -1,9 +1,13 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Navigate, useNavigate } from 'react-router-dom'
-import { api, billingApi } from '../api/client'
+import { Navigate, useNavigate, useSearchParams } from 'react-router-dom'
+import { billingApi, vendorMasterListApi } from '../api/client'
 import type { InvoiceListItem, InvoiceStatus } from '../api/client'
 import { useVendorAuth } from '../auth/VendorAuthContext'
 import VendorPortalChrome from '../components/VendorPortalChrome'
+import FilterBar, {
+  resolveFilterDates,
+  useFilterFromURL,
+} from '../components/FilterBar'
 
 /**
  * Vendor-facing invoice list. Strictly read-only — vendors only see their
@@ -46,21 +50,30 @@ export default function VendorInvoicesPage() {
   const nav = useNavigate()
 
   const [items, setItems] = useState<InvoiceListItem[] | null>(null)
-  const [brands, setBrands] = useState<string[]>([])
+  const [brands, setBrands] = useState<{ id: number; name: string }[]>([])
   const [error, setError] = useState<string | null>(null)
   const [toast, setToast] = useState<string | null>(null)
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState<
     'all' | 'sent' | 'payment_submitted' | 'paid'
   >('all')
-  const [brandFilter, setBrandFilter] = useState<string>('all')
   const [downloading, setDownloading] = useState<number | null>(null)
   const [marking, setMarking] = useState<InvoiceListItem | null>(null)
 
+  // Brand + date filter (URL-persisted).
+  const [searchParams, setSearchParams] = useSearchParams()
+  const [filter, setFilter] = useFilterFromURL(searchParams, setSearchParams)
+
   function reload() {
     setError(null)
+    const { from_date, to_date } = resolveFilterDates(filter)
     billingApi
-      .vendorListInvoices()
+      .vendorListInvoices({
+        customer_id:
+          filter.brand_id === 'all' ? undefined : (filter.brand_id as number),
+        from_date,
+        to_date,
+      })
       .then(setItems)
       .catch((e: { detail?: string } | Error) => {
         const detail = (e as { detail?: string })?.detail
@@ -71,14 +84,22 @@ export default function VendorInvoicesPage() {
   useEffect(() => {
     if (!isLoggedIn) return
     reload()
-    // Load brands the vendor has access to so the filter dropdown can
-    // show only those (for Account-level logins like TQL — direct-brand
-    // logins get a one-entry list and we hide the picker).
-    api
-      .myBrands()
-      .then((list) => setBrands(list.slice().sort()))
+  }, [isLoggedIn, filter])
+
+  // Load brand id+name list once so FilterBar can show real IDs.
+  useEffect(() => {
+    if (!isLoggedIn) return
+    vendorMasterListApi
+      .brandsWithIds()
+      .then((bs) =>
+        setBrands(
+          [...bs]
+            .filter((b) => b && b.name)
+            .sort((a, b) => a.name.localeCompare(b.name)),
+        ),
+      )
       .catch(() => {
-        /* fallback: derive from invoice list */
+        // Fail-soft: brand picker just hides itself if 0/1 brands.
       })
   }, [isLoggedIn])
 
@@ -87,24 +108,11 @@ export default function VendorInvoicesPage() {
     setTimeout(() => setToast(null), 4000)
   }
 
-  // Brands derived from the loaded invoice set — useful when the
-  // /my-brands fetch fails. We fall back to invoice.customer_name.
-  const fallbackBrands = useMemo(() => {
-    const set = new Set<string>()
-    for (const inv of items ?? []) {
-      if (inv.customer_name) set.add(inv.customer_name)
-    }
-    return Array.from(set).sort()
-  }, [items])
-
-  const availableBrands = brands.length > 0 ? brands : fallbackBrands
-
   const filtered = useMemo(() => {
     if (!items) return null
     const q = search.trim().toLowerCase()
     return items
       .filter((r) => (statusFilter === 'all' ? true : r.status === statusFilter))
-      .filter((r) => brandFilter === 'all' || r.customer_name === brandFilter)
       .filter(
         (r) =>
           !q ||
@@ -113,7 +121,7 @@ export default function VendorInvoicesPage() {
           (r.whpo_number ?? '').toLowerCase().includes(q) ||
           (r.transfer_order_no ?? '').toLowerCase().includes(q),
       )
-  }, [items, search, statusFilter, brandFilter])
+  }, [items, search, statusFilter])
 
   const totals = useMemo(() => {
     const all = items ?? []
@@ -208,7 +216,10 @@ export default function VendorInvoicesPage() {
           </div>
         )}
 
-        {/* Filters */}
+        {/* Brand + date filter (URL-persisted). */}
+        <FilterBar brands={brands} value={filter} onChange={setFilter} />
+
+        {/* Search + status filters */}
         <div className="flex flex-wrap items-center gap-3">
           <input
             type="search"
@@ -217,28 +228,6 @@ export default function VendorInvoicesPage() {
             placeholder="Search invoice #, WHPO, TO…"
             className="w-72 max-w-full border border-slate-200 rounded-md px-3 py-1.5 text-sm focus:outline-none focus:border-[#0093D0]"
           />
-          {/* Brand picker — only rendered when the vendor has access to
-              more than one brand. Direct-brand logins (single Customer)
-              don't need it. */}
-          {availableBrands.length > 1 && (
-            <label className="inline-flex items-center gap-2">
-              <span className="text-[10px] uppercase tracking-[0.14em] font-bold text-slate-500">
-                Brand
-              </span>
-              <select
-                value={brandFilter}
-                onChange={(e) => setBrandFilter(e.target.value)}
-                className="border border-slate-200 rounded-md px-2 py-1 text-sm focus:outline-none focus:border-[#0093D0] bg-white min-w-[9rem]"
-              >
-                <option value="all">All brands</option>
-                {availableBrands.map((b) => (
-                  <option key={b} value={b}>
-                    {b}
-                  </option>
-                ))}
-              </select>
-            </label>
-          )}
           <div className="flex items-center gap-1 flex-wrap">
             {(
               [

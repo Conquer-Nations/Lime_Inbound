@@ -1307,3 +1307,25 @@ async def vendor_master_list_brands(
         .order_by(_Customer.name)
     )
     return [n for n in names_q.all() if n]
+
+
+@router.get("/brands")
+async def vendor_brands(
+    session: AsyncSession = Depends(get_session),
+    vendor: dict = Depends(current_vendor_required),
+) -> list[dict]:
+    """Brand id + name list for any vendor list view's FilterBar — the
+    FilterBar is keyed on numeric brand IDs. Direct-brand logins see
+    one row; account-level logins see every brand under their Account."""
+    from sqlalchemy import select as _select
+    from app.models import Customer as _Customer
+
+    allowed_customer_ids = await vendor_customer_ids(session, vendor)
+    if not allowed_customer_ids:
+        return []
+    rows = await session.execute(
+        _select(_Customer.id, _Customer.name)
+        .where(_Customer.id.in_(allowed_customer_ids))
+        .order_by(_Customer.name)
+    )
+    return [{"id": r[0], "name": r[1]} for r in rows]

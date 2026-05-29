@@ -112,27 +112,23 @@ const NAV_CATEGORIES: NavCategory[] = [
 export default function ManagerPage() {
   const { user } = useAuth()
   const [tab, setTab] = useState<Tab>('dashboard')
-  // dos is self-managed inside <DOsTab/> (URL-state + filter bar).
-  const [tos, setTos] = useState<OutboundOrderListRow[] | null>(null)
+  // dos + tos are self-managed (URL-state + FilterBar).
   const [lots, setLots] = useState<LotMapItem[] | null>(null)
   const [exceptions, setExceptions] = useState<ExceptionItem[] | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   function refresh(t: Tab = tab) {
     setError(null)
-    // DOs handled internally by <DOsTab/>.
-    if (t === 'tos')
-      api.listAllOutboundOrders().then(setTos).catch((e) => setError(String(e)))
+    // DOs + TOs handled internally.
     if (t === 'lots') api.listLots().then(setLots).catch((e) => setError(String(e)))
     if (t === 'exceptions')
       api.listExceptions().then(setExceptions).catch((e) => setError(String(e)))
   }
 
   useEffect(() => {
-    if (tab === 'tos' && tos === null) refresh('tos')
-    else if (tab === 'lots' && lots === null) refresh('lots')
+    if (tab === 'lots' && lots === null) refresh('lots')
     else if (tab === 'exceptions' && exceptions === null) refresh('exceptions')
-  }, [tab, tos, lots, exceptions])
+  }, [tab, lots, exceptions])
 
   return (
     <ManagerChrome activeTab={tab} onTabChange={(k) => setTab(k as Tab)}>
@@ -175,7 +171,7 @@ export default function ManagerPage() {
           </div>
         )}
         {tab === 'dos' && <DOsTab />}
-        {tab === 'tos' && <TOsTab data={tos} onChanged={() => refresh('tos')} />}
+        {tab === 'tos' && <TOsTab />}
         {tab === 'lots' && <LotsTab data={lots} />}
         {tab === 'inbound' && <InboundView />}
         {tab === 'accounts' && <AccountAdmin />}
@@ -445,19 +441,50 @@ function DOsTabTable({ data }: { data: DOListItem[] }) {
 
 // ─── Outbound Transfer Orders tab ──────────────────────────────────────
 
-function TOsTab({
-  data,
-  onChanged,
-}: {
-  data: OutboundOrderListRow[] | null
-  onChanged: () => void
-}) {
+function TOsTab() {
+  // Self-managed tab: fetches brands + TOs based on filter state held in
+  // URL params. Mirrors DOsTab pattern.
+  const [searchParams, setSearchParams] = useSearchParams()
+  const [filter, setFilter] = useFilterFromURL(searchParams, setSearchParams)
+
+  const [data, setData] = useState<OutboundOrderListRow[] | null>(null)
+  const [brands, setBrands] = useState<{ id: number; name: string }[]>([])
+  const [err, setErr] = useState<string | null>(null)
+
   const { user } = useAuth()
   // Delete only for developer or manager. Operators never see the column.
   const canDelete = user?.role === 'developer' || user?.role === 'manager'
   const [pendingDelete, setPendingDelete] = useState<OutboundOrderListRow | null>(null)
   const [deleting, setDeleting] = useState(false)
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
+
+  // Load brands once.
+  useEffect(() => {
+    api
+      .listManagerCustomers()
+      .then((cs) =>
+        setBrands(cs.map((c: { id: number; name: string }) => ({ id: c.id, name: c.name }))),
+      )
+      .catch(() => setBrands([]))
+  }, [])
+
+  function refresh() {
+    setData(null)
+    setErr(null)
+    const { from_date, to_date } = resolveFilterDates(filter)
+    api
+      .listAllOutboundOrders({
+        customer_id:
+          filter.brand_id === 'all' ? undefined : (filter.brand_id as number),
+        from_date,
+        to_date,
+      })
+      .then(setData)
+      .catch((e) => setErr(String(e?.detail ?? e)))
+  }
+
+  // Reload TOs whenever filter changes.
+  useEffect(refresh, [filter])
 
   async function confirmDelete() {
     if (!pendingDelete) return
@@ -466,7 +493,7 @@ function TOsTab({
     try {
       await api.deleteOutboundOrder(pendingDelete.transfer_order_no)
       setPendingDelete(null)
-      onChanged()
+      refresh()
     } catch (e: unknown) {
       // Surface server-side detail (e.g. invoice-attached 409) inline.
       const msg = (e as { detail?: string; message?: string })?.detail
@@ -478,14 +505,53 @@ function TOsTab({
     }
   }
 
-  if (data === null) return <LoadingHint />
-  if (data.length === 0)
-    return (
-      <EmptyHint
-        title="No Transfer Orders yet"
-        body="Outbound shipments will appear here as soon as customers submit a TO via the vendor portal."
-      />
-    )
+  return (
+    <>
+      <FilterBar brands={brands} value={filter} onChange={setFilter} />
+      {err && (
+        <div className="mb-3 text-sm text-red-700 bg-red-50 border border-red-200 rounded-md px-3 py-2">
+          <span className="font-semibold">Error:</span> {err}
+        </div>
+      )}
+      {data === null && <LoadingHint />}
+      {data !== null && data.length === 0 && (
+        <EmptyHint
+          title="No Transfer Orders match the filter"
+          body="Widen the date range or pick a different brand to see more results."
+        />
+      )}
+      {data !== null && data.length > 0 && (
+        <TOsTabTable
+          data={data}
+          canDelete={canDelete}
+          onDeleteClick={(t) => {
+            setErrorMsg(null)
+            setPendingDelete(t)
+          }}
+        />
+      )}
+      {pendingDelete && (
+        <DeleteTOModal
+          pending={pendingDelete}
+          deleting={deleting}
+          errorMsg={errorMsg}
+          onCancel={() => setPendingDelete(null)}
+          onConfirm={confirmDelete}
+        />
+      )}
+    </>
+  )
+}
+
+function TOsTabTable({
+  data,
+  canDelete,
+  onDeleteClick,
+}: {
+  data: OutboundOrderListRow[]
+  canDelete: boolean
+  onDeleteClick: (t: OutboundOrderListRow) => void
+}) {
   return (
     <>
       <div
@@ -557,10 +623,7 @@ function TOsTab({
                   <td className="px-4 py-2 text-right">
                     <button
                       type="button"
-                      onClick={() => {
-                        setErrorMsg(null)
-                        setPendingDelete(t)
-                      }}
+                      onClick={() => onDeleteClick(t)}
                       title={`Delete ${t.transfer_order_no}`}
                       aria-label={`Delete TO ${t.transfer_order_no}`}
                       className="inline-flex items-center justify-center w-8 h-8 rounded-md text-slate-400 hover:text-red-600 hover:bg-red-50 border border-transparent hover:border-red-200 transition focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500"
@@ -588,61 +651,75 @@ function TOsTab({
           </tbody>
         </table>
       </div>
-
-      {pendingDelete && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4"
-          onClick={() => !deleting && setPendingDelete(null)}
-        >
-          <div
-            className="bg-white rounded-xl shadow-2xl max-w-md w-full p-6"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <h2 className="text-lg font-bold text-[#1B4676] mb-2">
-              Delete Transfer Order?
-            </h2>
-            <p className="text-sm text-slate-600 mb-1">
-              <span className="font-mono font-bold text-[#1B4676]">
-                {pendingDelete.transfer_order_no}
-              </span>
-              <span className="text-slate-500"> · {pendingDelete.customer_name}</span>
-            </p>
-            <p className="text-sm text-slate-600 mt-3">
-              This permanently removes the TO and every child row
-              (lines, containers, scans, serials) from the database AND
-              clears the matching row from the OneDrive outbound mirror.
-            </p>
-            <p className="text-xs text-slate-500 mt-2">
-              Blocked if any invoice references this TO — void the
-              invoice first if so.
-            </p>
-            {errorMsg && (
-              <div className="mt-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-                {errorMsg}
-              </div>
-            )}
-            <div className="mt-5 flex justify-end gap-2">
-              <button
-                type="button"
-                onClick={() => setPendingDelete(null)}
-                disabled={deleting}
-                className="px-3 py-1.5 rounded-md border border-slate-300 text-slate-700 text-sm font-medium hover:bg-slate-50 disabled:opacity-50"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={confirmDelete}
-                disabled={deleting}
-                className="px-3 py-1.5 rounded-md bg-red-600 hover:bg-red-700 text-white text-sm font-bold disabled:opacity-50"
-              >
-                {deleting ? 'Deleting…' : 'Delete TO'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </>
+  )
+}
+
+function DeleteTOModal({
+  pending,
+  deleting,
+  errorMsg,
+  onCancel,
+  onConfirm,
+}: {
+  pending: OutboundOrderListRow
+  deleting: boolean
+  errorMsg: string | null
+  onCancel: () => void
+  onConfirm: () => void
+}) {
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4"
+      onClick={() => !deleting && onCancel()}
+    >
+      <div
+        className="bg-white rounded-xl shadow-2xl max-w-md w-full p-6"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <h2 className="text-lg font-bold text-[#1B4676] mb-2">
+          Delete Transfer Order?
+        </h2>
+        <p className="text-sm text-slate-600 mb-1">
+          <span className="font-mono font-bold text-[#1B4676]">
+            {pending.transfer_order_no}
+          </span>
+          <span className="text-slate-500"> · {pending.customer_name}</span>
+        </p>
+        <p className="text-sm text-slate-600 mt-3">
+          This permanently removes the TO and every child row
+          (lines, containers, scans, serials) from the database AND
+          clears the matching row from the OneDrive outbound mirror.
+        </p>
+        <p className="text-xs text-slate-500 mt-2">
+          Blocked if any invoice references this TO — void the
+          invoice first if so.
+        </p>
+        {errorMsg && (
+          <div className="mt-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+            {errorMsg}
+          </div>
+        )}
+        <div className="mt-5 flex justify-end gap-2">
+          <button
+            type="button"
+            onClick={onCancel}
+            disabled={deleting}
+            className="px-3 py-1.5 rounded-md border border-slate-300 text-slate-700 text-sm font-medium hover:bg-slate-50 disabled:opacity-50"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={onConfirm}
+            disabled={deleting}
+            className="px-3 py-1.5 rounded-md bg-red-600 hover:bg-red-700 text-white text-sm font-bold disabled:opacity-50"
+          >
+            {deleting ? 'Deleting…' : 'Delete TO'}
+          </button>
+        </div>
+      </div>
+    </div>
   )
 }
 

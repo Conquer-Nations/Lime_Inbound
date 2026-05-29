@@ -1,6 +1,10 @@
 import { useEffect, useState, type ReactNode } from 'react'
-import { Link } from 'react-router-dom'
-import { API_BASE } from '../api/client'
+import { Link, useSearchParams } from 'react-router-dom'
+import { API_BASE, api } from '../api/client'
+import FilterBar, {
+  resolveFilterDates,
+  useFilterFromURL,
+} from './FilterBar'
 
 interface InboundRow {
   container_no: string
@@ -60,10 +64,26 @@ export default function InboundView() {
   const [syncStatus, setSyncStatus] = useState<string | null>(null)
   const [syncFailed, setSyncFailed] = useState(false)
   const [syncing, setSyncing] = useState(false)
+  const [brands, setBrands] = useState<{ id: number; name: string }[]>([])
+
+  // Brand + date filter — state held in URL so refresh / share preserves
+  // the view. resolveFilterDates() maps the selected mode to (from_date,
+  // to_date) the backend understands.
+  const [searchParams, setSearchParams] = useSearchParams()
+  const [filterValue, setFilterValue] = useFilterFromURL(
+    searchParams,
+    setSearchParams,
+  )
 
   function reload() {
     setError(null)
-    fetch(`${API_BASE}/manager/database/inbound`)
+    const { from_date, to_date } = resolveFilterDates(filterValue)
+    const q = new URLSearchParams()
+    if (filterValue.brand_id !== 'all') q.set('customer_id', String(filterValue.brand_id))
+    if (from_date) q.set('from_date', from_date)
+    if (to_date) q.set('to_date', to_date)
+    const qs = q.toString()
+    fetch(`${API_BASE}/manager/database/inbound${qs ? `?${qs}` : ''}`)
       .then(async (r) => {
         if (!r.ok) throw new Error(await r.text())
         return r.json()
@@ -72,7 +92,17 @@ export default function InboundView() {
       .catch((e) => setError(String(e)))
   }
 
-  useEffect(reload, [])
+  useEffect(() => {
+    api
+      .listManagerCustomers()
+      .then((cs) =>
+        setBrands(cs.map((c: { id: number; name: string }) => ({ id: c.id, name: c.name }))),
+      )
+      .catch(() => setBrands([]))
+  }, [])
+
+  // Re-fetch when filter changes (URL-driven).
+  useEffect(reload, [filterValue])
 
   useEffect(() => {
     fetch(`${API_BASE}/manager/database/inbound/status`)
@@ -168,6 +198,12 @@ export default function InboundView() {
 
   return (
     <div className="space-y-4">
+      <FilterBar
+        brands={brands}
+        value={filterValue}
+        onChange={setFilterValue}
+      />
+
       {/* Header / controls */}
       <div
         className="bg-white rounded-xl border border-slate-200 p-4 sm:p-5"

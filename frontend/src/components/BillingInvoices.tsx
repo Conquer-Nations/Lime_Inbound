@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { api, billingApi } from '../api/client'
 import type {
   CustomerRead,
@@ -8,6 +9,10 @@ import type {
   InvoiceStatus,
   RateCardRow,
 } from '../api/client'
+import FilterBar, {
+  resolveFilterDates,
+  useFilterFromURL,
+} from './FilterBar'
 
 /**
  * Manager Invoicing — main billing surface.
@@ -64,7 +69,6 @@ function fmtDate(d: string | null | undefined): string {
 export default function BillingInvoices() {
   const [list, setList] = useState<InvoiceListItem[] | null>(null)
   const [statusFilter, setStatusFilter] = useState<'all' | InvoiceStatus>('all')
-  const [customerFilter, setCustomerFilter] = useState<number | 'all'>('all')
   const [customers, setCustomers] = useState<CustomerRead[]>([])
   const [search, setSearch] = useState('')
   const [error, setError] = useState<string | null>(null)
@@ -73,6 +77,10 @@ export default function BillingInvoices() {
   const [detailLoading, setDetailLoading] = useState(false)
   const [generateMode, setGenerateMode] = useState<GenerateMode | null>(null)
   const [toast, setToast] = useState<string | null>(null)
+
+  // Brand + date filter via FilterBar (URL-persisted).
+  const [searchParams, setSearchParams] = useSearchParams()
+  const [filter, setFilter] = useFilterFromURL(searchParams, setSearchParams)
 
   // Load the customer (brand) list once for the filter dropdown.
   useEffect(() => {
@@ -89,10 +97,14 @@ export default function BillingInvoices() {
 
   function reloadList() {
     setError(null)
+    const { from_date, to_date } = resolveFilterDates(filter)
     billingApi
       .listInvoices({
         status: statusFilter === 'all' ? undefined : statusFilter,
-        customer_id: customerFilter === 'all' ? undefined : customerFilter,
+        customer_id:
+          filter.brand_id === 'all' ? undefined : (filter.brand_id as number),
+        from_date,
+        to_date,
       })
       .then((rows) => {
         setList(rows)
@@ -114,7 +126,7 @@ export default function BillingInvoices() {
       .finally(() => setDetailLoading(false))
   }
 
-  useEffect(reloadList, [statusFilter, customerFilter])
+  useEffect(reloadList, [statusFilter, filter])
 
   useEffect(() => {
     if (selectedId == null) {
@@ -199,7 +211,14 @@ export default function BillingInvoices() {
         </div>
       )}
 
-      {/* Filters */}
+      {/* Brand + date filter (URL-persisted). */}
+      <FilterBar
+        brands={customers.map((c) => ({ id: c.id, name: c.name }))}
+        value={filter}
+        onChange={setFilter}
+      />
+
+      {/* Search + status filters */}
       <div className="flex flex-wrap items-center gap-3">
         <input
           type="search"
@@ -208,27 +227,6 @@ export default function BillingInvoices() {
           placeholder="Search invoice #, customer, WHPO, TO…"
           className="w-72 max-w-full border border-slate-200 rounded-md px-3 py-1.5 text-sm focus:outline-none focus:border-[#0093D0]"
         />
-        {/* Brand / customer picker — server-side filter. */}
-        <label className="inline-flex items-center gap-2">
-          <span className="text-[10px] uppercase tracking-[0.14em] font-bold text-slate-500">
-            Brand
-          </span>
-          <select
-            value={customerFilter === 'all' ? '' : String(customerFilter)}
-            onChange={(e) =>
-              setCustomerFilter(e.target.value ? Number(e.target.value) : 'all')
-            }
-            className="border border-slate-200 rounded-md px-2 py-1 text-sm focus:outline-none focus:border-[#0093D0] bg-white min-w-[10rem]"
-          >
-            <option value="">All brands</option>
-            {customers.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name}
-                {c.account_name ? ` · ${c.account_name}` : ''}
-              </option>
-            ))}
-          </select>
-        </label>
         <div className="flex items-center gap-1 flex-wrap">
           {STATUS_FILTERS.map((s) => (
             <button
