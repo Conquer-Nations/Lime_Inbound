@@ -290,8 +290,22 @@ export const api = {
   // Manager
   getDashboard: () => request<DashboardResponse>('/manager/dashboard'),
 
-  listDOs: (status?: string) =>
-    request<DOListItem[]>(`/manager/dos${status ? `?status=${status}` : ''}`),
+  listDOs: (params?: {
+    status?: string
+    customer_id?: number
+    from_date?: string
+    to_date?: string
+    limit?: number
+  }) => {
+    const sp = new URLSearchParams()
+    if (params?.status) sp.set('status', params.status)
+    if (params?.customer_id != null) sp.set('customer_id', String(params.customer_id))
+    if (params?.from_date) sp.set('from_date', params.from_date)
+    if (params?.to_date) sp.set('to_date', params.to_date)
+    if (params?.limit != null) sp.set('limit', String(params.limit))
+    const qs = sp.toString()
+    return request<DOListItem[]>(`/manager/dos${qs ? `?${qs}` : ''}`)
+  },
 
   getDODetail: (do_id: number) => request<DODetail>(`/manager/dos/${do_id}`),
 

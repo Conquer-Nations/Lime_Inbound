@@ -71,8 +71,13 @@ async def list_dos(
     *,
     status_filter: str | None = None,
     customer_id: int | None = None,
+    from_date: date | None = None,
+    to_date: date | None = None,
     limit: int = 100,
 ) -> list[DOListItem]:
+    """List DOs with optional filters. Date filter applies to
+    expected_arrival_date — that's the dimension a manager actually
+    plans against; issued_at is the back-office timestamp."""
     q = (
         select(DO)
         .options(selectinload(DO.whpo).selectinload(WHPO.customer))
@@ -84,6 +89,10 @@ async def list_dos(
         q = q.where(DO.status == status_filter)
     if customer_id:
         q = q.join(DO.whpo).where(WHPO.customer_id == customer_id)
+    if from_date is not None:
+        q = q.where(DO.expected_arrival_date >= from_date)
+    if to_date is not None:
+        q = q.where(DO.expected_arrival_date <= to_date)
 
     dos = (await session.scalars(q)).all()
 

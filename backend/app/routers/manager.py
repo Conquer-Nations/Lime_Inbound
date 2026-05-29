@@ -73,10 +73,17 @@ async def get_dos(
     session: AsyncSession = Depends(get_session),
     status_filter: str | None = Query(None, alias="status"),
     customer_id: int | None = None,
-    limit: int = Query(100, ge=1, le=500),
+    from_date: date | None = Query(None, description="ISO YYYY-MM-DD — filter by expected_arrival_date >= from_date"),
+    to_date: date | None = Query(None, description="ISO YYYY-MM-DD — filter by expected_arrival_date <= to_date"),
+    limit: int = Query(500, ge=1, le=2000),
 ):
     return await list_dos(
-        session, status_filter=status_filter, customer_id=customer_id, limit=limit
+        session,
+        status_filter=status_filter,
+        customer_id=customer_id,
+        from_date=from_date,
+        to_date=to_date,
+        limit=limit,
     )
 
 

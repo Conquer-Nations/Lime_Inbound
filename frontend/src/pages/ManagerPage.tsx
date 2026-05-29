@@ -1,5 +1,9 @@
 import { useEffect, useState, type ReactNode } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
+import FilterBar, {
+  resolveFilterDates,
+  useFilterFromURL,
+} from '../components/FilterBar'
 import { useAuth } from '../auth/AuthContext'
 import { api } from '../api/client'
 import AccountAdmin from '../components/AccountAdmin'
@@ -108,7 +112,7 @@ const NAV_CATEGORIES: NavCategory[] = [
 export default function ManagerPage() {
   const { user } = useAuth()
   const [tab, setTab] = useState<Tab>('dashboard')
-  const [dos, setDos] = useState<DOListItem[] | null>(null)
+  // dos is self-managed inside <DOsTab/> (URL-state + filter bar).
   const [tos, setTos] = useState<OutboundOrderListRow[] | null>(null)
   const [lots, setLots] = useState<LotMapItem[] | null>(null)
   const [exceptions, setExceptions] = useState<ExceptionItem[] | null>(null)
@@ -116,7 +120,7 @@ export default function ManagerPage() {
 
   function refresh(t: Tab = tab) {
     setError(null)
-    if (t === 'dos') api.listDOs().then(setDos).catch((e) => setError(String(e)))
+    // DOs handled internally by <DOsTab/>.
     if (t === 'tos')
       api.listAllOutboundOrders().then(setTos).catch((e) => setError(String(e)))
     if (t === 'lots') api.listLots().then(setLots).catch((e) => setError(String(e)))
@@ -125,11 +129,10 @@ export default function ManagerPage() {
   }
 
   useEffect(() => {
-    if (tab === 'dos' && dos === null) refresh('dos')
-    else if (tab === 'tos' && tos === null) refresh('tos')
+    if (tab === 'tos' && tos === null) refresh('tos')
     else if (tab === 'lots' && lots === null) refresh('lots')
     else if (tab === 'exceptions' && exceptions === null) refresh('exceptions')
-  }, [tab, dos, tos, lots, exceptions])
+  }, [tab, tos, lots, exceptions])
 
   return (
     <ManagerChrome activeTab={tab} onTabChange={(k) => setTab(k as Tab)}>
@@ -171,7 +174,7 @@ export default function ManagerPage() {
             />
           </div>
         )}
-        {tab === 'dos' && <DOsTab data={dos} />}
+        {tab === 'dos' && <DOsTab />}
         {tab === 'tos' && <TOsTab data={tos} onChanged={() => refresh('tos')} />}
         {tab === 'lots' && <LotsTab data={lots} />}
         {tab === 'inbound' && <InboundView />}
@@ -189,7 +192,6 @@ export default function ManagerPage() {
             resolvedBy={user?.id ?? 'manager'}
             onResolved={() => {
               setExceptions(null)
-              setDos(null)
               refresh('exceptions')
             }}
           />
@@ -310,15 +312,67 @@ function ManagerChrome({
 
 // ─── Delivery Orders tab ───────────────────────────────────────────────
 
-function DOsTab({ data }: { data: DOListItem[] | null }) {
-  if (data === null) return <LoadingHint />
-  if (data.length === 0)
-    return (
-      <EmptyHint
-        title="No Delivery Orders yet"
-        body="Submit a vendor shipment and a DO will be issued automatically."
-      />
-    )
+function DOsTab() {
+  // Self-managed tab: fetches brands + DOs based on filter state held
+  // in URL params. Survives refresh + is shareable. FilterBar handles
+  // brand + date dimensions; we map them to the listDOs query.
+  const [searchParams, setSearchParams] = useSearchParams()
+  const [filter, setFilter] = useFilterFromURL(searchParams, setSearchParams)
+
+  const [data, setData] = useState<DOListItem[] | null>(null)
+  const [brands, setBrands] = useState<{ id: number; name: string }[]>([])
+  const [err, setErr] = useState<string | null>(null)
+
+  // Load brands once.
+  useEffect(() => {
+    api
+      .listManagerCustomers()
+      .then((cs) =>
+        setBrands(cs.map((c: { id: number; name: string }) => ({ id: c.id, name: c.name }))),
+      )
+      .catch(() => setBrands([]))
+  }, [])
+
+  // Reload DOs whenever filter changes.
+  useEffect(() => {
+    setData(null)
+    setErr(null)
+    const { from_date, to_date } = resolveFilterDates(filter)
+    api
+      .listDOs({
+        customer_id:
+          filter.brand_id === 'all' ? undefined : (filter.brand_id as number),
+        from_date,
+        to_date,
+        limit: 500,
+      })
+      .then(setData)
+      .catch((e) => setErr(String(e?.detail ?? e)))
+  }, [filter])
+
+  return (
+    <>
+      <FilterBar brands={brands} value={filter} onChange={setFilter} />
+      {err && (
+        <div className="mb-3 text-sm text-red-700 bg-red-50 border border-red-200 rounded-md px-3 py-2">
+          <span className="font-semibold">Error:</span> {err}
+        </div>
+      )}
+      {data === null && <LoadingHint />}
+      {data !== null && data.length === 0 && (
+        <EmptyHint
+          title="No Delivery Orders match the filter"
+          body="Widen the date range or pick a different brand to see more results."
+        />
+      )}
+      {data !== null && data.length > 0 && (
+        <DOsTabTable data={data} />
+      )}
+    </>
+  )
+}
+
+function DOsTabTable({ data }: { data: DOListItem[] }) {
   return (
     <div
       className="bg-white rounded-xl border border-slate-200 overflow-hidden"
@@ -327,10 +381,13 @@ function DOsTab({ data }: { data: DOListItem[] | null }) {
           '0 1px 2px 0 rgba(15,23,42,0.04), 0 8px 24px -8px rgba(15,23,42,0.08)',
       }}
     >
-      <div className="bg-slate-50 border-b border-slate-200 px-4 py-2.5">
+      <div className="bg-slate-50 border-b border-slate-200 px-4 py-2.5 flex items-center justify-between">
         <h3 className="text-[11px] font-bold uppercase tracking-[0.18em] text-[#0093D0]">
           Delivery Orders
         </h3>
+        <span className="text-[11px] text-slate-500 font-mono">
+          {data.length} {data.length === 1 ? 'row' : 'rows'}
+        </span>
       </div>
       <table className="w-full text-sm">
         <thead className="bg-white text-[10.5px] uppercase text-slate-500 border-b border-slate-200">
