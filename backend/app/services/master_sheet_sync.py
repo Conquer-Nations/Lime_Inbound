@@ -47,9 +47,21 @@ logger = logging.getLogger(__name__)
 # concurrent writes into a single push instead of fanning out one
 # per endpoint hit. `_pending` is set while a task is queued or
 # running; new arrivals re-arm via `_again` instead of spawning more.
+#
+# The lock is created lazily on first use — `asyncio.Lock()` at
+# module-import time binds to "no running loop" under uvicorn worker
+# spawn (Azure App Service) and breaks app startup. Creating it on
+# first call ensures it binds to the live event loop.
 _pending: asyncio.Task | None = None
 _again = False
-_lock = asyncio.Lock()
+_lock: asyncio.Lock | None = None
+
+
+def _get_lock() -> asyncio.Lock:
+    global _lock
+    if _lock is None:
+        _lock = asyncio.Lock()
+    return _lock
 
 _LA_TZ = ZoneInfo("America/Los_Angeles")
 
@@ -106,7 +118,7 @@ async def maybe_push(session: AsyncSession, *, source: str) -> bool:
     if not is_configured():
         return False
     global _pending, _again
-    async with _lock:
+    async with _get_lock():
         if _pending is not None and not _pending.done():
             _again = True
             logger.info(
@@ -137,7 +149,7 @@ async def _run_push_loop(source: str) -> None:
                     source,
                     e,
                 )
-            async with _lock:
+            async with _get_lock():
                 if not _again:
                     _pending = None
                     return
@@ -146,7 +158,7 @@ async def _run_push_loop(source: str) -> None:
     finally:
         # Defensive: make sure we never leave _pending stuck pointing
         # at a dead task on an unexpected exit path.
-        async with _lock:
+        async with _get_lock():
             if _pending is not None and _pending.done():
                 _pending = None
 
