@@ -23,7 +23,7 @@ billing internals):
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+from datetime import date, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import Response
@@ -304,7 +304,9 @@ async def delete_rate_card_entry(
 async def list_invoices(
     status_filter: str | None = Query(None, alias="status"),
     customer_id: int | None = None,
-    limit: int = Query(200, ge=1, le=1000),
+    from_date: date | None = Query(None, description="ISO YYYY-MM-DD — filter by invoice_date >= from_date"),
+    to_date: date | None = Query(None, description="ISO YYYY-MM-DD — filter by invoice_date <= to_date"),
+    limit: int = Query(500, ge=1, le=2000),
     offset: int = Query(0, ge=0),
     session: AsyncSession = Depends(get_session),
 ):
@@ -319,6 +321,10 @@ async def list_invoices(
         q = q.where(Invoice.status == status_filter)
     if customer_id:
         q = q.where(Invoice.customer_id == customer_id)
+    if from_date is not None:
+        q = q.where(Invoice.invoice_date >= from_date)
+    if to_date is not None:
+        q = q.where(Invoice.invoice_date <= to_date)
     q = q.limit(limit).offset(offset)
     rows = (await session.execute(q)).all()
     return [_list_item_to_read(inv, name, whpo_no, to_no) for (inv, name, whpo_no, to_no) in rows]
@@ -800,23 +806,40 @@ _VENDOR_VISIBLE_STATUSES = ("sent", "payment_submitted", "paid")
 
 @vendor_router.get("/invoices", response_model=list[InvoiceListItem])
 async def list_my_invoices(
+    customer_id: int | None = Query(None, description="Narrow to one brand within the vendor's accessible set"),
+    from_date: date | None = Query(None, description="ISO YYYY-MM-DD — filter by invoice_date >= from_date"),
+    to_date: date | None = Query(None, description="ISO YYYY-MM-DD — filter by invoice_date <= to_date"),
     vendor: dict = Depends(current_vendor_required),
     session: AsyncSession = Depends(get_session),
 ):
     """Vendor's invoices. Scoped server-side to the brands they can
-    access (direct-brand match OR all brands under their Account)."""
-    customer_ids = await vendor_customer_ids(session, vendor)
-    if not customer_ids:
+    access (direct-brand match OR all brands under their Account).
+    Optional filters: narrow to one brand (must be within their scope),
+    or restrict by invoice_date range."""
+    accessible_ids = await vendor_customer_ids(session, vendor)
+    if not accessible_ids:
         return []
+    # If a brand filter is given, intersect with accessible. A vendor
+    # asking for a brand outside their scope silently gets nothing.
+    if customer_id is not None:
+        if customer_id not in accessible_ids:
+            return []
+        scope_ids = [customer_id]
+    else:
+        scope_ids = accessible_ids
     q = (
         select(Invoice, Customer.name, WHPO.whpo_number, OutboundOrder.transfer_order_no)
         .join(Customer, Customer.id == Invoice.customer_id)
         .outerjoin(WHPO, WHPO.id == Invoice.whpo_id)
         .outerjoin(OutboundOrder, OutboundOrder.id == Invoice.outbound_order_id)
-        .where(Invoice.customer_id.in_(customer_ids))
+        .where(Invoice.customer_id.in_(scope_ids))
         .where(Invoice.status.in_(_VENDOR_VISIBLE_STATUSES))
         .order_by(desc(Invoice.generated_at))
     )
+    if from_date is not None:
+        q = q.where(Invoice.invoice_date >= from_date)
+    if to_date is not None:
+        q = q.where(Invoice.invoice_date <= to_date)
     rows = (await session.execute(q)).all()
     return [_list_item_to_read(inv, name, whpo_no, to_no) for (inv, name, whpo_no, to_no) in rows]
 

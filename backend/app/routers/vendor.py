@@ -1181,8 +1181,11 @@ async def get_vendor_calendar(
 @router.get("/master-list")
 async def vendor_master_list(
     customer: str | None = None,
+    customer_id: int | None = None,
     since: date | None = None,
     until: date | None = None,
+    from_date: date | None = None,
+    to_date: date | None = None,
     scanned: bool | None = None,
     limit: int = 500,
     offset: int = 0,
@@ -1221,10 +1224,21 @@ async def vendor_master_list(
     if not allowed_names:
         return _MasterListResponse(items=[], total=0)
 
-    # If the caller passed `customer`, it must be one of the allowed names.
-    # Otherwise we silently ignore it — never trust the client to broaden
-    # scope. Same pattern as the existing vendor invoice endpoint.
-    if customer:
+    # If the caller passed `customer` (name) or `customer_id`, it must
+    # be one of the allowed brands. Otherwise we silently ignore it —
+    # never trust the client to broaden scope.
+    effective_names: list[str]
+    if customer_id is not None:
+        if customer_id not in allowed_customer_ids:
+            return _MasterListResponse(items=[], total=0)
+        # Map the id to its name (used by vw_master_list.customer_name).
+        name_q = await session.scalar(
+            _select(_Customer.name).where(_Customer.id == customer_id)
+        )
+        if not name_q:
+            return _MasterListResponse(items=[], total=0)
+        effective_names = [name_q]
+    elif customer:
         match = next(
             (n for n in allowed_names if n.casefold() == customer.casefold()),
             None,
@@ -1235,14 +1249,19 @@ async def vendor_master_list(
     else:
         effective_names = allowed_names
 
+    # Date aliases: from_date / to_date carry the same meaning as
+    # since / until — the FilterBar component uses the first pair.
+    effective_since = from_date if since is None else since
+    effective_until = to_date if until is None else until
+
     where: list[str] = ["customer_name IN :brand_list"]
     params: dict[str, object] = {"brand_list": tuple(effective_names)}
-    if since:
+    if effective_since:
         where.append("COALESCE(received_date, ship_date) >= :since")
-        params["since"] = since
-    if until:
+        params["since"] = effective_since
+    if effective_until:
         where.append("COALESCE(received_date, ship_date) <= :until")
-        params["until"] = until
+        params["until"] = effective_until
     if scanned is not None:
         where.append("scanned = :scanned")
         params["scanned"] = scanned

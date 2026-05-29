@@ -8,7 +8,7 @@ isolation rule as inbound.
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from sqlalchemy import func, select
@@ -813,13 +813,21 @@ async def list_inventory(
     "/container-inventory", response_model=ContainerInventoryResponse
 )
 async def container_inventory(
+    customer_id: int | None = None,
+    from_date: date | None = None,
+    to_date: date | None = None,
     session: AsyncSession = Depends(get_session),
     vendor: dict = Depends(current_vendor_required),
 ):
     """Per-(container, sku) inventory dashboard across every brand the
     vendor's JWT can access (direct-brand or account-level rollup).
     Each row shows inbound (manifest) qty, outbound qty already allocated
-    to Transfer Orders, and pending (remaining) qty."""
+    to Transfer Orders, and pending (remaining) qty.
+
+    Optional filters (FilterBar): `customer_id` narrows to a single brand
+    (must be in the vendor's allowed scope), `from_date`/`to_date` filter
+    by container expected arrival date.
+    """
     from app.services.vendor_scoping import vendor_customer_ids
     ids = await vendor_customer_ids(session, vendor)
     if not ids:
@@ -829,8 +837,19 @@ async def container_inventory(
             total_outbound=0,
             total_pending=0,
         )
+    # Intersect requested customer_id with allowed scope — never trust
+    # the client to broaden access.
+    if customer_id is not None:
+        if customer_id not in ids:
+            return ContainerInventoryResponse(
+                containers=[],
+                total_inbound=0,
+                total_outbound=0,
+                total_pending=0,
+            )
+        ids = [customer_id]
     rows = await outbound_service.list_container_inventory_for_company(
-        session, ids
+        session, ids, from_date=from_date, to_date=to_date
     )
     items = [ContainerInventoryItem(**r) for r in rows]
     return ContainerInventoryResponse(

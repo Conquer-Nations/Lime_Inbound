@@ -21,24 +21,43 @@ router = APIRouter(prefix="/manager", tags=["manager-master-list"])
 @router.get("/master-list", response_model=MasterListResponse)
 async def get_master_list(
     customer: str | None = Query(None, description="Filter to one brand by exact name"),
+    customer_id: int | None = Query(None, description="Filter to one brand by id (preferred — survives renames). Resolved via vw_master_list.container_id → containers → whpos.customer_id."),
     since: date | None = Query(None, description="Earliest received_date OR ship_date"),
     until: date | None = Query(None, description="Latest received_date OR ship_date"),
+    from_date: date | None = Query(None, description="Alias of `since` to match FilterBar convention"),
+    to_date: date | None = Query(None, description="Alias of `until` to match FilterBar convention"),
     scanned: bool | None = Query(None, description="Filter by scanned status"),
     limit: int = Query(500, ge=1, le=2000),
     offset: int = Query(0, ge=0),
     session: AsyncSession = Depends(get_session),
 ) -> MasterListResponse:
+    # Coalesce the two aliases so the frontend can use either.
+    effective_since = from_date if since is None else since
+    effective_until = to_date if until is None else until
+
     where: list[str] = []
     params: dict[str, object] = {}
     if customer:
         where.append("customer_name = :customer")
         params["customer"] = customer
-    if since:
+    if customer_id is not None:
+        # vw_master_list doesn't expose customer_id directly, but
+        # container_id → containers → whpos.customer_id is a clean path.
+        where.append(
+            "container_id IN ("
+            " SELECT c.id FROM containers c"
+            " JOIN dos d ON d.id = c.do_id"
+            " JOIN whpos w ON w.id = d.whpo_id"
+            " WHERE w.customer_id = :customer_id"
+            ")"
+        )
+        params["customer_id"] = customer_id
+    if effective_since:
         where.append("COALESCE(received_date, ship_date) >= :since")
-        params["since"] = since
-    if until:
+        params["since"] = effective_since
+    if effective_until:
         where.append("COALESCE(received_date, ship_date) <= :until")
-        params["until"] = until
+        params["until"] = effective_until
     if scanned is not None:
         where.append("scanned = :scanned")
         params["scanned"] = scanned

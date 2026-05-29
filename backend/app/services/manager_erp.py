@@ -13,7 +13,7 @@ should not turn this into an N+1.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -571,11 +571,20 @@ async def get_outbound_order_detail(
 
 
 async def list_outbound_orders_all(
-    session: AsyncSession, limit: int = 200
+    session: AsyncSession,
+    *,
+    customer_id: int | None = None,
+    from_date: date | None = None,
+    to_date: date | None = None,
+    limit: int = 500,
 ) -> list[dict]:
     """Cross-customer list of every outbound TO. Powers the manager's
-    Delivery Orders companion view for outbound shipments."""
-    rows_q = await session.execute(
+    Delivery Orders companion view for outbound shipments.
+
+    Date filter applies to `order_date` — the dimension a manager
+    plans against (when the truck should leave). submitted_at is just
+    the back-office timestamp."""
+    q = (
         select(
             OutboundOrder.id,
             OutboundOrder.transfer_order_no,
@@ -596,6 +605,13 @@ async def list_outbound_orders_all(
         .order_by(OutboundOrder.submitted_at.desc())
         .limit(limit)
     )
+    if customer_id is not None:
+        q = q.where(OutboundOrder.customer_id == customer_id)
+    if from_date is not None:
+        q = q.where(OutboundOrder.order_date >= from_date)
+    if to_date is not None:
+        q = q.where(OutboundOrder.order_date <= to_date)
+    rows_q = await session.execute(q)
     out = []
     for r in rows_q.all():
         # Picked qty across all lines on this TO

@@ -582,13 +582,25 @@ INBOUND_COLUMNS = [
 ]
 
 
-async def _fetch_inbound(session: AsyncSession, limit: int = 1000):
+async def _fetch_inbound(
+    session: AsyncSession,
+    limit: int = 1000,
+    *,
+    customer_id: int | None = None,
+    from_date: date | None = None,
+    to_date: date | None = None,
+):
     """Join WHPO → DO → Container → ContainerLine into one flat row per line.
 
     This is the canonical "what the vendor sent us" view. Append-only — every
     new vendor submission adds rows here. WHPO is the dedupe key (re-submitting
     the same WHPO# is idempotent and returns the existing rows, doesn't
     duplicate them).
+
+    Optional filters:
+      - customer_id: narrow to one brand (Lime / Pan American Wire / etc).
+      - from_date / to_date: restrict by Container.expected_arrival_date
+        (the dimension a manager plans against).
     """
     q = (
         select(
@@ -618,6 +630,12 @@ async def _fetch_inbound(session: AsyncSession, limit: int = 1000):
         .order_by(WHPO.received_at.desc(), Container.container_no, ContainerLine.line_index)
         .limit(limit)
     )
+    if customer_id is not None:
+        q = q.where(WHPO.customer_id == customer_id)
+    if from_date is not None:
+        q = q.where(Container.expected_arrival_date >= from_date)
+    if to_date is not None:
+        q = q.where(Container.expected_arrival_date <= to_date)
     rows = (await session.execute(q)).all()
 
     # Per-DO last-updated timestamp from vendor amendments (whpo_updated).
@@ -676,9 +694,18 @@ async def _fetch_inbound(session: AsyncSession, limit: int = 1000):
 @router.get("/database/inbound")
 async def list_inbound(
     session: AsyncSession = Depends(get_session),
+    customer_id: int | None = None,
+    from_date: date | None = Query(None, description="ISO YYYY-MM-DD"),
+    to_date: date | None = Query(None, description="ISO YYYY-MM-DD"),
     limit: int = Query(1000, ge=1, le=10000),
 ):
-    return await _fetch_inbound(session, limit=limit)
+    return await _fetch_inbound(
+        session,
+        limit=limit,
+        customer_id=customer_id,
+        from_date=from_date,
+        to_date=to_date,
+    )
 
 
 @router.post("/database/inbound/sync")
@@ -2142,14 +2169,24 @@ async def get_container_erp_detail(
 
 @router.get("/outbound-orders")
 async def list_outbound_orders(
-    limit: int = Query(200, ge=1, le=500),
+    customer_id: int | None = None,
+    from_date: date | None = Query(None, description="ISO YYYY-MM-DD"),
+    to_date: date | None = Query(None, description="ISO YYYY-MM-DD"),
+    limit: int = Query(500, ge=1, le=2000),
     session: AsyncSession = Depends(get_session),
 ):
     """Cross-customer list of every outbound Transfer Order — manager's
-    counterpart to the inbound DOs list."""
+    counterpart to the inbound DOs list. Filters: brand (customer_id)
+    and order_date range."""
     from app.services.manager_erp import list_outbound_orders_all
 
-    return await list_outbound_orders_all(session, limit=limit)
+    return await list_outbound_orders_all(
+        session,
+        customer_id=customer_id,
+        from_date=from_date,
+        to_date=to_date,
+        limit=limit,
+    )
 
 
 @router.get("/outbound-orders/{transfer_order_no}")

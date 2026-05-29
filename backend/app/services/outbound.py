@@ -12,6 +12,7 @@ represented by inbound Scan X is no longer available.
 from __future__ import annotations
 
 import re
+from datetime import date
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -162,6 +163,8 @@ async def find_inbound_scan_fifo(
 async def list_container_inventory_for_company(
     session: AsyncSession,
     customer_ids: list[int],
+    from_date: date | None = None,
+    to_date: date | None = None,
 ) -> list[dict]:
     """Build the per-(container, sku) inventory summary across a set of
     customer/brand IDs.
@@ -197,7 +200,13 @@ async def list_container_inventory_for_company(
         .join(WHPO, DO.whpo_id == WHPO.id)
         .join(ContainerLine, ContainerLine.container_id == Container.id)
         .where(WHPO.customer_id.in_(customer_ids))
-        .group_by(
+    )
+    if from_date is not None:
+        inbound_stmt = inbound_stmt.where(DO.expected_arrival_date >= from_date)
+    if to_date is not None:
+        inbound_stmt = inbound_stmt.where(DO.expected_arrival_date <= to_date)
+    inbound_stmt = (
+        inbound_stmt.group_by(
             Container.container_no,
             ContainerLine.sku_raw,
             ContainerLine.product_type,
