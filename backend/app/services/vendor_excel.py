@@ -55,34 +55,17 @@ def _invalidate_users_cache() -> None:
     _users_cache_at = 0.0
 
 
-async def _call_ops(action: str, payload: dict[str, Any] | None = None) -> Any:
-    if not is_configured():
-        raise VendorExcelError(
-            "Vendor users Excel ops URL not configured "
-            "(set ONEDRIVE_VENDORS_OPS_URL in backend .env)"
-        )
+# The Logic App that fronts Excel Online occasionally returns a transient
+# 502/503/504 "NoResponse" (Office Scripts / Graph didn't answer in time),
+# especially under load. These are almost always fixed by an immediate
+# retry, so don't surface them to the user on the first blip.
+_MAX_ATTEMPTS = 3
+_RETRY_STATUSES = {429, 502, 503, 504}
 
-    body: dict[str, Any] = {"action": action}
-    if payload is not None:
-        # Office Script `main(workbook, action, payload?)` takes payload as a
-        # JSON string. Logic App passes the body fields through verbatim.
-        body["payload"] = json.dumps(payload)
 
-    try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            r = await client.post(settings.onedrive_vendors_ops_url, json=body)
-    except Exception as e:
-        logger.warning("Vendor Excel ops call errored: %s", e)
-        raise VendorExcelError(f"Excel ops upstream errored: {e}") from e
-
-    if not r.is_success:
-        logger.warning(
-            "Vendor Excel ops returned %s: %s", r.status_code, r.text[:300]
-        )
-        raise VendorExcelError(
-            f"Excel ops upstream returned {r.status_code}: {r.text[:200]}"
-        )
-
+def _parse_ops_response(r: httpx.Response) -> Any:
+    """Decode a *successful* Logic App response into the Office Script's
+    result object. Failures here are permanent (bad payload), not retried."""
     # Logic App returns the Office Script's result. Depending on response
     # configuration that's either the raw object, or a JSON string we need
     # to decode again. Handle both.
@@ -103,6 +86,61 @@ async def _call_ops(action: str, payload: dict[str, Any] | None = None) -> Any:
         raise VendorExcelError(f"Excel ops script error: {data['error']}")
 
     return data
+
+
+async def _call_ops(action: str, payload: dict[str, Any] | None = None) -> Any:
+    if not is_configured():
+        raise VendorExcelError(
+            "Vendor users Excel ops URL not configured "
+            "(set ONEDRIVE_VENDORS_OPS_URL in backend .env)"
+        )
+
+    body: dict[str, Any] = {"action": action}
+    if payload is not None:
+        # Office Script `main(workbook, action, payload?)` takes payload as a
+        # JSON string. Logic App passes the body fields through verbatim.
+        body["payload"] = json.dumps(payload)
+
+    last_err: VendorExcelError | None = None
+    for attempt in range(1, _MAX_ATTEMPTS + 1):
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                r = await client.post(settings.onedrive_vendors_ops_url, json=body)
+        except Exception as e:
+            # Network / timeout — transient, retry.
+            last_err = VendorExcelError(f"Excel ops upstream errored: {e}")
+            logger.warning(
+                "Vendor Excel ops '%s' call errored (attempt %d/%d): %s",
+                action, attempt, _MAX_ATTEMPTS, e,
+            )
+        else:
+            if r.is_success:
+                return _parse_ops_response(r)
+            if r.status_code in _RETRY_STATUSES:
+                # Transient upstream hiccup — retry.
+                last_err = VendorExcelError(
+                    f"Excel ops upstream returned {r.status_code}: {r.text[:200]}"
+                )
+                logger.warning(
+                    "Vendor Excel ops '%s' transient %s (attempt %d/%d): %s",
+                    action, r.status_code, attempt, _MAX_ATTEMPTS, r.text[:300],
+                )
+            else:
+                # 4xx and other non-retryable statuses — fail fast.
+                logger.warning(
+                    "Vendor Excel ops '%s' returned %s: %s",
+                    action, r.status_code, r.text[:300],
+                )
+                raise VendorExcelError(
+                    f"Excel ops upstream returned {r.status_code}: {r.text[:200]}"
+                )
+
+        # Back off before the next attempt (linear: 0.5s, 1.0s).
+        if attempt < _MAX_ATTEMPTS:
+            await asyncio.sleep(0.5 * attempt)
+
+    # All attempts exhausted on transient failures.
+    raise last_err or VendorExcelError("Excel ops upstream failed")
 
 
 async def list_users(*, force_refresh: bool = False) -> list[dict[str, Any]]:
@@ -128,7 +166,22 @@ async def list_users(*, force_refresh: bool = False) -> list[dict[str, Any]]:
         ):
             return _users_cache
 
-        data = await _call_ops("list")
+        try:
+            data = await _call_ops("list")
+        except VendorExcelError:
+            # Upstream Excel is down/flaking. If we have a previously-loaded
+            # list (even if expired), serve it rather than failing the login.
+            # The auth path never needs absolutely-fresh data — a user who
+            # registered seconds ago is the only edge case, and writes
+            # refresh the cache anyway.
+            if _users_cache is not None:
+                logger.warning(
+                    "Vendor users refresh failed; serving stale cache (%d users)",
+                    len(_users_cache),
+                )
+                return _users_cache
+            raise
+
         users = data.get("users") if isinstance(data, dict) else None
         if not isinstance(users, list):
             users_out: list[dict[str, Any]] = []
@@ -179,7 +232,16 @@ async def update_last_login(email: str, when_iso: str) -> None:
         "update_last_login",
         {"email": email.strip().lower(), "last_login_at": when_iso},
     )
-    _invalidate_users_cache()
+    # Don't invalidate the whole cache here — this runs on EVERY login, and
+    # blowing the cache away would force the next login back to Excel with no
+    # stale fallback (the original cause of login 502s when Excel flaked).
+    # last_login_at isn't read by the auth path, so just patch it in place.
+    if _users_cache is not None:
+        needle = email.strip().lower()
+        for u in _users_cache:
+            if str(u.get("email", "")).strip().lower() == needle:
+                u["last_login_at"] = when_iso
+                break
 
 
 async def update_password(email: str, password_hash: str) -> int:
