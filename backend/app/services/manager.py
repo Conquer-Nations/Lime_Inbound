@@ -31,6 +31,7 @@ from app.models import (
     Pallet,
     Receipt,
     Scan,
+    TallySheet,
     WHPO,
 )
 
@@ -56,6 +57,8 @@ from app.schemas.manager import (
     LotMapItem,
     OperatorStat,
     PalletInLot,
+    PipelineContainer,
+    ReceivingPipelineResponse,
     ResolveExceptionRequest,
     ResolveExceptionResponse,
     TodaySummary,
@@ -567,6 +570,102 @@ async def _refresh_do_status(
         do.status = "ready"
         return True, "ready"
     return False, do.status
+
+
+# ─── Receiving pipeline ─────────────────────────────────────────────────
+
+
+async def get_receiving_pipeline(session: AsyncSession) -> ReceivingPipelineResponse:
+    """Two manager worklists derived from the receiving funnel:
+
+      vendor submits → manager files tally ("received") → operator scans → done
+
+      - awaiting_tally: container exists but has no TallySheet and isn't
+        scanned. (Vendor's done their part; we owe a tally.)
+      - awaiting_scan:  has a TallySheet ("received") but the operator
+        hasn't finished scanning it.
+
+    A container is "done" (excluded from both) once it's finished —
+    Container.status == 'received', stamped at scan-sheet finish. Whether a
+    scan sheet is merely open (in_progress) is reported per row so the UI
+    can distinguish "not started" from "in progress."
+    """
+    # container_ids that already have a tally row (one per container).
+    tally_ids = set(
+        (await session.scalars(select(TallySheet.container_id))).all()
+    )
+
+    # Inbound receipts grouped by container → is any completed, do any exist?
+    # Used to derive scan_status without trusting a single status string.
+    receipt_rows = (
+        await session.execute(
+            select(
+                Receipt.container_id,
+                func.bool_or(Receipt.status == "completed").label("any_done"),
+            )
+            .where(Receipt.container_id.is_not(None))
+            .where(Receipt.kind == "inbound")
+            .group_by(Receipt.container_id)
+        )
+    ).all()
+    receipt_done: dict[int, bool] = {cid: bool(done) for cid, done in receipt_rows}
+
+    # Candidate containers: anything not already finished. Eager-load the
+    # DO → WHPO → Customer chain and lines (for the expected-qty rollup).
+    containers = (
+        await session.scalars(
+            select(Container)
+            .where(Container.status != "received")
+            .options(
+                selectinload(Container.do)
+                .selectinload(DO.whpo)
+                .selectinload(WHPO.customer),
+                selectinload(Container.lines),
+            )
+        )
+    ).all()
+
+    awaiting_tally: list[PipelineContainer] = []
+    awaiting_scan: list[PipelineContainer] = []
+
+    for c in containers:
+        # Skip anything that's effectively scanned-and-done (defensive: a
+        # completed receipt without the status stamp shouldn't show up).
+        if receipt_done.get(c.id):
+            continue
+
+        do = c.do
+        whpo = do.whpo if do else None
+        customer = whpo.customer if whpo else None
+
+        scan_status = "in_progress" if c.id in receipt_done else "none"
+        item = PipelineContainer(
+            container_id=c.id,
+            container_no=c.container_no,
+            customer_name=customer.name if customer else "—",
+            whpo_number=whpo.whpo_number if whpo else "—",
+            do_number=do.do_number if do else "—",
+            expected_arrival_date=c.expected_arrival_date,
+            total_expected=sum(ln.qty for ln in c.lines),
+            driver_info_received=c.driver_info_received_at is not None,
+            scan_status=scan_status,
+        )
+        if c.id in tally_ids:
+            awaiting_scan.append(item)
+        else:
+            awaiting_tally.append(item)
+
+    # Soonest-arriving first; undated containers sink to the bottom.
+    def _sort_key(p: PipelineContainer):
+        return (p.expected_arrival_date is None, p.expected_arrival_date or date.max, p.container_no)
+
+    awaiting_tally.sort(key=_sort_key)
+    awaiting_scan.sort(key=_sort_key)
+
+    return ReceivingPipelineResponse(
+        awaiting_tally=awaiting_tally,
+        awaiting_scan=awaiting_scan,
+    )
 
 
 # ─── Dashboard ──────────────────────────────────────────────────────────

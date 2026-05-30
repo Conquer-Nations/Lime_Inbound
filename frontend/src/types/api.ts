@@ -281,6 +281,25 @@ export interface ResolveExceptionResponse {
   do_status_changed: boolean
 }
 
+// ─── Receiving pipeline ───────────────────────────────────────────────
+
+export interface PipelineContainer {
+  container_id: number
+  container_no: string
+  customer_name: string
+  whpo_number: string
+  do_number: string
+  expected_arrival_date: string | null
+  total_expected: number
+  driver_info_received: boolean
+  scan_status: 'none' | 'in_progress'
+}
+
+export interface ReceivingPipelineResponse {
+  awaiting_tally: PipelineContainer[]
+  awaiting_scan: PipelineContainer[]
+}
+
 // ─── Dashboard ────────────────────────────────────────────────────────
 
 export interface DashboardKPIs {

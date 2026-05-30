@@ -41,6 +41,7 @@ from app.schemas.manager import (
     ExceptionItem,
     LotDetail,
     LotMapItem,
+    ReceivingPipelineResponse,
     ResolveExceptionRequest,
     ResolveExceptionResponse,
     SKUAdminCreateRequest,
@@ -54,6 +55,7 @@ from app.services.manager import (
     get_dashboard,
     get_do_detail,
     get_lot_detail,
+    get_receiving_pipeline,
     list_dos,
     list_exceptions,
     list_lots,
@@ -66,6 +68,12 @@ router = APIRouter(prefix="/manager", tags=["manager"])
 @router.get("/dashboard", response_model=DashboardResponse)
 async def dashboard(session: AsyncSession = Depends(get_session)):
     return await get_dashboard(session)
+
+
+@router.get("/receiving-pipeline", response_model=ReceivingPipelineResponse)
+async def receiving_pipeline(session: AsyncSession = Depends(get_session)):
+    """Manager worklists: containers awaiting a tally vs. tallied-but-not-scanned."""
+    return await get_receiving_pipeline(session)
 
 
 @router.get("/dos", response_model=list[DOListItem])

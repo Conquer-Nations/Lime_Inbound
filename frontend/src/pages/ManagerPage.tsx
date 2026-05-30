@@ -16,6 +16,7 @@ import ManagerSidebar from '../components/ManagerSidebar'
 import type { NavCategory } from '../components/ManagerSidebar'
 import ResolveExceptionModal from '../components/ResolveExceptionModal'
 import MasterList from '../components/MasterList'
+import ReceivingPipeline from '../components/ReceivingPipeline'
 import SkuAdmin from '../components/SkuAdmin'
 import TallySheetsAdmin from '../components/TallySheetsAdmin'
 import WarehouseInventory from '../components/WarehouseInventory'
@@ -33,6 +34,7 @@ type Tab =
   | 'lots'
   | 'exceptions'
   | 'inbound'
+  | 'pipeline'
   | 'skus'
   | 'accounts'
   | 'tally'
@@ -71,6 +73,7 @@ const NAV_CATEGORIES: NavCategory[] = [
     icon: 'receiving',
     items: [
       { key: 'dos', label: 'Delivery Orders' },
+      { key: 'pipeline', label: 'Receiving Pipeline' },
       { key: 'inbound', label: 'Inbound Data' },
       { key: 'tally', label: 'Tally Sheets' },
       { key: 'exceptions', label: 'Exceptions' },
@@ -174,6 +177,7 @@ export default function ManagerPage() {
         {tab === 'tos' && <TOsTab />}
         {tab === 'lots' && <LotsTab data={lots} />}
         {tab === 'inbound' && <InboundView />}
+        {tab === 'pipeline' && <ReceivingPipeline />}
         {tab === 'accounts' && <AccountAdmin />}
         {tab === 'skus' && <SkuAdmin />}
         {tab === 'tally' && <TallySheetsAdmin />}

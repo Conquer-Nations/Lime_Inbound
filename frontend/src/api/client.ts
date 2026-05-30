@@ -8,6 +8,7 @@ import type {
   FinishResponse,
   LotDetail,
   LotMapItem,
+  ReceivingPipelineResponse,
   ResolveExceptionRequest,
   ResolveExceptionResponse,
   ScanResponse,
@@ -289,6 +290,9 @@ export const api = {
 
   // Manager
   getDashboard: () => request<DashboardResponse>('/manager/dashboard'),
+
+  getReceivingPipeline: () =>
+    request<ReceivingPipelineResponse>('/manager/receiving-pipeline'),
 
   listDOs: (params?: {
     status?: string

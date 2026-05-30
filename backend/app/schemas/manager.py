@@ -182,6 +182,38 @@ class ResolveExceptionResponse(BaseModel):
     do_status_changed: bool
 
 
+# ─── Receiving pipeline (awaiting tally / awaiting scan) ─────────────────
+
+
+class PipelineContainer(BaseModel):
+    """One arriving container that hasn't finished receiving yet, with just
+    enough context for a manager to act. Used by both pipeline buckets."""
+    container_id: int
+    container_no: str
+    customer_name: str
+    whpo_number: str
+    do_number: str
+    expected_arrival_date: date | None
+    total_expected: int
+    # Has the vendor filled driver/truck info in their portal yet? A strong
+    # "it's about to arrive, tally it" signal for the awaiting-tally bucket.
+    driver_info_received: bool
+    # 'none'  = operator hasn't opened a scan sheet
+    # 'in_progress' = scan sheet open but not finished
+    scan_status: str
+
+
+class ReceivingPipelineResponse(BaseModel):
+    """Two cohorts of in-flight containers:
+      - awaiting_tally: vendor submitted it, but we haven't filed a tally
+        (POD) yet and it isn't scanned. Needs a manager to file the tally.
+      - awaiting_scan: tally filed ("received") but the operator hasn't
+        finished scanning it.
+    Both exclude containers already finished (status='received')."""
+    awaiting_tally: list[PipelineContainer]
+    awaiting_scan: list[PipelineContainer]
+
+
 # ─── Dashboard ──────────────────────────────────────────────────────────
 
 
