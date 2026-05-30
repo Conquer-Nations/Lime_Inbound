@@ -61,6 +61,12 @@ def _invalidate_users_cache() -> None:
 # retry, so don't surface them to the user on the first blip.
 _MAX_ATTEMPTS = 3
 _RETRY_STATUSES = {429, 502, 503, 504}
+# Per-attempt HTTP timeout. Kept short so a HUNG upstream (Excel quota
+# exhausted / Office Scripts not responding) fails the login fast: with
+# 3 retries the worst case is ~3*8s + backoff ≈ 25s, instead of the 90s+
+# we saw when each attempt waited the full 30s on a dead connector. A
+# healthy call returns in 1-3s, well under this.
+_ATTEMPT_TIMEOUT_SECONDS = 8.0
 
 
 def _parse_ops_response(r: httpx.Response) -> Any:
@@ -104,7 +110,7 @@ async def _call_ops(action: str, payload: dict[str, Any] | None = None) -> Any:
     last_err: VendorExcelError | None = None
     for attempt in range(1, _MAX_ATTEMPTS + 1):
         try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
+            async with httpx.AsyncClient(timeout=_ATTEMPT_TIMEOUT_SECONDS) as client:
                 r = await client.post(settings.onedrive_vendors_ops_url, json=body)
         except Exception as e:
             # Network / timeout — transient, retry.
