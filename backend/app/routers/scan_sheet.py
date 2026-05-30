@@ -12,7 +12,6 @@ fully migrate.
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from datetime import date, datetime, timezone
 
@@ -885,91 +884,19 @@ async def record_scan_row(
     sku_default = _container_sku(container) or body.sku
     row = _scan_to_row(scan, container.container_no, sku_default, box)
 
-    # Best-effort: mirror the sheet to OneDrive so the manager's workbook
-    # reflects scans as they happen. DEBOUNCED — pushing on every single scan
-    # made one Excel-connector call per scan, which drained the shared daily
-    # Excel Online call-volume quota on big containers (and took vendor login
-    # down with it). We now coalesce rapid scans into one push per window.
-    # OneDrive latency never blocks the operator's scan loop either way; the
-    # authoritative full push still happens on /finish.
-    try:
-        from app.services import scan_sheet_onedrive
-
-        if scan_sheet_onedrive.is_configured():
-            _schedule_live_push(receipt_id)
-    except Exception as e:
-        logger.warning("scan-sheet live OneDrive task spawn failed: %s", e)
+    # NOTE: we intentionally do NOT push to OneDrive on every scan. Scans are
+    # the source of truth in Postgres; the Excel workbook only needs the final
+    # picture. The authoritative full push to OneDrive happens once, on
+    # /finish, when the operator completes the receipt. Pushing per-scan made
+    # one Excel-connector call per scan, which drained the shared daily Excel
+    # Online call-volume quota on big containers (and took vendor login down
+    # with it). One bulk push per container removes that failure mode entirely.
 
     return RecordScanResponse(
         accepted=True,
         row=row,
         total_scanned=total,
     )
-
-
-# ─── Debounced live OneDrive push ──────────────────────────────────────
-# Scans arrive in rapid bursts; the OneDrive mirror only needs to be
-# eventually-consistent. Collapse all scans for a receipt within a short
-# window into a single push so we make ~1 Excel-connector call per window
-# instead of one per scan. The final /finish push is authoritative.
-_LIVE_PUSH_DEBOUNCE_SECONDS = 30.0
-_live_push_tasks: dict[int, asyncio.Task] = {}
-
-
-def _schedule_live_push(receipt_id: int) -> None:
-    """Ensure exactly one pending debounced push per receipt. If a push is
-    already scheduled, this scan will be captured when it fires (the push
-    reads the full current row set from the DB), so we don't schedule a
-    second one."""
-    existing = _live_push_tasks.get(receipt_id)
-    if existing is not None and not existing.done():
-        return
-    _live_push_tasks[receipt_id] = asyncio.create_task(
-        _debounced_live_push(receipt_id)
-    )
-
-
-async def _debounced_live_push(receipt_id: int) -> None:
-    try:
-        await asyncio.sleep(_LIVE_PUSH_DEBOUNCE_SECONDS)
-        await _push_live_to_onedrive(receipt_id)
-    except Exception as e:  # noqa: BLE001 — never let a mirror push surface
-        logger.warning("debounced live push failed for receipt %s: %s", receipt_id, e)
-    finally:
-        _live_push_tasks.pop(receipt_id, None)
-
-
-async def _push_live_to_onedrive(receipt_id: int) -> None:
-    """Best-effort live push: opens its own DB session, builds the detail,
-    POSTs to the Logic App. Never raises — errors are logged."""
-    from app.db import SessionLocal
-    from app.services import scan_sheet_onedrive
-
-    try:
-        async with SessionLocal() as s:
-            r, c, w, d = await _load_receipt_context(s, receipt_id)
-            rows_q = await s.scalars(
-                select(Scan)
-                .where(Scan.receipt_id == receipt_id)
-                .where(Scan.serial_number.isnot(None))
-                .order_by(Scan.scanned_at.asc())
-            )
-            is_scooter = _container_uses_box_numbers(c)
-            sku_default = _container_sku(c)
-            rows = [
-                _scan_to_row(
-                    scan, c.container_no, sku_default,
-                    _box_for_index(idx) if is_scooter else None,
-                )
-                for idx, scan in enumerate(rows_q.all())
-            ]
-            detail = AuditSheetDetail(
-                header=_build_header(r, c, w, d),
-                rows=rows,
-            )
-            await scan_sheet_onedrive.push_scan_sheet(detail)
-    except Exception as e:
-        logger.warning("live OneDrive push failed for receipt %s: %s", receipt_id, e)
 
 
 @router.post("/{receipt_id}/finish", response_model=FinishSheetResponse)
