@@ -814,6 +814,41 @@ class OutboundScan(Base):
     inbound_scan: Mapped[Scan | None] = relationship()
 
 
+# ─── Vendor portal accounts ─────────────────────────────────────────────
+
+
+class VendorUser(Base):
+    """Self-service vendor portal login.
+
+    Postgres is the source of truth for vendor accounts. Historically these
+    lived only in an OneDrive Excel workbook fronted by a Logic App, which
+    made every login depend on the Excel Online connector's daily call-volume
+    quota — when that quota ran out, the whole portal locked out. We migrated
+    auth to this table; the Excel store is now only consulted as a lazy
+    fallback for accounts that predate the migration (each such account is
+    copied here on its next successful login).
+
+    Email is normalized to lowercase and unique."""
+
+    __tablename__ = "vendor_users"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    email: Mapped[str] = mapped_column(String(255), unique=True, index=True)
+    full_name: Mapped[str] = mapped_column(String(200), default="")
+    company: Mapped[str] = mapped_column(String(200), default="")
+    password_hash: Mapped[str] = mapped_column(String(255))
+    registered_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # True for rows copied out of the legacy Excel store by the lazy
+    # migration, so we can tell native registrations from migrated ones.
+    migrated_from_excel: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
 __all__ = [
     "Account",
     "Customer",
@@ -837,4 +872,6 @@ __all__ = [
     "OutboundLineSerial",
     "OutboundContainer",
     "OutboundScan",
+    # Vendor portal
+    "VendorUser",
 ]

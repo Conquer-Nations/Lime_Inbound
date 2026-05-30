@@ -1,7 +1,12 @@
 """Vendor self-service auth — register, login, who-am-I.
 
-Excel is the user store. Backend keeps no Postgres mirror — every register
-appends a row to the OneDrive workbook, every login reads & verifies.
+Postgres (`vendor_users` table) is the source of truth for vendor accounts.
+Historically accounts lived only in an OneDrive Excel workbook, which made
+every login depend on the Excel Online connector's daily call-volume quota —
+when it ran out, the portal locked everyone out. Auth now reads/writes
+Postgres; the Excel store (`vendor_excel`) is consulted only as a lazy
+fallback for accounts created before this migration, and each such account
+is copied into Postgres on its next successful login or password reset.
 """
 
 from __future__ import annotations
@@ -24,7 +29,22 @@ from app.schemas.vendor_auth import (
     TokenResponse,
     VendorUserResponse,
 )
-from app.services import vendor_auth_service, vendor_excel
+from app.services import vendor_auth_service, vendor_excel, vendor_users
+
+
+def _parse_iso(value: str | None) -> datetime | None:
+    """Best-effort parse of the legacy Excel `registered_at` ISO string into a
+    datetime for migration. Returns None on anything unparseable so the new
+    row falls back to its server_default (now())."""
+    if not value:
+        return None
+    try:
+        dt = datetime.fromisoformat(value.strip())
+    except (ValueError, AttributeError):
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt
 
 logger = logging.getLogger(__name__)
 
@@ -60,44 +80,52 @@ async def register(
     body: RegisterRequest,
     session: AsyncSession = Depends(get_session),
 ):
-    if not vendor_excel.is_configured():
-        raise HTTPException(
-            status_code=503,
-            detail=(
-                "Vendor user storage isn't configured yet — backend admin "
-                "needs to wire ONEDRIVE_VENDORS_OPS_URL."
-            ),
-        )
-
     email_norm = body.email.strip().lower()
 
-    try:
-        existing = await vendor_excel.find_by_email(email_norm)
-    except vendor_excel.VendorExcelError as e:
-        raise HTTPException(status_code=502, detail=str(e))
-
-    if existing:
+    # Postgres is authoritative — reject if the account already exists here.
+    existing = await vendor_users.find_by_email(session, email_norm)
+    if existing is not None:
         raise HTTPException(
             status_code=409,
             detail=(
                 f"You already have an account ({email_norm}) registered to "
-                f"{existing.get('company', 'your company')}. Sign in instead."
+                f"{existing.company or 'your company'}. Sign in instead."
             ),
         )
 
-    pwd_hash = vendor_auth_service.hash_password(body.password)
-    now_iso = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    # Also reject if the email exists in the legacy Excel store but hasn't been
+    # migrated yet — otherwise we'd create a duplicate. Best-effort: if Excel is
+    # unreachable we proceed, since Postgres is the source of truth now.
+    if vendor_excel.is_configured():
+        try:
+            excel_existing = await vendor_excel.find_by_email(email_norm)
+        except vendor_excel.VendorExcelError as e:
+            logger.warning(
+                "register: legacy Excel dup-check failed for %s (proceeding): %s",
+                email_norm, e,
+            )
+            excel_existing = None
+        if excel_existing:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"You already have an account ({email_norm}) registered to "
+                    f"{excel_existing.get('company', 'your company')}. "
+                    "Sign in instead."
+                ),
+            )
 
-    try:
-        await vendor_excel.append_user(
-            email=email_norm,
-            full_name=body.full_name,
-            company=body.company,
-            password_hash=pwd_hash,
-            registered_at=now_iso,
-        )
-    except vendor_excel.VendorExcelError as e:
-        raise HTTPException(status_code=502, detail=str(e))
+    pwd_hash = vendor_auth_service.hash_password(body.password)
+
+    await vendor_users.create_user(
+        session,
+        email=email_norm,
+        full_name=body.full_name,
+        company=body.company,
+        password_hash=pwd_hash,
+        registered_at=datetime.now(timezone.utc),
+    )
+    await session.commit()
 
     # Auto-create the Postgres customer record so the vendor can immediately
     # submit shipments under this company without a manager pre-seeding it.
@@ -105,8 +133,9 @@ async def register(
         await _ensure_customer(session, body.company)
         await session.commit()
     except Exception as e:
-        # Don't fail registration on this — the user is already in Excel.
+        # Don't fail registration on this — the user is already saved above.
         logger.warning("Auto-create customer failed for '%s': %s", body.company, e)
+        await session.rollback()
 
     token = vendor_auth_service.create_access_token(
         email=email_norm, full_name=body.full_name, company=body.company
@@ -186,46 +215,67 @@ async def my_brands(
 
 
 @router.post("/login", response_model=TokenResponse)
-async def login(body: LoginRequest):
-    if not vendor_excel.is_configured():
-        raise HTTPException(
-            status_code=503,
-            detail="Vendor user storage isn't configured yet.",
-        )
-
+async def login(
+    body: LoginRequest,
+    session: AsyncSession = Depends(get_session),
+):
     email_norm = body.email.strip().lower()
 
-    try:
-        user = await vendor_excel.find_by_email(email_norm)
-    except vendor_excel.VendorExcelError as e:
-        raise HTTPException(status_code=502, detail=str(e))
+    # 1) Postgres first (authoritative, quota-free).
+    user = await vendor_users.find_by_email(session, email_norm)
 
-    if not user or not vendor_auth_service.verify_password(
-        body.password, user.get("password_hash", "")
+    resolved_hash: str | None = None
+    full_name = ""
+    company = ""
+    excel_user: dict | None = None
+
+    if user is not None:
+        resolved_hash = user.password_hash
+        full_name = user.full_name
+        company = user.company
+    elif vendor_excel.is_configured():
+        # 2) Lazy fallback: account may predate the Postgres migration.
+        try:
+            excel_user = await vendor_excel.find_by_email(email_norm)
+        except vendor_excel.VendorExcelError as e:
+            raise HTTPException(status_code=502, detail=str(e))
+        if excel_user is not None:
+            resolved_hash = excel_user.get("password_hash", "")
+            full_name = excel_user.get("full_name", "")
+            company = excel_user.get("company", "")
+
+    if not resolved_hash or not vendor_auth_service.verify_password(
+        body.password, resolved_hash
     ):
-        # Same error for both → don't reveal whether the email exists.
+        # Same error whether the email is unknown or the password is wrong →
+        # don't reveal whether the account exists.
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Wrong email or password.",
         )
 
-    full_name = user.get("full_name", "")
-    company = user.get("company", "")
+    # Password checked out. If this was an un-migrated Excel account, copy it
+    # into Postgres now so future logins never touch Excel again.
+    if user is None and excel_user is not None:
+        try:
+            await vendor_users.create_user(
+                session,
+                email=email_norm,
+                full_name=full_name,
+                company=company,
+                password_hash=resolved_hash,
+                registered_at=_parse_iso(excel_user.get("registered_at")),
+                migrated_from_excel=True,
+            )
+            await session.commit()
+            logger.info("Lazily migrated vendor account %s from Excel", email_norm)
+        except Exception as e:  # noqa: BLE001 — never block login on migration
+            logger.warning("lazy-migrate of %s failed: %s", email_norm, e)
+            await session.rollback()
 
     # Fire-and-forget the last_login_at write so login returns immediately.
-    # The Logic App round-trip used to add 1-3 seconds to every login — we don't
-    # need to block the response on it. Failures are logged, not surfaced.
-    async def _bump_last_login() -> None:
-        try:
-            await vendor_excel.update_last_login(
-                email_norm, datetime.now(timezone.utc).isoformat(timespec="seconds")
-            )
-        except vendor_excel.VendorExcelError as e:
-            logger.warning("update_last_login failed for %s: %s", email_norm, e)
-        except Exception as e:  # noqa: BLE001
-            logger.warning("update_last_login crashed for %s: %s", email_norm, e)
-
-    asyncio.create_task(_bump_last_login())
+    # (No-ops harmlessly if the lazy migration above didn't land.)
+    asyncio.create_task(vendor_users.bump_last_login_bg(email_norm))
 
     token = vendor_auth_service.create_access_token(
         email=email_norm, full_name=full_name, company=company
@@ -251,52 +301,64 @@ async def me(
 
 
 @router.post("/reset-password", response_model=TokenResponse)
-async def reset_password(body: ResetPasswordRequest):
+async def reset_password(
+    body: ResetPasswordRequest,
+    session: AsyncSession = Depends(get_session),
+):
     """Self-service password reset. Vendor provides their email + a new
-    password; backend overwrites the bcrypt hash in the VendorUsers table and
-    issues a fresh JWT (auto-login).
+    password; backend overwrites the bcrypt hash in Postgres and issues a
+    fresh JWT (auto-login). If the account only exists in the legacy Excel
+    store, it's migrated into Postgres with the new password.
 
     NOTE: there's no email-verification step — anyone who knows a vendor's
     email can reset their password. This is acceptable for a small internal
     portal but should be upgraded to email-link verification before going
     production. Tracked as a known limitation.
     """
-    if not vendor_excel.is_configured():
-        raise HTTPException(
-            status_code=503,
-            detail="Vendor user storage isn't configured yet.",
-        )
-
     email_norm = body.email.strip().lower()
-
-    try:
-        existing = await vendor_excel.find_by_email(email_norm)
-    except vendor_excel.VendorExcelError as e:
-        raise HTTPException(status_code=502, detail=str(e))
-
-    if not existing:
-        raise HTTPException(
-            status_code=404,
-            detail=(
-                f"No account found for {email_norm}. Register first or check "
-                "the email you typed."
-            ),
-        )
-
     new_hash = vendor_auth_service.hash_password(body.new_password)
-    try:
-        updated = await vendor_excel.update_password(email_norm, new_hash)
-    except vendor_excel.VendorExcelError as e:
-        raise HTTPException(status_code=502, detail=str(e))
 
-    if updated < 1:
-        raise HTTPException(
-            status_code=502,
-            detail="Password reset reported 0 rows updated — Excel sync issue.",
+    # 1) Postgres first.
+    user = await vendor_users.find_by_email(session, email_norm)
+    if user is not None:
+        updated = await vendor_users.update_password(session, email_norm, new_hash)
+        await session.commit()
+        if updated < 1:
+            raise HTTPException(
+                status_code=500,
+                detail="Password reset reported 0 rows updated.",
+            )
+        full_name = user.full_name
+        company = user.company
+    else:
+        # 2) Legacy Excel account — migrate it into Postgres with the new hash.
+        excel_user: dict | None = None
+        if vendor_excel.is_configured():
+            try:
+                excel_user = await vendor_excel.find_by_email(email_norm)
+            except vendor_excel.VendorExcelError as e:
+                raise HTTPException(status_code=502, detail=str(e))
+        if not excel_user:
+            raise HTTPException(
+                status_code=404,
+                detail=(
+                    f"No account found for {email_norm}. Register first or "
+                    "check the email you typed."
+                ),
+            )
+        full_name = excel_user.get("full_name", "")
+        company = excel_user.get("company", "")
+        await vendor_users.create_user(
+            session,
+            email=email_norm,
+            full_name=full_name,
+            company=company,
+            password_hash=new_hash,
+            registered_at=_parse_iso(excel_user.get("registered_at")),
+            migrated_from_excel=True,
         )
+        await session.commit()
 
-    full_name = existing.get("full_name", "")
-    company = existing.get("company", "")
     token = vendor_auth_service.create_access_token(
         email=email_norm, full_name=full_name, company=company
     )
