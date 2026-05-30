@@ -15,23 +15,63 @@ writing. Re-run with --commit to actually insert.
 Idempotent: skips any email that already exists in `vendor_users`. Safe to
 re-run; it only ever adds missing accounts.
 
-Reads the same env the app uses (DATABASE_URL, ONEDRIVE_VENDORS_OPS_URL),
-so run it where those are set — e.g. the App Service SSH console
-(`cd /home/site/wwwroot && python scripts/migrate_vendor_users_to_pg.py`)
+Two source modes:
+
+  • Connector (default): reads the accounts via the Excel Online connector
+    in one `list` call. Needs ONEDRIVE_VENDORS_OPS_URL and counts against the
+    connector's daily quota. Use when the connector is healthy.
+
+  • CSV (--csv PATH): reads the accounts from a CSV you exported by opening
+    the workbook directly (File → Save As → CSV, or copy the VendorUsers
+    table). This bypasses the connector and its quota entirely — use it when
+    the connector is throttled/down. Expected header columns (case-insensitive,
+    extra columns ignored):
+        email, full_name, company, password_hash, registered_at, last_login_at
+
+Reads DATABASE_URL from the same env the app uses, so run it where that's
+set — e.g. the App Service SSH console
+(`cd /home/site/wwwroot && python scripts/migrate_vendor_users_to_pg.py …`)
 or locally with backend/.env loaded.
 
 Usage:
-    python scripts/migrate_vendor_users_to_pg.py            # dry-run
-    python scripts/migrate_vendor_users_to_pg.py --commit   # write
+    python scripts/migrate_vendor_users_to_pg.py                      # dry-run, connector
+    python scripts/migrate_vendor_users_to_pg.py --commit             # write, connector
+    python scripts/migrate_vendor_users_to_pg.py --csv users.csv      # dry-run, CSV
+    python scripts/migrate_vendor_users_to_pg.py --csv users.csv --commit
 """
 from __future__ import annotations
 
 import argparse
 import asyncio
+import csv
 from datetime import datetime, timezone
 
 from app.db import SessionLocal
 from app.services import vendor_excel, vendor_users
+
+
+def _load_csv(path: str) -> list[dict]:
+    """Read vendor accounts from a CSV into the same dict shape the connector
+    returns. Header matching is case-insensitive; unknown columns are ignored."""
+    wanted = {
+        "email", "full_name", "company",
+        "password_hash", "registered_at", "last_login_at",
+    }
+    rows: list[dict] = []
+    with open(path, newline="", encoding="utf-8-sig") as f:
+        reader = csv.DictReader(f)
+        # Map the file's actual headers to our canonical lowercase names.
+        header_map = {
+            (h or "").strip().lower(): h
+            for h in (reader.fieldnames or [])
+        }
+        for raw in reader:
+            row = {}
+            for key in wanted:
+                src = header_map.get(key)
+                row[key] = (raw.get(src) or "").strip() if src else ""
+            rows.append(row)
+    return rows
 
 
 def _parse_iso(value: str | None) -> datetime | None:
@@ -46,15 +86,20 @@ def _parse_iso(value: str | None) -> datetime | None:
     return dt
 
 
-async def run(commit: bool) -> int:
-    if not vendor_excel.is_configured():
-        print("ERROR: ONEDRIVE_VENDORS_OPS_URL is not configured — nothing to "
-              "read from Excel.")
-        return 1
-
-    print("Reading vendor accounts from Excel (single connector call)…")
-    excel_rows = await vendor_excel.list_users(force_refresh=True)
-    print(f"  Excel returned {len(excel_rows)} account(s).")
+async def run(commit: bool, csv_path: str | None) -> int:
+    if csv_path:
+        print(f"Reading vendor accounts from CSV: {csv_path}")
+        excel_rows = _load_csv(csv_path)
+        print(f"  CSV contained {len(excel_rows)} row(s).")
+    else:
+        if not vendor_excel.is_configured():
+            print("ERROR: ONEDRIVE_VENDORS_OPS_URL is not configured — nothing "
+                  "to read from Excel. (Use --csv PATH to import from a file "
+                  "instead.)")
+            return 1
+        print("Reading vendor accounts from Excel (single connector call)…")
+        excel_rows = await vendor_excel.list_users(force_refresh=True)
+        print(f"  Excel returned {len(excel_rows)} account(s).")
 
     to_insert: list[dict] = []
     skipped_existing = 0
@@ -106,8 +151,16 @@ def main() -> None:
         action="store_true",
         help="Actually write rows (default is dry-run).",
     )
+    ap.add_argument(
+        "--csv",
+        dest="csv_path",
+        default=None,
+        metavar="PATH",
+        help="Import from a CSV file instead of the Excel connector "
+             "(bypasses the connector quota).",
+    )
     args = ap.parse_args()
-    raise SystemExit(asyncio.run(run(args.commit)))
+    raise SystemExit(asyncio.run(run(args.commit, args.csv_path)))
 
 
 if __name__ == "__main__":
