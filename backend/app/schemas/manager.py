@@ -257,6 +257,25 @@ class OperatorStat(BaseModel):
     scans: int
 
 
+class OperatorContainerItem(BaseModel):
+    """One container an operator scanned during a given day, with how many
+    of that operator's scans landed on it. Powers the Top-Operators
+    drilldown on the dashboard."""
+
+    container_no: str
+    scans: int
+    status: str | None = None
+    customer_name: str | None = None
+    last_scan_at: datetime | None = None
+
+
+class OperatorContainersResponse(BaseModel):
+    actor: str
+    day: date
+    total_scans: int
+    containers: list[OperatorContainerItem] = []
+
+
 class DashboardResponse(BaseModel):
     today: date
     kpis: DashboardKPIs

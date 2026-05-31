@@ -41,6 +41,7 @@ from app.schemas.manager import (
     ExceptionItem,
     LotDetail,
     LotMapItem,
+    OperatorContainersResponse,
     ReceivingPipelineResponse,
     ResolveExceptionRequest,
     ResolveExceptionResponse,
@@ -55,6 +56,7 @@ from app.services.manager import (
     get_dashboard,
     get_do_detail,
     get_lot_detail,
+    get_operator_containers,
     get_receiving_pipeline,
     list_dos,
     list_exceptions,
@@ -68,6 +70,19 @@ router = APIRouter(prefix="/manager", tags=["manager"])
 @router.get("/dashboard", response_model=DashboardResponse)
 async def dashboard(session: AsyncSession = Depends(get_session)):
     return await get_dashboard(session)
+
+
+@router.get("/operators/{actor}/containers", response_model=OperatorContainersResponse)
+async def operator_containers(
+    actor: str,
+    day: date | None = Query(None, description="Warehouse-local day (YYYY-MM-DD); defaults to today"),
+    session: AsyncSession = Depends(get_session),
+):
+    """Drilldown for the dashboard Top-Operators leaderboard: which
+    containers this operator scanned on `day`, with per-container scan
+    counts. Each row links to the existing container-detail page for the
+    full scan log."""
+    return await get_operator_containers(session, actor, day=day)
 
 
 @router.get("/receiving-pipeline", response_model=ReceivingPipelineResponse)

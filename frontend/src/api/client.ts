@@ -4,6 +4,7 @@ import type {
   DODetail,
   DOListItem,
   DashboardResponse,
+  OperatorContainersResponse,
   ExceptionItem,
   FinishResponse,
   LotDetail,
@@ -290,6 +291,13 @@ export const api = {
 
   // Manager
   getDashboard: () => request<DashboardResponse>('/manager/dashboard'),
+
+  getOperatorContainers: (actor: string, day?: string) =>
+    request<OperatorContainersResponse>(
+      `/manager/operators/${encodeURIComponent(actor)}/containers${
+        day ? `?day=${encodeURIComponent(day)}` : ''
+      }`,
+    ),
 
   getReceivingPipeline: () =>
     request<ReceivingPipelineResponse>('/manager/receiving-pipeline'),

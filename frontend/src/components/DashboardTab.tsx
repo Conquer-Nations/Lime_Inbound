@@ -1,7 +1,11 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import { api } from '../api/client'
-import type { DashboardResponse, TodaySummary } from '../types/api'
+import type {
+  DashboardResponse,
+  OperatorContainerItem,
+  TodaySummary,
+} from '../types/api'
 
 const REFRESH_MS = 10_000
 
@@ -376,10 +380,13 @@ function formatHour(h: number): string {
   return `${h - 12} PM`
 }
 
-/** Top scanning operators today. Empty state nudges to expect activity
- *  as the shift ramps up. */
+/** Top scanning operators today. Click a name to drill into the
+ *  containers that operator scanned today; each container links to its
+ *  full scan-detail page. Empty state nudges to expect activity as the
+ *  shift ramps up. */
 function OperatorsPanel({ ops }: { ops: { actor: string; scans: number }[] }) {
   const peak = ops[0]?.scans ?? 0
+  const [open, setOpen] = useState<string | null>(null)
   return (
     <div
       className="bg-white rounded-xl border border-slate-200 overflow-hidden"
@@ -401,34 +408,123 @@ function OperatorsPanel({ ops }: { ops: { actor: string; scans: number }[] }) {
         <ul className="divide-y divide-slate-100">
           {ops.map((o, i) => {
             const pct = peak === 0 ? 0 : Math.round((o.scans / peak) * 100)
+            const isOpen = open === o.actor
             return (
-              <li key={o.actor} className="px-4 py-2.5">
-                <div className="flex items-center gap-2 mb-1">
-                  <span
-                    className={`inline-flex items-center justify-center w-5 h-5 rounded-full text-[10px] font-bold ${
-                      i === 0
-                        ? 'bg-[#0093D0] text-white'
-                        : 'bg-slate-100 text-slate-700'
-                    }`}
-                  >
-                    {i + 1}
-                  </span>
-                  <span className="text-sm font-semibold text-[#1B4676] capitalize truncate flex-1">
-                    {o.actor}
-                  </span>
-                  <span className="text-sm font-mono font-bold tabular-nums text-slate-800">
-                    {o.scans}
-                  </span>
-                </div>
-                <div className="h-1 bg-slate-100 rounded-full overflow-hidden ml-7">
-                  <div
-                    className="h-full bg-[#0093D0]/70 rounded-full"
-                    style={{ width: `${pct}%` }}
-                  />
-                </div>
+              <li key={o.actor}>
+                <button
+                  type="button"
+                  onClick={() => setOpen(isOpen ? null : o.actor)}
+                  aria-expanded={isOpen}
+                  className="w-full text-left px-4 py-2.5 hover:bg-slate-50 transition-colors focus:outline-none focus-visible:bg-slate-50"
+                >
+                  <div className="flex items-center gap-2 mb-1">
+                    <span
+                      className={`inline-flex items-center justify-center w-5 h-5 rounded-full text-[10px] font-bold ${
+                        i === 0
+                          ? 'bg-[#0093D0] text-white'
+                          : 'bg-slate-100 text-slate-700'
+                      }`}
+                    >
+                      {i + 1}
+                    </span>
+                    <span className="text-sm font-semibold text-[#1B4676] capitalize truncate flex-1 underline decoration-dotted decoration-slate-300 underline-offset-2">
+                      {o.actor}
+                    </span>
+                    <svg
+                      className={`w-3.5 h-3.5 text-slate-400 transition-transform ${
+                        isOpen ? 'rotate-90' : ''
+                      }`}
+                      viewBox="0 0 20 20"
+                      fill="currentColor"
+                      aria-hidden="true"
+                    >
+                      <path
+                        fillRule="evenodd"
+                        d="M7.21 14.77a.75.75 0 0 1 .02-1.06L11.168 10 7.23 6.29a.75.75 0 1 1 1.04-1.08l4.5 4.25a.75.75 0 0 1 0 1.08l-4.5 4.25a.75.75 0 0 1-1.06-.02Z"
+                        clipRule="evenodd"
+                      />
+                    </svg>
+                    <span className="text-sm font-mono font-bold tabular-nums text-slate-800">
+                      {o.scans}
+                    </span>
+                  </div>
+                  <div className="h-1 bg-slate-100 rounded-full overflow-hidden ml-7">
+                    <div
+                      className="h-full bg-[#0093D0]/70 rounded-full"
+                      style={{ width: `${pct}%` }}
+                    />
+                  </div>
+                </button>
+                {isOpen && <OperatorDrilldown actor={o.actor} />}
               </li>
             )
           })}
+        </ul>
+      )}
+    </div>
+  )
+}
+
+/** Containers the operator scanned today. Lazy-loaded when their row is
+ *  expanded; each container deep-links to its scan-detail page. */
+function OperatorDrilldown({ actor }: { actor: string }) {
+  const [items, setItems] = useState<OperatorContainerItem[] | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    let alive = true
+    setItems(null)
+    setError(null)
+    api
+      .getOperatorContainers(actor)
+      .then((r) => alive && setItems(r.containers))
+      .catch((e) => alive && setError(String(e)))
+    return () => {
+      alive = false
+    }
+  }, [actor])
+
+  return (
+    <div className="bg-slate-50/70 border-t border-slate-100 px-4 py-2.5">
+      {error ? (
+        <p className="text-xs text-rose-600">Couldn’t load containers: {error}</p>
+      ) : items === null ? (
+        <p className="text-xs text-slate-400 italic">Loading containers…</p>
+      ) : items.length === 0 ? (
+        <p className="text-xs text-slate-400 italic">
+          No containers scanned today.
+        </p>
+      ) : (
+        <ul className="space-y-1">
+          {items.map((c) => (
+            <li key={c.container_no}>
+              <Link
+                to={`/manager/containers/${encodeURIComponent(c.container_no)}`}
+                className="flex items-center gap-2 px-2 py-1.5 rounded-lg bg-white border border-slate-200 hover:border-[#0093D0]/50 hover:bg-[#0093D0]/[0.03] transition-colors group"
+              >
+                <span className="font-mono text-xs font-semibold text-[#1B4676] truncate">
+                  {c.container_no}
+                </span>
+                {c.status && (
+                  <span className="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-slate-100 text-slate-500">
+                    {c.status}
+                  </span>
+                )}
+                {c.customer_name && (
+                  <span className="text-[11px] text-slate-400 truncate flex-1">
+                    {c.customer_name}
+                  </span>
+                )}
+                <span className="ml-auto text-xs font-mono font-bold tabular-nums text-slate-700">
+                  {c.scans}
+                  <span className="text-slate-400 font-normal"> scans</span>
+                </span>
+                <span className="text-[#0093D0] opacity-0 group-hover:opacity-100 transition-opacity text-xs">
+                  →
+                </span>
+              </Link>
+            </li>
+          ))}
         </ul>
       )}
     </div>

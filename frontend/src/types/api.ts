@@ -347,3 +347,18 @@ export interface DashboardResponse {
   hourly_scans?: number[]      // length 24 (PT)
   operators_today?: OperatorStat[]
 }
+
+export interface OperatorContainerItem {
+  container_no: string
+  scans: number
+  status?: string | null
+  customer_name?: string | null
+  last_scan_at?: string | null
+}
+
+export interface OperatorContainersResponse {
+  actor: string
+  day: string
+  total_scans: number
+  containers: OperatorContainerItem[]
+}

@@ -55,6 +55,8 @@ from app.schemas.manager import (
     ExceptionItem,
     LotDetail,
     LotMapItem,
+    OperatorContainerItem,
+    OperatorContainersResponse,
     OperatorStat,
     PalletInLot,
     PipelineContainer,
@@ -870,4 +872,62 @@ async def get_dashboard(session: AsyncSession) -> DashboardResponse:
         today_summary=today_summary,
         hourly_scans=hourly_buckets,
         operators_today=operators_today,
+    )
+
+
+async def get_operator_containers(
+    session: AsyncSession,
+    actor: str,
+    *,
+    day: date | None = None,
+) -> OperatorContainersResponse:
+    """Containers a given operator scanned on `day` (default: warehouse
+    today), with that operator's scan count per container. Powers the
+    Top-Operators dashboard drilldown: click a name → see their containers
+    → click a container → its full scan detail (existing container page).
+
+    Mirrors the dashboard's operator query: same warehouse-local day
+    bucketing, same `result == "ok"` filter so counts line up with the
+    "scans" number shown on the leaderboard.
+    """
+    if day is None:
+        day = _warehouse_today()
+
+    tz_scan = func.timezone("America/Los_Angeles", Scan.scanned_at)
+    rows = (
+        await session.execute(
+            select(
+                Container.container_no,
+                Container.status,
+                Customer.name,
+                func.count().label("scans"),
+                func.max(Scan.scanned_at).label("last_scan_at"),
+            )
+            .join(Container, Container.id == Scan.container_id)
+            .join(DO, DO.id == Container.do_id, isouter=True)
+            .join(WHPO, WHPO.id == DO.whpo_id, isouter=True)
+            .join(Customer, Customer.id == WHPO.customer_id, isouter=True)
+            .where(Scan.result == "ok")
+            .where(Scan.scanned_by == actor)
+            .where(cast(tz_scan, SqlDate) == day)
+            .group_by(Container.container_no, Container.status, Customer.name)
+            .order_by(func.max(Scan.scanned_at).desc())
+        )
+    ).all()
+
+    containers = [
+        OperatorContainerItem(
+            container_no=str(cno),
+            scans=int(cnt or 0),
+            status=status,
+            customer_name=cust,
+            last_scan_at=last,
+        )
+        for cno, status, cust, cnt, last in rows
+    ]
+    return OperatorContainersResponse(
+        actor=actor,
+        day=day,
+        total_scans=sum(c.scans for c in containers),
+        containers=containers,
     )
