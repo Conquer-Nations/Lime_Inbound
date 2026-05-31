@@ -580,6 +580,13 @@ class Scan(Base):
     receipt_id: Mapped[int | None] = mapped_column(ForeignKey("receipts.id"), index=True)
     pallet_id: Mapped[int | None] = mapped_column(ForeignKey("pallets.id"), index=True)
     container_id: Mapped[int | None] = mapped_column(ForeignKey("containers.id"), index=True)
+    # Which ContainerLine (LPN) this scan belongs to. Lets a mixed container
+    # be scanned in ONE sheet with correct per-LPN attribution + progress —
+    # the inbound analog of OutboundScan.outbound_line_id. Nullable so legacy
+    # scans (pre-mixed-container flow) and non-sheet scans still fit.
+    container_line_id: Mapped[int | None] = mapped_column(
+        ForeignKey("container_lines.id"), index=True
+    )
     sku_id: Mapped[int | None] = mapped_column(ForeignKey("skus.id"))
     item_barcode: Mapped[str] = mapped_column(String(120), index=True)
     serial_number: Mapped[str | None] = mapped_column(String(120))
@@ -591,6 +598,7 @@ class Scan(Base):
     error_reason: Mapped[str | None] = mapped_column(Text)
 
     container: Mapped[Container | None] = relationship()
+    container_line: Mapped[ContainerLine | None] = relationship()
 
 
 # ─── Audit / exceptions ─────────────────────────────────────────────────────

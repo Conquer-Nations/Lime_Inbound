@@ -38,6 +38,16 @@ export default function ContainerDetailPage() {
       .catch((e) => setErr(String(e?.detail || e)))
   }, [container_no])
 
+  // Silent re-fetch (no loading flash) — used after an inline manager edit
+  // such as a per-LPN quantity override.
+  function reload() {
+    if (!container_no) return
+    api
+      .getContainerDetail(container_no)
+      .then(setData)
+      .catch((e) => setErr(String(e?.detail || e)))
+  }
+
   return (
     <div className="min-h-screen bg-slate-50 text-slate-800 antialiased">
       <DetailChrome
@@ -81,7 +91,7 @@ export default function ContainerDetailPage() {
               <DriverCard d={data} />
               <PackagingCard d={data} />
             </div>
-            <ManifestCard d={data} />
+            <ManifestCard d={data} onReload={reload} />
             <ScanSheetCard d={data} />
             <LotAssignmentsCard d={data} />
             <OutboundLinksCard links={data.outbound_links} />
@@ -308,11 +318,21 @@ function PackagingCard({ d }: { d: ContainerErpDetail }) {
   )
 }
 
-function ManifestCard({ d }: { d: ContainerErpDetail }) {
+function ManifestCard({
+  d,
+  onReload,
+}: {
+  d: ContainerErpDetail
+  onReload: () => void
+}) {
   const pct =
     d.total_expected_qty === 0
       ? 0
       : Math.round((d.total_received_qty / d.total_expected_qty) * 100)
+  // A "mixed container" carries more than one LPN line. We surface the
+  // per-LPN qty as a manager-editable field so an over-scan that hard-stopped
+  // at the dock can be reconciled by bumping the vendor quantity here.
+  const isMixed = d.lines.length > 1
   return (
     <Card>
       <div className="flex items-baseline justify-between flex-wrap gap-2">
@@ -324,6 +344,12 @@ function ManifestCard({ d }: { d: ContainerErpDetail }) {
           <span className="text-slate-400">({pct}%)</span>
         </span>
       </div>
+      {isMixed && (
+        <div className="mt-1 text-xs text-slate-500">
+          Mixed container — {d.lines.length} LPNs. Quantities below are
+          manager-editable (used to clear an over-scan hard stop).
+        </div>
+      )}
       {d.total_expected_qty > 0 && (
         <div className="mt-2 w-full bg-slate-100 rounded-full h-2 overflow-hidden">
           <div
@@ -336,7 +362,7 @@ function ManifestCard({ d }: { d: ContainerErpDetail }) {
         <table className="w-full text-sm">
           <thead className="bg-slate-50 text-[10.5px] uppercase text-slate-500 border-b border-slate-200">
             <tr>
-              <Th>SKU</Th>
+              <Th>LPN / SKU</Th>
               <Th>Product type</Th>
               <Th>Description</Th>
               <Th align="right">Qty</Th>
@@ -345,30 +371,132 @@ function ManifestCard({ d }: { d: ContainerErpDetail }) {
           </thead>
           <tbody className="text-sm divide-y divide-slate-100">
             {d.lines.map((ln) => (
-              <tr key={ln.line_id}>
-                <td className="px-3 py-2 font-mono text-[#1B4676] font-bold">
-                  {ln.sku}
-                </td>
-                <td className="px-3 py-2 text-slate-700">{ln.product_type ?? '—'}</td>
-                <td className="px-3 py-2 text-slate-500">{ln.description ?? '—'}</td>
-                <td className="px-3 py-2 text-right font-mono text-slate-700">
-                  {ln.qty}
-                </td>
-                <td className="px-3 py-2 text-center">
-                  {ln.sku_resolved ? (
-                    <span className="text-emerald-600 font-bold">✓</span>
-                  ) : (
-                    <span className="text-amber-700 text-xs font-bold uppercase tracking-wider">
-                      Pending
-                    </span>
-                  )}
-                </td>
-              </tr>
+              <ManifestLineRow
+                key={ln.line_id}
+                containerNo={d.container_no}
+                line={ln}
+                onSaved={onReload}
+              />
             ))}
           </tbody>
         </table>
       </div>
     </Card>
+  )
+}
+
+/** One manifest line. The Qty cell flips to an inline editor on click,
+ * PATCHes /manager/container/{no}/line/{id}/qty, and re-fetches on success.
+ * The server rejects a qty below the number already scanned (409). */
+function ManifestLineRow({
+  containerNo,
+  line,
+  onSaved,
+}: {
+  containerNo: string
+  line: ContainerErpDetail['lines'][number]
+  onSaved: () => void
+}) {
+  const [editing, setEditing] = useState(false)
+  const [value, setValue] = useState(String(line.qty))
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState<string | null>(null)
+
+  async function save() {
+    const qty = Number(value)
+    if (!Number.isFinite(qty) || qty < 0 || !Number.isInteger(qty)) {
+      setErr('Enter a whole number ≥ 0.')
+      return
+    }
+    if (qty === line.qty) {
+      setEditing(false)
+      setErr(null)
+      return
+    }
+    setBusy(true)
+    setErr(null)
+    try {
+      await api.updateContainerLineQty(containerNo, line.line_id, qty)
+      setEditing(false)
+      onSaved()
+    } catch (e) {
+      const detail = (e as { detail?: string })?.detail
+      setErr(detail || String(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <tr>
+      <td className="px-3 py-2 font-mono text-[#1B4676] font-bold">{line.sku}</td>
+      <td className="px-3 py-2 text-slate-700">{line.product_type ?? '—'}</td>
+      <td className="px-3 py-2 text-slate-500">{line.description ?? '—'}</td>
+      <td className="px-3 py-2 text-right font-mono text-slate-700">
+        {editing ? (
+          <div className="flex flex-col items-end gap-1">
+            <div className="flex items-center justify-end gap-1.5">
+              <input
+                type="number"
+                min={0}
+                value={value}
+                autoFocus
+                disabled={busy}
+                onChange={(e) => setValue(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') save()
+                  if (e.key === 'Escape') {
+                    setEditing(false)
+                    setValue(String(line.qty))
+                    setErr(null)
+                  }
+                }}
+                className="w-20 border border-slate-300 rounded px-2 py-1 text-right font-mono focus:border-[#0093D0] focus:ring-2 focus:ring-[#0093D0]/20 focus:outline-none"
+              />
+              <button
+                type="button"
+                onClick={save}
+                disabled={busy}
+                className="text-xs font-bold text-white bg-[#0093D0] hover:bg-[#00A8E8] disabled:bg-slate-200 rounded px-2 py-1"
+              >
+                {busy ? '…' : 'Save'}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setEditing(false)
+                  setValue(String(line.qty))
+                  setErr(null)
+                }}
+                disabled={busy}
+                className="text-xs font-semibold text-slate-600 hover:text-slate-900 px-1"
+              >
+                Cancel
+              </button>
+            </div>
+            {err && <span className="text-[11px] text-red-600">{err}</span>}
+          </div>
+        ) : (
+          <button
+            type="button"
+            onClick={() => setEditing(true)}
+            className="font-mono text-slate-700 hover:text-[#0093D0] underline decoration-dotted decoration-slate-300 hover:decoration-[#0093D0]"
+            title="Edit vendor quantity for this LPN"
+          >
+            {line.qty}
+          </button>
+        )}
+      </td>
+      <td className="px-3 py-2 text-center">
+        {line.sku_resolved ? (
+          <span className="text-emerald-600 font-bold">✓</span>
+        ) : (
+          <span className="text-amber-700 text-xs font-bold uppercase tracking-wider">
+            Pending
+          </span>
+        )}
+      </td>
+    </tr>
   )
 }
 

@@ -448,6 +448,8 @@ export const api = {
       sku?: string | null
       imei?: string | null
       notes?: string | null
+      // Inbound mixed-container: which LPN (ContainerLine) this scan targets.
+      container_line_id?: number | null
     },
   ) =>
     request<ScanRecordResponse>(
@@ -703,6 +705,26 @@ export const api = {
       `/manager/containers/${encodeURIComponent(container_no)}`,
     ),
 
+  // Manager-only override of a mixed-container LPN's vendor quantity. Used
+  // when an operator over-scanned an LPN (hard-stopped at the dock) and the
+  // manager confirms the higher count. Server rejects qty < already-scanned
+  // with 409.
+  updateContainerLineQty: (
+    container_no: string,
+    line_id: number,
+    qty: number,
+  ) =>
+    request<{
+      line_id: number
+      container_no: string
+      sku: string | null
+      qty: number
+      scanned_qty: number
+    }>(
+      `/manager/container/${encodeURIComponent(container_no)}/line/${line_id}/qty`,
+      { method: 'PATCH', body: JSON.stringify({ qty }) },
+    ),
+
   listAllOutboundOrders: (params?: {
     customer_id?: number
     from_date?: string
@@ -846,6 +868,9 @@ export interface ScanSheetRow {
   scanned_by: string
   notes: string | null
   scanned_at: string
+  // Which LPN (ContainerLine) this row was scanned against. Null for
+  // legacy rows that predate per-LPN attribution.
+  container_line_id?: number | null
 }
 
 export interface OutboundLineProgress {
@@ -858,11 +883,16 @@ export interface OutboundLineProgress {
   source_container_no: string | null
 }
 
+// Inbound per-LPN progress shares the same shape as outbound.
+export type LineProgress = OutboundLineProgress
+
 export interface ScanSheetOpenResponse {
   header: ScanSheetHeader
   rows: ScanSheetRow[]
   // Outbound only — backend leaves null for inbound receipts.
   outbound_progress?: OutboundLineProgress[] | null
+  // Inbound only — one entry per LPN on the container.
+  inbound_progress?: LineProgress[] | null
 }
 
 export interface ScanRecordResponse {
@@ -874,6 +904,11 @@ export interface ScanRecordResponse {
   // Refreshed per-LPN counts on every accepted scan so the progress
   // panel auto-advances. Null on rejected scans and on inbound.
   outbound_progress?: OutboundLineProgress[] | null
+  // Inbound equivalent of outbound_progress.
+  inbound_progress?: LineProgress[] | null
+  // True when the scan was rejected because the targeted LPN already hit
+  // its vendor quantity — the UI shows the switch-to-next-LPN prompt.
+  line_full?: boolean
 }
 
 export interface ScanFinishResponse {

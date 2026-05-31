@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import {
   api,
   ApiError,
+  type LineProgress,
   type OutboundLineProgress,
   type ScanSheetHeader,
   type ScanSheetOpenResponse,
@@ -40,6 +41,39 @@ export default function ScanSheetMode({ sheet, operator, onFinished }: Props) {
   const [outboundProgress, setOutboundProgress] = useState<
     OutboundLineProgress[] | null
   >(sheet.outbound_progress ?? null)
+  // Inbound mixed-container: one entry per LPN (ContainerLine). Same shape as
+  // outbound progress. Drives the LPN picker + per-LPN fill panel, and is
+  // refreshed off every scan response.
+  const isInbound = sheet.header.kind !== 'outbound'
+  const [inboundProgress, setInboundProgress] = useState<LineProgress[] | null>(
+    sheet.inbound_progress ?? null,
+  )
+  // The LPN the operator is currently scanning into. Defaults to the first
+  // LPN that hasn't met its vendor quantity; falls back to the last line if
+  // everything is already complete.
+  const [activeLineId, setActiveLineId] = useState<number | null>(() => {
+    const p = sheet.inbound_progress
+    if (!p || p.length === 0) return null
+    const firstIncomplete = p.find((l) => l.scanned_qty < l.order_qty)
+    return (firstIncomplete ?? p[p.length - 1]).line_id
+  })
+  // When the active LPN fills (or the operator scans into a full LPN), we
+  // pop a confirm modal before switching to the next LPN. Until they tap OK,
+  // incoming scans are ignored so they can't bleed into the wrong line.
+  const [advancePrompt, setAdvancePrompt] = useState<{
+    completed: LineProgress
+    next: LineProgress | null
+  } | null>(null)
+  // Refs mirror the above so the scanner-fast submit handler reads live
+  // values instead of stale render closures.
+  const activeLineIdRef = useRef<number | null>(activeLineId)
+  const advancePromptRef = useRef(false)
+  useEffect(() => {
+    activeLineIdRef.current = activeLineId
+  }, [activeLineId])
+  useEffect(() => {
+    advancePromptRef.current = advancePrompt != null
+  }, [advancePrompt])
   const [serial, setSerial] = useState('')
   const [imei, setImei] = useState('')
   const [notes, setNotes] = useState('')
@@ -173,6 +207,13 @@ export default function ScanSheetMode({ sheet, operator, onFinished }: Props) {
    * `overrideSerial` is set by the queue drain effect to bypass the DOM
    * read (the input may have been cleared / overwritten by then). */
   async function submitOrAdvance(overrideSerial?: string) {
+    // Waiting for the operator to acknowledge an LPN switch — swallow any
+    // scans that arrive in the meantime so they don't land on the wrong LPN.
+    if (advancePromptRef.current) {
+      setSerial('')
+      if (serialInputRef.current) serialInputRef.current.value = ''
+      return
+    }
     const serialVal = (overrideSerial ?? serialInputRef.current?.value ?? serial).trim()
     const imeiVal = (imeiInputRef.current?.value ?? imei).trim()
 
@@ -239,12 +280,24 @@ export default function ScanSheetMode({ sheet, operator, onFinished }: Props) {
         serial_number: serialVal,
         imei: imeiVal || null,
         notes: notes.trim() || null,
+        container_line_id: isInbound ? activeLineIdRef.current : undefined,
       })
+      // Keep the progress panels live regardless of accept/reject.
+      if (res.outbound_progress) setOutboundProgress(res.outbound_progress)
+      if (res.inbound_progress) setInboundProgress(res.inbound_progress)
       if (res.accepted && res.row) {
         setRows((prev) => [...prev, res.row!])
         setLastAccepted(res.row.id)
         setNotes('')
-        if (res.outbound_progress) setOutboundProgress(res.outbound_progress)
+        // Inbound: if the active LPN just hit its vendor quantity, prompt the
+        // operator to switch to the next LPN before more scans land.
+        if (isInbound && res.inbound_progress) {
+          maybePromptAdvance(res.inbound_progress)
+        }
+      } else if (res.line_full) {
+        // Hard stop: the targeted LPN is already full. Not an error — prompt
+        // the switch instead of flashing red.
+        if (res.inbound_progress) maybePromptAdvance(res.inbound_progress)
       } else {
         setLastDupRowId(res.duplicate_of_row_id ?? null)
         setError(res.error ?? 'Scan rejected.')
@@ -254,6 +307,32 @@ export default function ScanSheetMode({ sheet, operator, onFinished }: Props) {
     } finally {
       setBusy(false)
     }
+  }
+
+  /** Inbound only: after a scan refreshes per-LPN progress, decide whether the
+   * active LPN is now full and the operator should switch. Clears any queued
+   * scooter scans (they were aimed at the now-complete LPN) and raises the
+   * switch modal. */
+  function maybePromptAdvance(prog: LineProgress[]) {
+    const active = prog.find((l) => l.line_id === activeLineIdRef.current)
+    if (!active) return
+    if (active.order_qty > 0 && active.scanned_qty >= active.order_qty) {
+      // Drain the queue so nothing bleeds into the next LPN.
+      serialQueueRef.current = []
+      setQueueLen(0)
+      const next = prog.find((l) => l.scanned_qty < l.order_qty) ?? null
+      setAdvancePrompt({ completed: active, next })
+    }
+  }
+
+  /** Operator tapped OK on the LPN-switch modal — advance the active LPN to
+   * the next incomplete one (if any) and refocus the serial input. */
+  function handleAdvanceConfirmed() {
+    const next = advancePrompt?.next
+    if (next) setActiveLineId(next.line_id)
+    setAdvancePrompt(null)
+    setError(null)
+    focusNext('serial')
   }
 
   /** Catch Enter at the input level (more reliable than form onSubmit when
@@ -299,7 +378,18 @@ export default function ScanSheetMode({ sheet, operator, onFinished }: Props) {
           ordered, and which inbound container each line is drawn from.
           Auto-advances visually as scans land. */}
       {h.kind === 'outbound' && outboundProgress && outboundProgress.length > 0 && (
-        <OutboundProgressPanel progress={outboundProgress} />
+        <ProgressPanel progress={outboundProgress} mode="outbound" />
+      )}
+
+      {/* Inbound: per-LPN fill progress on a (possibly mixed) container. The
+          active line follows the operator's LPN selection rather than the
+          first-incomplete heuristic. */}
+      {isInbound && inboundProgress && inboundProgress.length > 0 && (
+        <ProgressPanel
+          progress={inboundProgress}
+          mode="inbound"
+          activeLineId={activeLineId}
+        />
       )}
 
       {/* Excel-style scan sheet — visual clone of TEMPLATE.xlsx (read-only) */}
@@ -317,6 +407,35 @@ export default function ScanSheetMode({ sheet, operator, onFinished }: Props) {
         <div className="text-[10.5px] uppercase tracking-[0.18em] font-bold text-[#0093D0]">
           Next scan
         </div>
+
+        {/* Inbound mixed container: pick which LPN you're scanning into. The
+            picker defaults to the first incomplete LPN and auto-advances on
+            acknowledgement, but the operator can override at any time. Only
+            shown when the container actually has more than one LPN. */}
+        {isInbound && inboundProgress && inboundProgress.length > 1 && (
+          <label className="block">
+            <span className="text-[10.5px] uppercase tracking-[0.14em] font-bold text-[#1B4676] mb-1 block">
+              Scanning into LPN
+            </span>
+            <select
+              value={activeLineId ?? ''}
+              onChange={(e) => setActiveLineId(Number(e.target.value))}
+              disabled={h.is_completed}
+              className="font-mono w-full border border-slate-300 rounded-md px-3 py-2.5 text-sm text-[#1B4676] focus:border-[#0093D0] focus:ring-2 focus:ring-[#0093D0]/20 focus:outline-none transition disabled:bg-slate-50"
+            >
+              {inboundProgress.map((l) => {
+                const done = l.order_qty > 0 && l.scanned_qty >= l.order_qty
+                return (
+                  <option key={l.line_id} value={l.line_id}>
+                    {l.sku_raw} — {l.scanned_qty}/{l.order_qty}
+                    {done ? ' ✓ complete' : ''}
+                  </option>
+                )
+              })}
+            </select>
+          </label>
+        )}
+
         <div
           className={`grid grid-cols-1 gap-3 ${
             h.requires_imei
@@ -432,6 +551,62 @@ export default function ScanSheetMode({ sheet, operator, onFinished }: Props) {
           <span>FINISH</span>
         </button>
       </div>
+
+      {/* LPN-switch modal — inbound mixed container. Raised when the active
+          LPN reaches its vendor quantity (or the operator scans into a full
+          LPN). Blocks further scans until acknowledged. */}
+      {advancePrompt && (
+        <div
+          className="fixed inset-0 z-40 bg-slate-900/60 flex items-center justify-center px-4"
+          role="dialog"
+          aria-modal="true"
+        >
+          <div className="bg-white rounded-xl shadow-xl border border-slate-200 max-w-md w-full p-6 space-y-4">
+            <div className="flex items-center gap-2 text-emerald-700">
+              <svg className="w-6 h-6" viewBox="0 0 20 20" fill="currentColor" aria-hidden>
+                <path
+                  fillRule="evenodd"
+                  d="M16.7 5.3a1 1 0 010 1.4l-7 7a1 1 0 01-1.4 0l-3-3a1 1 0 011.4-1.4L9 11.6l6.3-6.3a1 1 0 011.4 0z"
+                  clipRule="evenodd"
+                />
+              </svg>
+              <h3 className="text-lg font-bold">LPN complete</h3>
+            </div>
+            <p className="text-sm text-slate-600">
+              <span className="font-mono font-bold text-[#1B4676]">
+                {advancePrompt.completed.sku_raw}
+              </span>{' '}
+              is fully scanned (
+              <span className="font-bold">
+                {advancePrompt.completed.scanned_qty}/{advancePrompt.completed.order_qty}
+              </span>
+              ).{' '}
+              {advancePrompt.next ? (
+                <>
+                  Switching to{' '}
+                  <span className="font-mono font-bold text-[#1B4676]">
+                    {advancePrompt.next.sku_raw}
+                  </span>{' '}
+                  (
+                  {advancePrompt.next.scanned_qty}/{advancePrompt.next.order_qty}
+                  ). Tap OK, then continue scanning.
+                </>
+              ) : (
+                <>All LPNs on this container are complete. Tap OK, then press FINISH to lock the sheet.</>
+              )}
+            </p>
+            <div className="flex items-center justify-end pt-2">
+              <button
+                type="button"
+                onClick={handleAdvanceConfirmed}
+                className="inline-flex items-center gap-2 rounded-full bg-[#0093D0] hover:bg-[#00A8E8] text-white font-bold px-6 py-2.5 text-sm transition focus:outline-none focus-visible:ring-2 focus-visible:ring-[#0093D0] focus-visible:ring-offset-2"
+              >
+                OK
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Confirm modal */}
       {confirmFinish && (
@@ -706,22 +881,31 @@ function ExcelStyleSheet({
   )
 }
 
-/* ─── Outbound per-LPN progress panel ──────────────────────────────────
- * Renders above the scan grid in outbound mode. One row per OutboundLine
- * on the TO. The "active" line — first one with capacity remaining — is
- * highlighted in cyan so the operator knows which SKU they should be
- * grabbing off the floor next. Lines that are 100% complete are dimmed
- * with a green check. Source container hint shows which inbound
- * container the vendor specified for this line.
+/* ─── Per-LPN progress panel (inbound + outbound) ───────────────────────
+ * Renders above the scan grid. One row per line:
+ *   • outbound — one OutboundLine on the TO; active line is the first with
+ *     capacity remaining, source-container hint shows where to pull from.
+ *   • inbound  — one ContainerLine (LPN) on the container; active line
+ *     follows the operator's LPN selection (activeLineId).
+ * Lines that are 100% complete are dimmed with a green check.
  */
-function OutboundProgressPanel({
+function ProgressPanel({
   progress,
+  mode,
+  activeLineId,
 }: {
-  progress: OutboundLineProgress[]
+  progress: LineProgress[]
+  mode: 'inbound' | 'outbound'
+  activeLineId?: number | null
 }) {
   const totalOrdered = progress.reduce((s, p) => s + p.order_qty, 0)
   const totalScanned = progress.reduce((s, p) => s + p.scanned_qty, 0)
-  const activeIdx = progress.findIndex((p) => p.scanned_qty < p.order_qty)
+  const activeIdx =
+    mode === 'inbound' && activeLineId != null
+      ? progress.findIndex((p) => p.line_id === activeLineId)
+      : progress.findIndex((p) => p.scanned_qty < p.order_qty)
+  const heading =
+    mode === 'inbound' ? 'Receiving progress — per LPN' : 'Loading progress — per LPN'
 
   return (
     <div
@@ -733,7 +917,7 @@ function OutboundProgressPanel({
     >
       <div className="bg-slate-50 border-b border-slate-200 px-4 py-2.5 flex items-center justify-between gap-3 flex-wrap">
         <h3 className="text-[11px] font-bold uppercase tracking-[0.18em] text-[#1B4676]">
-          Loading progress — per LPN
+          {heading}
         </h3>
         <div className="text-xs font-mono text-slate-600">
           <span className="text-[#1B4676] font-bold">{totalScanned}</span>

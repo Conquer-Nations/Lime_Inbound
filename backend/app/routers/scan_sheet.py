@@ -138,6 +138,7 @@ def _scan_to_row(
     container_no: str,
     line_sku: str | None,
     box_number: int | None = None,
+    container_line_id: int | None = None,
 ) -> ScanRow:
     return ScanRow(
         id=s.id,
@@ -150,7 +151,79 @@ def _scan_to_row(
         scanned_by=s.scanned_by,
         notes=s.row_notes,
         scanned_at=s.scanned_at,
+        container_line_id=container_line_id,
     )
+
+
+def _line_sku_map(container: Container) -> dict[int, str | None]:
+    """ContainerLine.id → display SKU (matched SKU.sku, else raw vendor string)."""
+    out: dict[int, str | None] = {}
+    for line in (container.lines or []):
+        if line.sku is not None and line.sku.sku:
+            out[line.id] = line.sku.sku
+        else:
+            out[line.id] = line.sku_raw or None
+    return out
+
+
+def _inbound_rows(
+    scans: list[Scan],
+    container: Container,
+    sku_by_line: dict[int, str | None],
+    default_sku: str | None,
+    is_scooter: bool,
+) -> list[ScanRow]:
+    """Materialise inbound Scan rows, attributing each to its LPN
+    (ContainerLine). SKU comes from the scan's container_line_id; scans
+    that predate per-LPN attribution (NULL) fall back to the first-line
+    default. Box numbers increment PER LPN (scooters pack 10 per box, and
+    each LPN is boxed independently)."""
+    per_line_idx: dict[int | None, int] = {}
+    rows: list[ScanRow] = []
+    for s in scans:
+        clid = s.container_line_id
+        sku = sku_by_line.get(clid, default_sku) if clid is not None else default_sku
+        box = None
+        if is_scooter:
+            idx = per_line_idx.get(clid, 0)
+            box = _box_for_index(idx)
+            per_line_idx[clid] = idx + 1
+        rows.append(_scan_to_row(s, container.container_no, sku, box, clid))
+    return rows
+
+
+async def _inbound_progress(
+    session: AsyncSession, container: Container, receipt_id: int
+) -> list[OutboundLineProgress]:
+    """Per-LPN scan progress for the inbound operator panel. One entry per
+    ContainerLine on the container, ordered by line_index, with the live
+    count of scans attributed to that line on this receipt."""
+    lines = sorted(
+        (container.lines or []), key=lambda l: (l.line_index or 0, l.id)
+    )
+    if not lines:
+        return []
+    counts_q = await session.execute(
+        select(Scan.container_line_id, func.count())
+        .where(Scan.receipt_id == receipt_id)
+        .where(Scan.container_line_id.in_([l.id for l in lines]))
+        .where(Scan.serial_number.isnot(None))
+        .group_by(Scan.container_line_id)
+    )
+    counts = {row[0]: row[1] for row in counts_q.all()}
+    sku_by_line = _line_sku_map(container)
+    return [
+        OutboundLineProgress(
+            line_id=l.id,
+            line_no=l.line_index or 0,
+            sku_raw=sku_by_line.get(l.id) or l.sku_raw or "",
+            description=l.product_type,
+            order_qty=l.qty,
+            scanned_qty=counts.get(l.id, 0),
+            source_container_no=None,
+        )
+        for l in lines
+    ]
 
 
 def _box_for_index(index_zero_based: int) -> int:
@@ -765,24 +838,18 @@ async def open_sheet(
         .where(Scan.serial_number.isnot(None))
         .order_by(Scan.scanned_at.asc())
     )
-    rows: list[ScanRow] = []
-    # Map sku_id → sku string for display. Most receipts have a single
-    # ContainerLine; lookup-per-scan is fine at this volume.
-    sku_by_id: dict[int, str] = {}
-    for line in container.lines:
-        if line.sku is not None:
-            sku_by_id[line.sku_id] = line.sku.sku if line.sku else None  # noqa
-    # Fallback if relationship not loaded — fetch SKUs lazily by id
     is_scooter = _container_uses_box_numbers(container)
     sku_default = _container_sku(container)
-    for idx, s in enumerate(existing.all()):
-        box = _box_for_index(idx) if is_scooter else None
-        rows.append(_scan_to_row(s, container.container_no, sku_default, box))
+    sku_by_line = _line_sku_map(container)
+    rows = _inbound_rows(
+        list(existing.all()), container, sku_by_line, sku_default, is_scooter
+    )
+    progress = await _inbound_progress(session, container, receipt.id)
 
     await session.commit()
 
     header = _build_header(receipt, container, container.do.whpo, container.do)
-    return OpenSheetResponse(header=header, rows=rows)
+    return OpenSheetResponse(header=header, rows=rows, inbound_progress=progress)
 
 
 @router.post("/{receipt_id}/scan", response_model=RecordScanResponse)
@@ -822,9 +889,56 @@ async def record_scan_row(
     serial = body.serial_number.strip()
     imei = (body.imei or "").strip() or None
 
-    # IMEI required for eBike / Glider containers — enforced server-side
-    # too so a rogue client can't bypass the rule.
-    if _container_requires_imei(container) and not imei:
+    # ── Resolve which LPN (ContainerLine) this scan belongs to ──────────
+    # A mixed container has several lines, each with its own vendor qty.
+    # The operator picks the active LPN (body.container_line_id); if they
+    # don't, we auto-target the first LPN that hasn't met its quantity.
+    lines = sorted(
+        (container.lines or []), key=lambda l: (l.line_index or 0, l.id)
+    )
+    if not lines:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Container {container.container_no} has no line items to scan against.",
+        )
+
+    counts_q = await session.execute(
+        select(Scan.container_line_id, func.count())
+        .where(Scan.receipt_id == receipt_id)
+        .where(Scan.container_line_id.in_([l.id for l in lines]))
+        .where(Scan.serial_number.isnot(None))
+        .group_by(Scan.container_line_id)
+    )
+    scanned_per_line = {row[0]: row[1] for row in counts_q.all()}
+
+    target_line = None
+    if body.container_line_id is not None:
+        target_line = next(
+            (l for l in lines if l.id == body.container_line_id), None
+        )
+        if target_line is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    f"LPN line {body.container_line_id} isn't on container "
+                    f"{container.container_no}."
+                ),
+            )
+    else:
+        for l in lines:
+            if scanned_per_line.get(l.id, 0) < l.qty:
+                target_line = l
+                break
+        if target_line is None:
+            target_line = lines[-1]  # all full — hard-stop below will reject
+
+    sku_by_line = _line_sku_map(container)
+    target_sku = sku_by_line.get(target_line.id) or target_line.sku_raw or body.sku
+    target_pt = _line_product_type(target_line)
+
+    # IMEI required for eBike / Glider LPNs — checked against the ACTIVE
+    # line so a scooter LPN in a mixed container isn't forced to supply one.
+    if ("bike" in target_pt or "glider" in target_pt) and not imei:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="IMEI is required for eBike and Glider SKUs.",
@@ -843,11 +957,31 @@ async def record_scan_row(
             duplicate_of_row_id=dup.id,
             error=f"Serial {serial} was already scanned in this container.",
             total_scanned=await _count_scans(session, receipt_id),
+            inbound_progress=await _inbound_progress(session, container, receipt_id),
+        )
+
+    # ── Hard stop at the vendor quantity for this LPN ───────────────────
+    # Refuse the scan once the LPN is full. The cap is ContainerLine.qty,
+    # which a manager can raise (see PATCH /manager/container/{no}/lines)
+    # if the real shipment exceeded the declared count.
+    already = scanned_per_line.get(target_line.id, 0)
+    if already >= target_line.qty:
+        return RecordScanResponse(
+            accepted=False,
+            line_full=True,
+            error=(
+                f"LPN {target_sku or target_line.id} is complete "
+                f"({already}/{target_line.qty}). Switch to the next LPN."
+            ),
+            total_scanned=await _count_scans(session, receipt_id),
+            inbound_progress=await _inbound_progress(session, container, receipt_id),
         )
 
     scan = Scan(
         receipt_id=receipt_id,
         container_id=container.id,
+        container_line_id=target_line.id,
+        sku_id=target_line.sku_id,
         item_barcode=serial,            # keep filled for cross-table consistency
         serial_number=serial,
         imei=imei,
@@ -873,16 +1007,16 @@ async def record_scan_row(
             duplicate_of_row_id=dup.id if dup else None,
             error=f"Serial {serial} was already scanned (race condition).",
             total_scanned=await _count_scans(session, receipt_id),
+            inbound_progress=await _inbound_progress(session, container, receipt_id),
         )
 
     await session.commit()
     total = await _count_scans(session, receipt_id)
-    is_scooter = _container_uses_box_numbers(container)
-    # This new scan is at zero-based index (total - 1)
-    box = _box_for_index(total - 1) if is_scooter else None
-    # Prefer the vendor-provided SKU from container_lines over body.sku
-    sku_default = _container_sku(container) or body.sku
-    row = _scan_to_row(scan, container.container_no, sku_default, box)
+    # Box # increments PER LPN (scooters pack 10/box; each LPN boxed
+    # independently). `already` is this line's zero-based index for this scan.
+    is_scooter_line = "scoot" in target_pt
+    box = _box_for_index(already) if is_scooter_line else None
+    row = _scan_to_row(scan, container.container_no, target_sku, box, target_line.id)
 
     # NOTE: we intentionally do NOT push to OneDrive on every scan. Scans are
     # the source of truth in Postgres; the Excel workbook only needs the final
@@ -896,6 +1030,7 @@ async def record_scan_row(
         accepted=True,
         row=row,
         total_scanned=total,
+        inbound_progress=await _inbound_progress(session, container, receipt_id),
     )
 
 
@@ -958,13 +1093,10 @@ async def finish_sheet(
         receipt, container, whpo, do = await _load_receipt_context(session, receipt_id)
         is_scooter_f = _container_uses_box_numbers(container)
         sku_default_f = _container_sku(container)
-        rows = [
-            _scan_to_row(
-                s, container.container_no, sku_default_f,
-                _box_for_index(idx) if is_scooter_f else None,
-            )
-            for idx, s in enumerate(rows_q.all())
-        ]
+        sku_by_line_f = _line_sku_map(container)
+        rows = _inbound_rows(
+            list(rows_q.all()), container, sku_by_line_f, sku_default_f, is_scooter_f
+        )
         detail = AuditSheetDetail(
             header=_build_header(receipt, container, whpo, do),
             rows=rows,
@@ -1022,16 +1154,15 @@ async def view_sheet(receipt_id: int, session: AsyncSession = Depends(get_sessio
     )
     is_scooter_v = _container_uses_box_numbers(container)
     sku_default_v = _container_sku(container)
-    rows = [
-        _scan_to_row(
-            s, container.container_no, sku_default_v,
-            _box_for_index(idx) if is_scooter_v else None,
-        )
-        for idx, s in enumerate(rows_q.all())
-    ]
+    sku_by_line_v = _line_sku_map(container)
+    rows = _inbound_rows(
+        list(rows_q.all()), container, sku_by_line_v, sku_default_v, is_scooter_v
+    )
+    progress = await _inbound_progress(session, container, receipt.id)
     return OpenSheetResponse(
         header=_build_header(receipt, container, whpo, do),
         rows=rows,
+        inbound_progress=progress,
     )
 
 

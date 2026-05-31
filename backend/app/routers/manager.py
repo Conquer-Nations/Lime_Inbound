@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
 import logging
 
+from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -729,6 +730,82 @@ async def list_inbound(
         from_date=from_date,
         to_date=to_date,
     )
+
+
+class _LineQtyUpdate(BaseModel):
+    qty: int = Field(ge=0, le=100000)
+
+
+@router.patch("/container/{container_no}/line/{line_id}/qty")
+async def update_container_line_qty(
+    container_no: str,
+    line_id: int,
+    body: _LineQtyUpdate,
+    actor: str = "manager",
+    session: AsyncSession = Depends(get_session),
+):
+    """Adjust the declared vendor quantity for a single LPN line.
+
+    The operator scan sheet hard-stops at this quantity per LPN. When a real
+    shipment comes in over/under the declared count, the manager corrects it
+    here and the operator can resume scanning against the new cap.
+
+    Guard: refuse to set qty BELOW the number of units already scanned for
+    this line — that would leave the sheet in an over-filled, inconsistent
+    state. Lower it only after the extra scans are removed.
+    """
+    cleaned_no = container_no.strip().upper()
+    line = await session.scalar(
+        select(ContainerLine)
+        .join(Container, Container.id == ContainerLine.container_id)
+        .where(ContainerLine.id == line_id)
+        .where(func.lower(Container.container_no) == cleaned_no.lower())
+    )
+    if line is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"LPN line {line_id} not found on container {cleaned_no}.",
+        )
+
+    scanned = await session.scalar(
+        select(func.count())
+        .select_from(Scan)
+        .where(Scan.container_line_id == line.id)
+        .where(Scan.serial_number.isnot(None))
+    ) or 0
+    if body.qty < scanned:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                f"Can't set quantity to {body.qty}: {scanned} unit(s) are "
+                f"already scanned against this LPN. Remove the extra scans "
+                "first, then lower the quantity."
+            ),
+        )
+
+    old_qty = line.qty
+    line.qty = body.qty
+    session.add(
+        ActivityLog(
+            actor=actor,
+            kind="container_line_qty_updated",
+            ref_type="container_line",
+            ref_id=line.id,
+            message=(
+                f"LPN {line.sku_raw or line.id} qty {old_qty} → {body.qty} "
+                f"on container {cleaned_no}"
+            ),
+            payload={"container_no": cleaned_no, "old_qty": old_qty, "new_qty": body.qty},
+        )
+    )
+    await session.commit()
+    return {
+        "line_id": line.id,
+        "container_no": cleaned_no,
+        "sku": line.sku_raw,
+        "qty": line.qty,
+        "scanned_qty": int(scanned),
+    }
 
 
 @router.post("/database/inbound/sync")

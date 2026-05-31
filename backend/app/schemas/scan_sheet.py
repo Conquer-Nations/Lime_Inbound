@@ -56,6 +56,10 @@ class ScanRow(BaseModel):
     scanned_by: str
     notes: str | None = None
     scanned_at: datetime
+    # Which LPN (ContainerLine) this row was scanned against — lets the
+    # operator grid attribute each row to its LPN on mixed containers.
+    # None for legacy scans that predate per-LPN attribution.
+    container_line_id: int | None = None
 
 
 # ─── Open / scan / finish request payloads ──────────────────────────────
@@ -72,13 +76,18 @@ class OpenSheetRequest(BaseModel):
 
 class OutboundLineProgress(BaseModel):
     """One row in the per-LPN progress panel rendered above the operator
-    scan grid in outbound mode. Tells the operator what SKUs they should
-    be scanning, how many of each they've completed, and which inbound
-    container the line was drawn from (so they know which physical
-    items to grab off the floor).
+    scan grid. Tells the operator which LPN/SKU they should be scanning,
+    how many of each they've completed, and which inbound container the
+    line was drawn from (outbound only).
 
-    `scanned_qty` is the live count of OutboundScans against this line —
-    refreshed on every successful scan via RecordScanResponse.
+    Reused for BOTH directions:
+      • outbound — one entry per OutboundLine on the Transfer Order.
+      • inbound  — one entry per ContainerLine (LPN) on the container, so a
+        mixed container shows fill-progress per LPN and the UI can advance
+        to the next LPN once one is complete.
+
+    `scanned_qty` is the live count of scans against this line — refreshed on
+    every successful scan via RecordScanResponse.
     """
 
     line_id: int
@@ -95,6 +104,9 @@ class OpenSheetResponse(BaseModel):
     rows: list[ScanRow]            # empty on fresh open, existing rows on reopen
     # Only populated in outbound mode (header.kind == "outbound").
     outbound_progress: list[OutboundLineProgress] | None = None
+    # Inbound mode: one entry per LPN (ContainerLine) on the container. Drives
+    # the operator's LPN picker + per-LPN fill progress. None for outbound.
+    inbound_progress: list[OutboundLineProgress] | None = None
 
 
 class RecordScanRequest(BaseModel):
@@ -111,6 +123,10 @@ class RecordScanRequest(BaseModel):
         default=None, max_length=17, pattern=r"^([0-9]{14,17})?$"
     )
     notes: str | None = Field(default=None, max_length=400)
+    # Inbound only: the LPN (ContainerLine) the operator is currently
+    # scanning into. When omitted, the server falls back to the first LPN
+    # that hasn't yet met its vendor quantity.
+    container_line_id: int | None = None
 
 
 class RecordScanResponse(BaseModel):
@@ -123,6 +139,12 @@ class RecordScanResponse(BaseModel):
     # panel auto-advances after each accepted scan. Outbound-only; None
     # for inbound and on rejected scans.
     outbound_progress: list[OutboundLineProgress] | None = None
+    # Inbound equivalent of outbound_progress (one entry per LPN).
+    inbound_progress: list[OutboundLineProgress] | None = None
+    # Inbound hard-stop signal: True when the scan was rejected because the
+    # targeted LPN already reached its vendor quantity. The UI uses this to
+    # show the "LPN complete — switch to next" prompt instead of a red error.
+    line_full: bool = False
 
 
 class FinishSheetResponse(BaseModel):

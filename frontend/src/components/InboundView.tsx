@@ -29,6 +29,30 @@ interface InboundRow {
   last_updated_at: string | null
 }
 
+// Columns that vary per LPN within a single container submission. Everything
+// else (driver, dates, customer, etc.) is shared and rendered once per group.
+const PER_LPN_KEYS = new Set<keyof InboundRow>(['qty', 'product_type', 'sku'])
+
+/** Collapse the flat (container × SKU) rows into per-container groups,
+ * preserving first-seen order. A mixed container yields one group with N
+ * member rows; everything else yields singleton groups. Rows with a blank
+ * container_no are never merged. */
+function groupByContainer(rows: InboundRow[]): InboundRow[][] {
+  const groups: InboundRow[][] = []
+  const indexByKey = new Map<string, number>()
+  rows.forEach((row, i) => {
+    const key = row.container_no ? `c:${row.container_no}` : `r:${i}`
+    const existing = indexByKey.get(key)
+    if (existing != null) {
+      groups[existing].push(row)
+    } else {
+      indexByKey.set(key, groups.length)
+      groups.push([row])
+    }
+  })
+  return groups
+}
+
 const COLUMNS: { key: keyof InboundRow; label: string }[] = [
   { key: 'container_no', label: 'Container' },
   { key: 'whpo_number', label: 'WHPO/Load No' },
@@ -362,36 +386,68 @@ export default function InboundView() {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {filtered!.map((row, i) => {
-                const recentlyUpdated = isRecent(row.last_updated_at, 24)
-                return (
+              {groupByContainer(filtered!).flatMap((group) => {
+                const recentlyUpdated = group.some((r) =>
+                  isRecent(r.last_updated_at, 24),
+                )
+                const span = group.length
+                const head = group[0]
+                // A mixed container collapses to ONE line item: shared columns
+                // render once (rowSpan), and each LPN gets its own SKU/Qty/Type
+                // sub-row. Single-LPN containers render exactly as before.
+                return group.map((row, gi) => (
                   <tr
-                    key={i}
+                    key={`${head.container_no}-${gi}`}
                     className={`hover:bg-[#0093D0]/5 transition ${
                       recentlyUpdated ? 'bg-amber-50/40' : ''
-                    }`}
+                    } ${span > 1 && gi === 0 ? 'border-t-2 border-t-slate-200' : ''}`}
                   >
-                    {COLUMNS.map((c) => (
-                      <td
-                        key={c.key}
-                        className="px-3 py-1.5 align-top whitespace-nowrap font-mono text-slate-700"
-                      >
-                        {c.key === 'last_updated_at'
-                          ? formatLastUpdatedCell(row.last_updated_at)
-                          : c.key === 'container_no' && row.container_no
-                          ? (
-                            <Link
-                              to={`/manager/containers/${encodeURIComponent(row.container_no)}`}
-                              className="text-[#1B4676] hover:text-[#0093D0] font-bold underline decoration-dotted"
-                            >
-                              {row.container_no}
-                            </Link>
-                          )
-                          : formatCell(row[c.key])}
-                      </td>
-                    ))}
+                    {COLUMNS.map((c) => {
+                      // Per-LPN columns appear on every sub-row.
+                      if (PER_LPN_KEYS.has(c.key)) {
+                        return (
+                          <td
+                            key={c.key}
+                            className="px-3 py-1.5 align-top whitespace-nowrap font-mono text-slate-700"
+                          >
+                            {formatCell(row[c.key])}
+                          </td>
+                        )
+                      }
+                      // Shared columns render once for the whole group.
+                      if (gi !== 0) return null
+                      return (
+                        <td
+                          key={c.key}
+                          rowSpan={span}
+                          className={`px-3 py-1.5 align-top whitespace-nowrap font-mono text-slate-700 ${
+                            span > 1 ? 'bg-slate-50/40 border-r border-slate-100' : ''
+                          }`}
+                        >
+                          {c.key === 'last_updated_at' ? (
+                            formatLastUpdatedCell(head.last_updated_at)
+                          ) : c.key === 'container_no' && head.container_no ? (
+                            <span className="inline-flex items-center gap-1.5">
+                              <Link
+                                to={`/manager/containers/${encodeURIComponent(head.container_no)}`}
+                                className="text-[#1B4676] hover:text-[#0093D0] font-bold underline decoration-dotted"
+                              >
+                                {head.container_no}
+                              </Link>
+                              {span > 1 && (
+                                <span className="text-[9px] uppercase tracking-wider font-bold text-[#0093D0] bg-[#0093D0]/10 border border-[#0093D0]/25 rounded-full px-1.5 py-0.5">
+                                  {span} LPNs
+                                </span>
+                              )}
+                            </span>
+                          ) : (
+                            formatCell(head[c.key])
+                          )}
+                        </td>
+                      )
+                    })}
                   </tr>
-                )
+                ))
               })}
             </tbody>
           </table>
